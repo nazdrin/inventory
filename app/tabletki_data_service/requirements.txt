@@ -1,0 +1,6 @@
+fastapi
+sqlalchemy
+pydantic
+pandas
+requests
+google-api-python-client
