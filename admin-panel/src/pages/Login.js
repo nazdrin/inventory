@@ -11,7 +11,7 @@ const Login = ({ setAuthUser }) => {
     e.preventDefault();
     console.log("Credentials being sent to the server:", { developer_login: login, developer_password: password }); // <-- Логируем отправляемые данные
     try {
-        const response = await fetch("http://127.0.0.1:8000/developer_panel/login/", {
+        const response = await fetch("http://164.92.213.254:8000/developer_panel/login/", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
