@@ -1,5 +1,7 @@
-const API_URL = "http://127.0.0.1:8000/developer_panel/developer/settings";
-const DATA_FORMATS_URL = "http://127.0.0.1:8000/developer_panel/data_formats";
+const API_URL = "http://164.92.213.254:8000/developer_panel/developer/settings";
+const DATA_FORMATS_URL = "http://164.92.213.254:8000/developer_panel/data_formats";
+
+
 
 // Fetch developer settings by login
 const getSetting = async (login) => {
