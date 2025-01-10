@@ -1,0 +1,19 @@
+# Файлы конфигурации
+.env
+.env_test
+.env_production
+
+# Папки сборки
+build/
+dist/
+
+# Лог-файлы
+*.log
+
+# node_modules и кеши
+node_modules/
+.cache/
+
+# Файлы IDE
+.idea/
+.vscode/
