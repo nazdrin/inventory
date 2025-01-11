@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-
+import { API_BASE_URL } from "../config"; // Импортируем базовый URL из config.js
 const Login = ({ setAuthUser }) => {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
@@ -11,7 +11,7 @@ const Login = ({ setAuthUser }) => {
     e.preventDefault();
     console.log("Credentials being sent to the server:", { developer_login: login, developer_password: password }); // <-- Логируем отправляемые данные
     try {
-        const response = await fetch("http://164.92.213.254:8000/developer_panel/login/", {
+        const response = await fetch(`${API_BASE_URL}/login/`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",

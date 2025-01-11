@@ -1,5 +1,7 @@
 import logging
 import os
+from dotenv import load_dotenv
+load_dotenv()
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -8,15 +10,25 @@ from app.database import get_async_db, EnterpriseSettings, DeveloperSettings
 from app.tabletki_data_service.app.services.data_validator import validate_data
 from app.notification_service import send_notification  # Функция для отправки уведомлений
 
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-async def connect_to_google_drive(google_drive_file_name):
+async def connect_to_google_drive():
     """
     Подключается к Google Drive API.
     """
     try:
+
+        # Получаем путь к файлу учетных данных из переменных окружения
+        google_drive_file_name = os.getenv("GOOGLE_DRIVE_CREDENTIALS_PATH")
+        logging.info(f"Путь к учетным данным Google Drive: {google_drive_file_name}")
+        if not google_drive_file_name:
+            logging.error("Переменная окружения GOOGLE_DRIVE_CREDENTIALS_PATH не задана.")
+            send_notification(f"Переменная окружения GOOGLE_DRIVE_CREDENTIALS_PATH не задана.", "Разработчик")
+            raise EnvironmentError("Не задан путь к учетным данным Google Drive.")
         if not os.path.exists(google_drive_file_name):
             logging.error(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
+            send_notification(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}", "Разработчик")
             raise FileNotFoundError(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
 
         logging.info(f"Подключение к Google Drive с использованием учетных данных: {google_drive_file_name}")
@@ -103,14 +115,14 @@ async def extract_stock_from_google_drive(enterprise_code: str):
                 send_notification("Не найдены настройки разработчика для Google Drive", "Разработчик")
                 return
 
-            google_drive_file_name = os.path.abspath(developer_settings.google_drive_file_name)
-            if not os.path.exists(google_drive_file_name):
-                logging.error(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
-                send_notification(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}", "Разработчик")
-                return
+            # google_drive_file_name = os.path.abspath(developer_settings.google_drive_file_name)
+            # if not os.path.exists(google_drive_file_name):
+            #     logging.error(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
+            #     send_notification(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}", "Разработчик")
+            #     return
 
             # Подключение к Google Drive
-            drive_service = await connect_to_google_drive(google_drive_file_name)
+            drive_service = await connect_to_google_drive()
             logging.info(f"Успешно подключились к Google Drive для предприятия с кодом {enterprise_code}")
 
             # Извлечение файлов остатков
@@ -180,14 +192,14 @@ async def extract_catalog_from_google_drive(enterprise_code: str):
                 send_notification("Не найдены настройки разработчика для Google Drive.", "Разработчик")
                 return
 
-            google_drive_file_name = os.path.abspath(developer_settings.google_drive_file_name)
-            if not os.path.exists(google_drive_file_name):
-                logging.error(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
-                send_notification(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}", "Разработчик")
-                return
+            # google_drive_file_name = os.path.abspath(developer_settings.google_drive_file_name)
+            # if not os.path.exists(google_drive_file_name):
+            #     logging.error(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
+            #     send_notification(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}", "Разработчик")
+            #     return
 
             # Подключение к Google Drive
-            drive_service = await connect_to_google_drive(google_drive_file_name)
+            drive_service = await connect_to_google_drive()
             logging.info(f"Успешно подключились к Google Drive для предприятия с кодом {enterprise_code}")
 
             # Извлечение файлов каталога

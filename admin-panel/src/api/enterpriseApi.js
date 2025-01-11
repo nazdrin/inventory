@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { API_BASE_URL } from '../config'; // Импортируем базовый URL из config.js
 
-const API_BASE_URL = 'http://164.92.213.254:8000/developer_panel';
+
 
 // Получить все предприятия
 export const getEnterprises = async () => {
