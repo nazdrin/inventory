@@ -2,14 +2,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from .models import Base, DeveloperSettings, InventoryData, InventoryStock, ReservedItems, DataFormat, EnterpriseSettings, ClientNotifications  # Импортируем все модели
-import logging
 from contextlib import asynccontextmanager
+from .config import config  # Импортируем конфигурацию
+import logging
+
 
 # Указываем строку подключения к базе данных
-DATABASE_URL = "postgresql+asyncpg://postgres:your_password@localhost/inventory_db"
+#DATABASE_URL = "postgresql+asyncpg://postgres:your_password@localhost/inventory_db"
 
 # Создаем асинхронный движок для подключения к базе данных
-engine = create_async_engine(DATABASE_URL, echo=True)
+engine = create_async_engine(config.DATABASE_URL, echo=True)
 
 # Создаем SessionLocal для работы с асинхронными сессиями
 AsyncSessionLocal = sessionmaker(

@@ -1,5 +1,7 @@
-const API_URL = "http://164.92.213.254:8000/developer_panel/developer/settings";
-const DATA_FORMATS_URL = "http://164.92.213.254:8000/developer_panel/data_formats";
+import { API_BASE_URL } from "../config"; // Импортируем базовый URL из config.js
+
+const API_URL = `${API_BASE_URL}/developer/settings`;
+const DATA_FORMATS_URL = `${API_BASE_URL}/data_formats`;
 
 
 
