@@ -1,19 +1,36 @@
-# Файлы конфигурации
-.env
-.env_test
-.env_production
+# Виртуальное окружение
+.venv/
+env/
 
-# Папки сборки
-build/
-dist/
+# Файлы конфигурации IDE
+.vscode/
 
-# Лог-файлы
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Логи
 *.log
 
-# node_modules и кеши
-node_modules/
-.cache/
+# Исключить все файлы в папке google_set
+google_set/*
 
-# Файлы IDE
-.idea/
-.vscode/
+# Переменные окружения
+.env
+.env_*
+# Ignore all environment files
+.env*
+
+# Узлы npm (если используются)
+node_modules/
+
+# Системные временные файлы
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebooks
+*.ipynb_checkpoints
+
+# SQLite базы (если временные)
+*.sqlite3
