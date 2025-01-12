@@ -40,7 +40,7 @@ export const createEnterprise = async (enterpriseData) => {
 export const updateEnterprise = async (enterpriseCode, enterpriseData) => {
   console.log("Sending PUT request to update enterprise with code:", enterpriseCode); // Лог
   const response = await fetch(
-    `http://127.0.0.1:8000/developer_panel/enterprise/settings/${enterpriseCode}`,
+    `${API_BASE_URL}/enterprise/settings/${enterpriseCode}`, // Используем API_BASE_URL,
     {
       method: "PUT",
       headers: {
