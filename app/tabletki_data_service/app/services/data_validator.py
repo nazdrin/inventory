@@ -44,7 +44,7 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
             if code and not producer:
                 message = f"Ошибка: Для кода '{code}' отсутствует производитель (producer)."
                 logging.warning(message)
-                send_notification(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
+                #send_notification(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
 
             # Продолжаем проверку других строк
             continue
