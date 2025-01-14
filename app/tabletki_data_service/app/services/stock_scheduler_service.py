@@ -87,7 +87,7 @@ async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseS
         # Обработка остатков
         await extract_stock_from_google_drive(enterprise.enterprise_code)
         logging.info(f"Stock extracted successfully for Enterprise Code={enterprise.enterprise_code}")
-        send_notification(f"Процесс запуска обработки  остатков для предприятия  {enterprise.enterprise_code} завершен.", enterprise.enterprise_code)
+        #send_notification(f"Процесс запуска обработки  остатков для предприятия  {enterprise.enterprise_code} завершен.", enterprise.enterprise_code)
 
     except Exception as e:
         logging.error(f"Error processing stock for Enterprise Code={enterprise.enterprise_code}: {str(e)}")
