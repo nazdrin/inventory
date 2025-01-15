@@ -40,10 +40,7 @@ def get_db():
 # Подключение маршрутов
 app.include_router(developer_router, prefix="/developer_panel", tags=["Developer Panel"])
 
-#app.include_router(data_upload_router, prefix="/tabletki_data_service/data_upload", tags=["Data Upload"])
-#app.include_router(validation_router, prefix="/tabletki_data_service/validation", tags=["Validation"])
-#app.include_router(transformation_router, prefix="/tabletki_data_service/transformation", tags=["Transformation"])
-#app.include_router(notification_router, prefix="/tabletki_data_service/notification", tags=["Notification"])
+
 
 # Приветственный эндпоинт
 @app.get("/")
