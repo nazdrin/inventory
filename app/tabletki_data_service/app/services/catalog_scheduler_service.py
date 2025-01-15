@@ -116,7 +116,7 @@ async def schedule_catalog_tasks():
                     await asyncio.gather(*tasks)
                 else:
                     logging.warning("Предприятия для обработки каталога не найдены.")
-                    send_notification("Предприятия для обработки каталога не найдены.","Пусто")
+                    #send_notification("Предприятия для обработки каталога не найдены.","Пусто")
                 await asyncio.sleep(interval * 60)  # Ожидание перед следующей итерацией
     except Exception as main_error:
         logging.error(f"Critical error in catalog scheduler: {str(main_error)}")
