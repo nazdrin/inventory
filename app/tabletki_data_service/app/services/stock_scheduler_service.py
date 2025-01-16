@@ -111,6 +111,10 @@ async def schedule_stock_tasks():
     except Exception as main_error:
         logging.error(f"Critical error in stock scheduler: {str(main_error)}")
         send_notification(f"Критический сбой запуска расписания для стока {str(main_error)}", "unknown")
+    finally:
+        # Уведомление об остановке сервиса
+        logging.error("Stock scheduler service is stopping unexpectedly.")
+        send_notification("Сервис stock_scheduler остановлен неожиданно. Проверьте логи для диагностики.", "stock_scheduler")
 
 # Точка входа
 if __name__ == "__main__":
