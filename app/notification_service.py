@@ -2,18 +2,37 @@ import requests
 from app.database import get_async_db, EnterpriseSettings  # Импорт таблиц из базы данных
 from sqlalchemy.future import select
 # Функция для отправки сообщений в Telegram
+# def send_notification(message: str, enterprise_code: str):
+#     token = '5650306279:AAHZHACK7fqnLdHzLBDvY29vs7SXViMGqFs'  # Токен вашего бота
+#     url = f'https://api.telegram.org/bot{token}/sendMessage'
+#     payload = {
+#         'chat_id': 807661373,  # Ваш user_id
+#         "text": f"{message} \n\nEnterprise Code: {enterprise_code}"
+#     }
+#     try:
+#         response = requests.post(url, data=payload)
+#         return response.json()
+#     except Exception as e:
+#         print(f"Ошибка при отправке сообщения: {e}")
+
 def send_notification(message: str, enterprise_code: str):
     token = '5650306279:AAHZHACK7fqnLdHzLBDvY29vs7SXViMGqFs'  # Токен вашего бота
     url = f'https://api.telegram.org/bot{token}/sendMessage'
-    payload = {
-        'chat_id': 807661373,  # Ваш user_id
-        "text": f"{message} \n\nEnterprise Code: {enterprise_code}"
-    }
-    try:
-        response = requests.post(url, data=payload)
-        return response.json()
-    except Exception as e:
-        print(f"Ошибка при отправке сообщения: {e}")
+
+    # Список пользователей (chat_id)
+    chat_ids = [807661373, 1041598119]  # Добавьте сюда ID второго (и других) пользователя
+
+    for chat_id in chat_ids:
+        payload = {
+            'chat_id': chat_id,  # Отправляем сообщение каждому пользователю
+            "text": f"{message} \n\nEnterprise Code: {enterprise_code}"
+        }
+        try:
+            response = requests.post(url, data=payload)
+            print(f"Сообщение отправлено пользователю {chat_id}: {response.json()}")
+        except Exception as e:
+            print(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+
 # Функция для отправки сообщений в Telegram администратору предриятия
 async def send_notification_to_admin(message: str, enterprise_code: str):
     try:

@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile 
 from dotenv import load_dotenv
 load_dotenv()
 from google.oauth2 import service_account
@@ -12,6 +13,17 @@ from app.notification_service import send_notification  # Функция для 
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def get_temp_dir():
+    """
+    Возвращает путь к временной папке.
+    Если указано в .env, используется путь из переменной окружения TEMP_DIR.
+    Иначе используется системная временная папка.
+    """
+    temp_dir = os.getenv("TEMP_DIR", tempfile.gettempdir())
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)  # Создаём папку, если её нет
+    return temp_dir
 
 async def connect_to_google_drive():
     """
@@ -60,19 +72,42 @@ async def fetch_files_from_folder(drive_service, folder_id):
         send_notification(f"Ошибка при получении файлов из папки {folder_id}: {str(e)}", "Разработчик")
         raise
 
+# async def download_file(drive_service, file_id, file_name):
+#     """
+#     Скачивает файл из Google Drive.
+#     """
+#     try:
+#         request = drive_service.files().get_media(fileId=file_id)
+#         file_path = f"/tmp/{file_name}"
+#         with open(file_path, "wb") as file:
+#             downloader = MediaIoBaseDownload(file, request)
+#             done = False
+#             while not done:
+#                 status, done = downloader.next_chunk()
+#                 logging.info(f"Скачивание {file_name}: {int(status.progress() * 100)}% завершено.")
+#         return file_path
+#     except Exception as e:
+#         logging.error(f"Ошибка при скачивании файла {file_name}: {str(e)}")
+#         send_notification(f"Ошибка при скачивании файла {file_name}: {str(e)}", "Разработчик")
+#         raise
+
 async def download_file(drive_service, file_id, file_name):
     """
     Скачивает файл из Google Drive.
     """
     try:
         request = drive_service.files().get_media(fileId=file_id)
-        file_path = f"/tmp/{file_name}"
+        # Используем универсальную временную папку
+        temp_dir = get_temp_dir()
+        file_path = os.path.join(temp_dir, file_name)
+        
         with open(file_path, "wb") as file:
             downloader = MediaIoBaseDownload(file, request)
             done = False
             while not done:
                 status, done = downloader.next_chunk()
                 logging.info(f"Скачивание {file_name}: {int(status.progress() * 100)}% завершено.")
+        
         return file_path
     except Exception as e:
         logging.error(f"Ошибка при скачивании файла {file_name}: {str(e)}")
@@ -209,8 +244,8 @@ async def extract_catalog_from_google_drive(enterprise_code: str):
             for file in catalog_files:
                 file_path = await download_file(drive_service, file['id'], file['name'])
                 logging.info(f"Проверка каталога. Параметры: enterprise_code={enterprise_code}, "
-                             f"file_path={file_path}, file_type='catalog', "
-                             f"single_store={enterprise['single_store']}, store_serial={enterprise['store_serial']}")
+                            f"file_path={file_path}, file_type='catalog', "
+                            f"single_store={enterprise['single_store']}, store_serial={enterprise['store_serial']}")
                 try:
                     await validate_data(
                         enterprise_code=enterprise_code,
