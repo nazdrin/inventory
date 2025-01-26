@@ -66,6 +66,7 @@ const EnterprisePanel = () => {
         { name: "enterprise_name", label: "Enterprise Name (Назва підприємства)", type: "text" },
         { name: "enterprise_login", label: "Enterprise Login (Логін підприємства)", type: "text" },
         { name: "enterprise_password", label: "Enterprise Password (Пароль підприємства)", type: "password" },
+        { name: "token", label: "Токен подключения к API предприятия", type: "text" },
         { name: "tabletki_login", label: "Tabletki login (Логин tabletki )", type: "text" },
         { name: "tabletki_password", label: "Tabletki Password (Пароль tabletki)", type: "password" },
         { name: "email", label: "Email (Електронна пошта)", type: "email" },

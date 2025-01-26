@@ -167,8 +167,8 @@ async def extract_stock_from_google_drive(enterprise_code: str):
             for file in stock_files:
                 file_path = await download_file(drive_service, file['id'], file['name'])
                 logging.info(f"Проверка остатков. Параметры: enterprise_code={enterprise_code}, "
-                             f"file_path={file_path}, file_type='stock', "
-                             f"single_store={enterprise['single_store']}, store_serial={enterprise['store_serial']}")
+                            f"file_path={file_path}, file_type='stock', "
+                            f"single_store={enterprise['single_store']}, store_serial={enterprise['store_serial']}")
                 try:
                     logging.info(f"Тип и значение enterprise_code перед вызовом validate_data: {type(enterprise_code)} - {enterprise_code}")
                     await validate_data(

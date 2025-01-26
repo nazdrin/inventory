@@ -16,7 +16,7 @@ class TimestampMixin:
         DateTime(timezone=True),
         default=now_with_timezone,
         onupdate=now_with_timezone,
-  )
+)
 # Таблица номенклатуры
 class InventoryData(Base, TimestampMixin):
     __tablename__ = "inventory_data"
@@ -76,6 +76,7 @@ class EnterpriseSettings(Base):
     enterprise_password = Column(String, nullable=True)
     tabletki_login = Column(String, nullable=True)
     tabletki_password = Column(String, nullable=True)
+    token = Column(String, nullable=True)
     stock_upload_frequency = Column(Integer, nullable=True)
     catalog_upload_frequency = Column(Integer, nullable=True)
     data_transfer_method = Column(String, nullable=True)

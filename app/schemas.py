@@ -60,6 +60,7 @@ class EnterpriseSettingsSchema(BaseModel):
     enterprise_password: Optional[str] = None  # Пароль предприятия
     tabletki_login: Optional[str] = None
     tabletki_password: Optional[str] = None
+    token: Optional[str] = None # Токен подключения к API предприятия
     data_format: Optional[str] = None  # Поставщик данных
     file_format: Optional[str] = None  # Формат данных
     data_transfer_method: Optional[str] = None  # Метод передачи данных

@@ -1,0 +1,42 @@
+[
+    {
+        "code": "31A8572B-671C-422B-B6E0-DCDC069BD3DC",
+        "name": "Доставка",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "3547396",
+        "branch_id": "777"
+    },
+    {
+        "code": "8454F991-308D-4A08-8354-CEF60B6323FB",
+        "name": "Амінокислотний комплекс Vansiton ВСАА 2:1:1, 250 г",
+        "vat": 20,
+        "producer": "<p>Опис</p>",
+        "barcode": "4820106590788",
+        "branch_id": "777"
+    },
+    {
+        "code": "FECD88A0-3D25-4376-B85A-76C678BD86DF",
+        "name": "Амінокислота Vansiton BCAA, 150 капсул",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820106590030",
+        "branch_id": "777"
+    },
+    {
+        "code": "571456E0-C8FD-42C5-9CE5-4CB5F899C94F",
+        "name": "Амінокислота Vansiton BCAA, 300 г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820106591334",
+        "branch_id": "777"
+    },
+    {
+        "code": "0673ACB6-22A4-4693-9E93-03582FEA3BBC",
+        "name": "L-аргінін POWERFUL капсули №100 у бан.",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820142434183",
+        "branch_id": "777"
+    }
+]
