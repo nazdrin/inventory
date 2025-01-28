@@ -1,0 +1,58 @@
+[
+    {
+        "branch": "111",
+        "code": "8454F991-308D-4A08-8354-CEF60B6323FB",
+        "price": 100.0,
+        "price_reserve": 100.0,
+        "qty": 1
+    },
+    {
+        "branch": "222",
+        "code": "8454F991-308D-4A08-8354-CEF60B6323FB",
+        "price": 100.0,
+        "price_reserve": 100.0,
+        "qty": 1
+    },
+    {
+        "branch": "222",
+        "code": "FECD88A0-3D25-4376-B85A-76C678BD86DF",
+        "price": 100.0,
+        "price_reserve": 100.0,
+        "qty": 1
+    },
+    {
+        "branch": "111",
+        "code": "FECD88A0-3D25-4376-B85A-76C678BD86DF",
+        "price": 100.0,
+        "price_reserve": 100.0,
+        "qty": 1
+    },
+    {
+        "branch": "111",
+        "code": "571456E0-C8FD-42C5-9CE5-4CB5F899C94F",
+        "price": 30.0,
+        "price_reserve": 30.0,
+        "qty": 1
+    },
+    {
+        "branch": "222",
+        "code": "571456E0-C8FD-42C5-9CE5-4CB5F899C94F",
+        "price": 30.0,
+        "price_reserve": 30.0,
+        "qty": 1
+    },
+    {
+        "branch": "222",
+        "code": "0673ACB6-22A4-4693-9E93-03582FEA3BBC",
+        "price": 500.45,
+        "price_reserve": 500.45,
+        "qty": 1
+    },
+    {
+        "branch": "111",
+        "code": "0673ACB6-22A4-4693-9E93-03582FEA3BBC",
+        "price": 500.45,
+        "price_reserve": 500.45,
+        "qty": 1
+    }
+]
