@@ -27977,7 +27977,7 @@
     },
     {
         "code": "142DF4BE-5DDC-453B-BFE3-6C21BB28BBC9",
-        "name": "Monge cat корм kitten з фореллю 0,8 кг",
+        "name": "Monge cat корм kitten з фореллю 0,4 кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470005470",
@@ -28321,7 +28321,7 @@
     },
     {
         "code": "C6536100-5F94-41A6-8DBD-568D9B0BD8C3",
-        "name": "Monge dog корм grill лосось 0,1 кг",
+        "name": "Monge dog пауч grill лосось 100гр",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470013123",
@@ -28329,7 +28329,7 @@
     },
     {
         "code": "DA3358DB-B5FD-4F99-AAEA-F2E2B4FEB4DF",
-        "name": "Monge dog корм grill тріска 0,1 кг",
+        "name": "Monge dog пауч grill тріска 100гр",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470013130",
@@ -28337,7 +28337,7 @@
     },
     {
         "code": "05A6385C-A0ED-4427-955D-23A9CA99592B",
-        "name": "Monge dog корм grill курка з індичкою 0,1 кг",
+        "name": "Monge dog корм пауч курка з індичкою 100гр",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470013116",
@@ -28345,7 +28345,7 @@
     },
     {
         "code": "E040D4C0-CD6F-48AC-A7A9-8FEF167676B2",
-        "name": "Monge dog корм grill ягня з ов 0,1 кг",
+        "name": "Monge dog пауч grill ягня 100гр",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470013161",
@@ -28353,7 +28353,7 @@
     },
     {
         "code": "161F4F80-1413-4E02-8E90-DB6B78F01054",
-        "name": "Monge dog корм grill яловичина 0,1 кг",
+        "name": "Monge dog корм пауч яловичина 100гр",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470013154",
@@ -28361,7 +28361,7 @@
     },
     {
         "code": "A2302B64-F214-49BD-A3B1-9BE21C161557",
-        "name": "Monge dog корм grill свинина 0,1 кг",
+        "name": "Monge dog пауч grill свинина 100гр",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470013147",
@@ -28409,7 +28409,7 @@
     },
     {
         "code": "083585C7-B5F3-4332-8EC9-0C903A5AF435",
-        "name": "Monge cat корм hairball 0,4 кг",
+        "name": "Monge cat корм hairball з куркою 0,4 кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470005227",
@@ -28433,7 +28433,7 @@
     },
     {
         "code": "0EE1E6D8-C0FA-424E-A376-325B061AE061",
-        "name": "Monge cat корм sterilised 0,4 кг",
+        "name": "Monge cat корм sterilised з куркою 0,4 кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470011921",
@@ -28585,7 +28585,7 @@
     },
     {
         "code": "B75DE389-52B1-4760-8DDD-D00C94561084",
-        "name": "8009470085717 Gift dog mobility support ягнятина з ананасами 150 г",
+        "name": "Gift dog mobility support ягнятина з ананасами 150 г",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470085717",
@@ -28609,7 +28609,7 @@
     },
     {
         "code": "61141687-1FF2-4ADF-8139-DB545EF40E88",
-        "name": "8009470085731 Gift dog skin support лосось з журавлиною 150 г",
+        "name": "Gift dog skin support лосось з журавлиною 150 г",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470085731",
@@ -35384,14 +35384,6 @@
         "branch_id": "777"
     },
     {
-        "code": "D39F73F1-3048-46C0-8566-3AD0E470C6A3",
-        "name": "Тукан зі звуковим чіпом GiGwi Plush 10 СМ",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4823089351230",
-        "branch_id": "777"
-    },
-    {
         "code": "13A9BC13-D2FC-45D9-90E2-B34A15ED646A",
         "name": "Іграшка д/соб Білка з 2-ма пищ GiGwi Plush, 24 см",
         "vat": 20,
@@ -35704,11 +35696,11 @@
         "branch_id": "777"
     },
     {
-        "code": "F79B4D60-A250-4F27-8C54-F9202705834B",
-        "name": "GimCat Shiny Cat Filet 70 г з куркою та креветкою",
+        "code": "A4D6E1E5-B133-422B-BB93-49693A8148CE",
+        "name": "GimCat Shiny Cat Filet 70 г тунець",
         "vat": 20,
         "producer": "N/A",
-        "barcode": "4002064412962",
+        "barcode": "4002064412900",
         "branch_id": "777"
     },
     {
@@ -36725,14 +36717,6 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "65672242066",
-        "branch_id": "777"
-    },
-    {
-        "code": "8F309A03-A60F-4862-8B68-81055577EEF8",
-        "name": "Парова щітка масажер 3 в 1",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "6985668875686",
         "branch_id": "777"
     },
     {
@@ -38617,7 +38601,7 @@
     },
     {
         "code": "FC18C6B8-C2C2-4D20-A95C-2FDC7F042235",
-        "name": "Вухо кроляче з м'ясом качки 500гр",
+        "name": "Вухо кроляче з м'ясом качки 500гр ШТ",
         "vat": 20,
         "producer": "N/A",
         "barcode": "4820144201226",
@@ -38944,11 +38928,11 @@
         "branch_id": "777"
     },
     {
-        "code": "B3918928-315B-4481-B94F-C71FC5B052B6",
-        "name": "Консерва Carnilove з ягнятиною та кабаном 400г",
+        "code": "15E50B65-1BD8-4223-AB7B-C5525F51D2B6",
+        "name": "Консерва Carnilove з качкою та фазаном для собак 400г",
         "vat": 20,
         "producer": "N/A",
-        "barcode": "8595602529315",
+        "barcode": "8595602529230",
         "branch_id": "777"
     },
     {
@@ -40880,19 +40864,19 @@
         "branch_id": "777"
     },
     {
+        "code": "C32EE02A-8BED-42C1-B059-FFC556634928",
+        "name": "Brit Care МІНІ вологий корм Бріт Пате мініфіле ягняти в соусі 85 г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8595602560301",
+        "branch_id": "777"
+    },
+    {
         "code": "3FDE772F-8D85-4AA1-A610-6F0EBA7661B1",
         "name": "Natures Protection Сухий корм Mini Adult All breeds ягня 500г",
         "vat": 20,
         "producer": "N/A",
         "barcode": "4771317457486",
-        "branch_id": "777"
-    },
-    {
-        "code": "F5A4C9A0-5740-44D8-A5DC-0E5F00D924E7",
-        "name": "Natures Protection Сухий корм Mini Adult Small breeds ягня 2кг",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4771317457349",
         "branch_id": "777"
     },
     {
@@ -41285,6 +41269,14 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "8595602540013",
+        "branch_id": "777"
+    },
+    {
+        "code": "11714778-5A09-4DAA-97CB-EF48A7F0AAF3",
+        "name": "Функціональні ласощі Brit Care для цуценят з шинкою",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8595602539994",
         "branch_id": "777"
     },
     {
@@ -42272,14 +42264,6 @@
         "branch_id": "777"
     },
     {
-        "code": "C554C72E-4717-454E-9720-70FC806B0743",
-        "name": "Корм вологий Brit Care для котів суп з індичкою 75г",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "8595602569199",
-        "branch_id": "777"
-    },
-    {
         "code": "233E1980-DAFD-4071-A8F4-BB7B12091069",
         "name": "Роял пауч RENAL CAT CHICKEN 85г",
         "vat": 20,
@@ -42672,6 +42656,14 @@
         "branch_id": "777"
     },
     {
+        "code": "46560519-8A25-4296-ACDB-29E3E66F0C86",
+        "name": "Exclusion cat Steril CHICKEN 300g",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8011259003744",
+        "branch_id": "777"
+    },
+    {
         "code": "A2BCB5C2-91B4-463C-BB26-9A93166C4504",
         "name": "Exclusion cat Adult CHICKEN 300g",
         "vat": 20,
@@ -42685,14 +42677,6 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "8011259003713",
-        "branch_id": "777"
-    },
-    {
-        "code": "2202ADCD-CBED-45C2-93CB-E9D4ECA1A3CE",
-        "name": "Exclusion AD tuna для собак малі породи 500г",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "8011259002976",
         "branch_id": "777"
     },
     {
@@ -43253,6 +43237,14 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "8680571720914",
+        "branch_id": "777"
+    },
+    {
+        "code": "93369827-55F6-4AAD-B699-FA31242BD801",
+        "name": "LORA Жувальні ласощі (Стікси) для дорослих котів з тунцем та гарбузом 3*5г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8680571720921",
         "branch_id": "777"
     },
     {
@@ -44336,14 +44328,6 @@
         "branch_id": "777"
     },
     {
-        "code": "4B698078-7672-4C96-A5B1-EB2CE7F675E3",
-        "name": "WAUDOG м\"яч біорозкладна гума 7 см",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4823089370613",
-        "branch_id": "777"
-    },
-    {
         "code": "4948ABF8-C557-40AB-8EC8-C1C74612250C",
         "name": "WAUDOG кільце біорозкладна гума 12 см",
         "vat": 20,
@@ -44904,14 +44888,6 @@
         "branch_id": "777"
     },
     {
-        "code": "E10B5D96-C937-473D-8160-F7B3AA4CA956",
-        "name": "Повідець WauDog waterproof Leash чорний S 3м",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4823089338293",
-        "branch_id": "777"
-    },
-    {
         "code": "7F93D371-09B3-489F-B315-9272251AF629",
         "name": "Нашийник WauDog waterproof помаранч S",
         "vat": 20,
@@ -45437,6 +45413,14 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "65672243072",
+        "branch_id": "777"
+    },
+    {
+        "code": "BB9D539D-4814-4807-B823-62D507B1C015",
+        "name": "Beaphar Malt Paste 25г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8711231140008",
         "branch_id": "777"
     },
     {
@@ -47304,6 +47288,14 @@
         "branch_id": "777"
     },
     {
+        "code": "195CE4FB-F4DA-418F-9708-16BCCD2B492E",
+        "name": "AnimAll Фан  кістка 15 см помаранчева",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "2000981167202",
+        "branch_id": "777"
+    },
+    {
         "code": "201C0405-989C-4027-B2F4-C160A15E3CF7",
         "name": "Наповнювач Тоффу LuckyPet з ароматом мяти 6л",
         "vat": 20,
@@ -49104,14 +49096,6 @@
         "branch_id": "777"
     },
     {
-        "code": "91FC86CF-36C4-46C9-8168-3B8476F3CAD0",
-        "name": "Іграшка качка з пищалкою GiGwi",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4823089351445",
-        "branch_id": "777"
-    },
-    {
         "code": "C922B8A8-8E7A-46F7-8687-AF1AFEF0149A",
         "name": "Рибка латексна",
         "vat": 20,
@@ -50264,14 +50248,6 @@
         "branch_id": "777"
     },
     {
-        "code": "B55DE817-9778-47FA-8400-8CF02ABA29A1",
-        "name": "Щітка парова ЛАПКА 10 см",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "6985778865690",
-        "branch_id": "777"
-    },
-    {
         "code": "B28F63C8-E4A0-439D-AC2B-90C5A632D2C4",
         "name": "Корм Brit Care Cat сухий для котів великих порід 2кг",
         "vat": 20,
@@ -50841,7 +50817,7 @@
     },
     {
         "code": "817700E5-1737-4D52-B4AD-FE7DC2A826A6",
-        "name": "Monge сух корм для собак всіх порід з яловичиною. 2,5кг",
+        "name": "Monge dog All breeds Adult з яловичиною 2,5кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470004947",
@@ -50917,14 +50893,6 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "4011905252322",
-        "branch_id": "777"
-    },
-    {
-        "code": "6BAFB74D-60AB-447B-95C0-8058235C6290",
-        "name": "Наповнювач Тоффу LuckyPet з ароматом полуниці 6л",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4820276193093",
         "branch_id": "777"
     },
     {
@@ -52976,14 +52944,6 @@
         "branch_id": "777"
     },
     {
-        "code": "1F23D9D1-FF18-4E7F-9F9C-581CC9C8775B",
-        "name": "Курточка для собак AiryVest двостороння S40, червоно-чорна",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4823089302881",
-        "branch_id": "777"
-    },
-    {
         "code": "E382BB48-DC83-4689-BD6C-60B85888FD16",
         "name": "Курточка для собак AiryVest двостороння XS 22, салатова-жовта",
         "vat": 20,
@@ -53661,14 +53621,6 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "4820224502274",
-        "branch_id": "777"
-    },
-    {
-        "code": "F4D174FA-464A-4718-BB61-D311621C7636",
-        "name": "Анімал нашийник LED-S 40 см червоний з підзарядкою",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "6914068020167",
         "branch_id": "777"
     },
     {
@@ -55736,6 +55688,14 @@
         "branch_id": "777"
     },
     {
+        "code": "D28D2741-E8B1-43C4-9D0F-9F6C0B05B5A9",
+        "name": "Monge cat monoprotein kitten з форелю 1.5 кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8009470005500",
+        "branch_id": "777"
+    },
+    {
         "code": "C49EAC4F-D4E6-42CB-81DD-89C20445A238",
         "name": "Дощовик Shark S2p",
         "vat": 20,
@@ -57152,6 +57112,14 @@
         "branch_id": "777"
     },
     {
+        "code": "645BAB21-51B1-41E9-BA22-EBE45EF8B211",
+        "name": "Wanpy Виведення шерсті (Hairball Control) рідкі ласощі для котів",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "6927749871750",
+        "branch_id": "777"
+    },
+    {
         "code": "AAA443AB-691B-4423-BCA7-BB6F32AA99BB",
         "name": "Wanpy Шкіра та шерсть ( Skin and coat) рідкі ласощі для котів",
         "vat": 20,
@@ -57781,14 +57749,6 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "4011905354743",
-        "branch_id": "777"
-    },
-    {
-        "code": "2801FA6F-8A92-41F7-9988-F70DDF631373",
-        "name": "Natural Снек баранина з селерою, петрушкою та гарбузом 50 г",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "4820241161843",
         "branch_id": "777"
     },
     {
@@ -62416,6 +62376,14 @@
         "branch_id": "777"
     },
     {
+        "code": "D6CC6A63-6D2C-440C-B754-82D5CD582CA4",
+        "name": "Толстовка Зайчик коричнева У-201",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "2000000021652",
+        "branch_id": "777"
+    },
+    {
         "code": "9E161CCE-495E-4061-9A74-2F45429DEA1D",
         "name": "Светр вязаний Ялинка марсала 3",
         "vat": 20,
@@ -63305,7 +63273,7 @@
     },
     {
         "code": "61D07086-AC5A-46C2-9B6C-CE75F3DAB966",
-        "name": "Gift kitten форель з ромашкою 15г",
+        "name": "Gift kitten форель з ромашкою 15г упаковка",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470085243",
@@ -63345,7 +63313,7 @@
     },
     {
         "code": "7266181D-1963-472D-97F9-D69EEDC7C44D",
-        "name": "Gift immunity support кролик з нуклеотидами 45г",
+        "name": "Gift immunity support кролик з нуклеотидами 45г упаковка",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470085397",
@@ -63353,7 +63321,7 @@
     },
     {
         "code": "07D8BB30-8523-4E77-9669-DC4DAB1659F2",
-        "name": "Gift sensitive digestion ягня з каштанами 45г",
+        "name": "Gift sensitive digestion ягня з каштанами 45г упаковка",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470085427",
@@ -64296,6 +64264,14 @@
         "branch_id": "777"
     },
     {
+        "code": "B487D2EA-3A72-4E59-BCD7-47B9A3F616E0",
+        "name": "Ласощі Natural Шия куряча 5шт",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820241161034",
+        "branch_id": "777"
+    },
+    {
         "code": "0E80A96F-7855-4B84-A46A-CC630596F204",
         "name": "Ветеринарний комір Trixie пластиковий на липучці М 18см",
         "vat": 20,
@@ -64949,6 +64925,14 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "4011905040929",
+        "branch_id": "777"
+    },
+    {
+        "code": "6DEDCE88-AC1E-4EF1-8A15-CA78813B97AE",
+        "name": "Іграшка Trixie паличка з плюш рибою для котів 46 см",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4011905456195",
         "branch_id": "777"
     },
     {
@@ -67784,6 +67768,14 @@
         "branch_id": "777"
     },
     {
+        "code": "57AF3BD5-2F08-48D2-91E6-F7297772B453",
+        "name": "Набір паучів для стерил котів з ягням та журавлиною у соусі 3+1",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "2700000040546",
+        "branch_id": "777"
+    },
+    {
         "code": "549C5596-C2DD-4A2C-BBF5-8A7FF6377E21",
         "name": "Корм вологий Brit GF VD Урінарі та Стрес Реліф для котів з індичкою 85г",
         "vat": 20,
@@ -68557,6 +68549,14 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "4820224215655",
+        "branch_id": "777"
+    },
+    {
+        "code": "BAF8F20C-BB7B-4C0A-B31A-4B2CEC1AC7EF",
+        "name": "Ласощі Trixie Junior Лосось Хмари для котів 40г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4011905427546",
         "branch_id": "777"
     },
     {
@@ -69352,14 +69352,6 @@
         "branch_id": "777"
     },
     {
-        "code": "4B1E6039-59BB-4F10-9922-6DE92BB40AF3",
-        "name": "Monge cat корм grill mix кролік ягня 1,02 кг",
-        "vat": 20,
-        "producer": "N/A",
-        "barcode": "8009470017534",
-        "branch_id": "777"
-    },
-    {
         "code": "CCCC42CC-8081-40BF-A826-56EBCDE981EF",
         "name": "Monge cat корм grill mix steriliset півник форель яловичина 1,02 кг",
         "vat": 20,
@@ -69377,7 +69369,7 @@
     },
     {
         "code": "13EFF234-1564-4608-B778-15D9AC3CBC9D",
-        "name": "Monge dog корм  сухой all breeds яловичина з рисом 2,5 кг",
+        "name": "Monge dog All breeds Puppy&Junior яловичина з рисом 2,5 кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470011372",
@@ -69393,7 +69385,7 @@
     },
     {
         "code": "94A5E101-9E80-4801-96DA-CD05EBBF84FE",
-        "name": "Monge dog корм all breeds adult лосось з рісом",
+        "name": "Monge dog All breeds adult лосось з рисом 2,5кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "8009470011297",
@@ -69401,10 +69393,10 @@
     },
     {
         "code": "39949F5A-6A16-404B-82DA-EC055F656AB0",
-        "name": "Monge dog корм all breeds adult ягня рис і картопля",
+        "name": "Monge dog корм all breeds adult ягня рис і картопля 2,5кг",
         "vat": 20,
         "producer": "N/A",
-        "barcode": "80009470011310",
+        "barcode": "8009470011310",
         "branch_id": "777"
     },
     {
@@ -69441,10 +69433,10 @@
     },
     {
         "code": "1F7563BB-8E93-489D-97A5-E1194BFADCB9",
-        "name": "Gift skin support лосось з алое 45г",
+        "name": "Gift skin support лосось з алое 45г упаковка",
         "vat": 20,
         "producer": "N/A",
-        "barcode": "80094770085434",
+        "barcode": "8009470085434",
         "branch_id": "777"
     },
     {
@@ -69453,6 +69445,246 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "4820138345400",
+        "branch_id": "777"
+    },
+    {
+        "code": "77B024FD-34EA-4B8F-BB96-9AC27F464B43",
+        "name": "Crispy для гризунів 5кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "2100043525015",
+        "branch_id": "777"
+    },
+    {
+        "code": "FE550F2D-4CDC-4876-9034-3F8C5AB6761B",
+        "name": "лопатка модерн",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5412087019410",
+        "branch_id": "777"
+    },
+    {
+        "code": "52810A43-F6C1-47FA-9B83-1EEB237FF661",
+        "name": "Лопатка модерн 27,8*10,3см",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5412087012701",
+        "branch_id": "777"
+    },
+    {
+        "code": "A6E14E43-46EB-49AF-887D-728847D0129A",
+        "name": "лопатка модерн 27,8*10,3см чорничний",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5412087012695",
+        "branch_id": "777"
+    },
+    {
+        "code": "89FD99A1-50C5-4D4D-8001-28E537B7655F",
+        "name": "Лопатка модерн 27,8*10,3см світло-зелений",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5412087021369",
+        "branch_id": "777"
+    },
+    {
+        "code": "DF817440-D141-430F-A376-DC9D7856743D",
+        "name": "Закритий туалет з відкидною кришкою 58*45*42 тепло-сірий",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5412087007349",
+        "branch_id": "777"
+    },
+    {
+        "code": "ED8E38F0-93B3-4D9A-AE65-BEC3823DE444",
+        "name": "ХК 85г Шматочки лосося в соусі. Вологий корм для котів",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4001967173000",
+        "branch_id": "777"
+    },
+    {
+        "code": "F2627B1B-1240-4583-9742-9D147B8625DF",
+        "name": "OptiMeal Сухий корм для стерилізованих котів лосось 1,5 кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820215368162",
+        "branch_id": "777"
+    },
+    {
+        "code": "3D2B8CE6-44F4-4617-A54D-E61724146E28",
+        "name": "Флип кет джумбо  закритий туалет відкідною кришкою  58*45*42 чорничний",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5412087007325",
+        "branch_id": "777"
+    },
+    {
+        "code": "0D0276E9-09D7-40B5-BA7B-DDF934EAC0D9",
+        "name": "Фарміна дог сух N&D з Качкою та динею ADULT MEDIUM&MAXI дієт. харч. для стерилізованих собак 12 кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8010276038968",
+        "branch_id": "777"
+    },
+    {
+        "code": "86FC6C7E-F5B9-452A-807A-278D6FEF1DE4",
+        "name": "Brit Care Mini набір вологого корму для цуценят 3+1",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "2700000051726",
+        "branch_id": "777"
+    },
+    {
+        "code": "7801D377-6954-4899-90A7-CBAE2FA4F62B",
+        "name": "Pet Fashion Bliss плед для собак та котів плюш пудра 68*114.6 см",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4823082441358",
+        "branch_id": "777"
+    },
+    {
+        "code": "D6CE82A5-1AE3-4E45-9903-C8700D01AB2A",
+        "name": "Pet Fashion Bliss плед для собак та котів плюш сірий картатий 70.5*55.5 см",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4823082441334",
+        "branch_id": "777"
+    },
+    {
+        "code": "9677D0B9-2908-4A4E-9180-73BB33E70E39",
+        "name": "ProVet SaniPet лосьон по догляду за вухами идля котів та собак 300 мл",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4823082429110",
+        "branch_id": "777"
+    },
+    {
+        "code": "9439D6E2-A4FE-4E28-A1E7-C3635D35A91C",
+        "name": "ProVet SaniPet лосьон по догляду за очима идля котів та собак спрей 300 мл",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4823082429103",
+        "branch_id": "777"
+    },
+    {
+        "code": "4671B4D4-AFF5-455B-B536-05BFA99B6046",
+        "name": "Trixie коврик під туалет ПВХ блакитний 37*45 см",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4011905403694",
+        "branch_id": "777"
+    },
+    {
+        "code": "D25D8D71-0EA3-4F72-999E-1B396A646E65",
+        "name": "Trixie коврик під туалет ПВХ рожевий 37*45 см",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4011905403687",
+        "branch_id": "777"
+    },
+    {
+        "code": "6456F129-C630-44A8-8FAB-88EC9531F4F4",
+        "name": "Натуральні сушені ласощі для собак Вуха яловичі сушені",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4823082435654",
+        "branch_id": "777"
+    },
+    {
+        "code": "AE3D77A1-32C0-4995-9F7C-E86A8EF03128",
+        "name": "Натуральні сушені ласощі для собак Печінка яловича сушена 100 г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4823082435715",
+        "branch_id": "777"
+    },
+    {
+        "code": "8091DAB4-2BEB-43D7-8EE6-5B23316AE921",
+        "name": "Mavsy іграшка для собак з кавового дерева XS",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820266800369",
+        "branch_id": "777"
+    },
+    {
+        "code": "A696C47E-F54C-40FA-A75B-702C46E5CFF0",
+        "name": "GRANDORF Cat 4MEAT Sterilised Adult, Грандорф корм сухий чотири м'яса для дорослих стерилізованих котів 0,4кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5407007851294",
+        "branch_id": "777"
+    },
+    {
+        "code": "A0F60486-ED7A-48C7-9320-95F743F789B2",
+        "name": "GRANDORF Cat Rabbit &Turkey Sterilized Adult, Грандорф корм сухий з кроликом та індичкою для дорослих стерилізованих котів 0,4кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "5407007851232",
+        "branch_id": "777"
+    },
+    {
+        "code": "A718956A-F51E-48B5-8E97-2C75A616923F",
+        "name": "Lenda Wet Cat food Вологий корм для котів з тунцем та кальмарами 70г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8435578201276",
+        "branch_id": "777"
+    },
+    {
+        "code": "1CBADA7A-D84A-4C06-9DA4-2BED56C09C4D",
+        "name": "Lenda Wet Cat food Вологий корм для котів з тунцем та креветками 70г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8435578201283",
+        "branch_id": "777"
+    },
+    {
+        "code": "52F15474-CB8D-4D07-8D95-7BF72E92427D",
+        "name": "Lenda Wet Cat food Вологий корм для котів з качкою та яловичиною 70г",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "8435578201313",
+        "branch_id": "777"
+    },
+    {
+        "code": "B57AE1D4-C5CE-49E7-B072-117F20B84920",
+        "name": "Perfecto Cat ласощі для котів палички кролик та птиця",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4036897211133",
+        "branch_id": "777"
+    },
+    {
+        "code": "F51748A4-19F6-4794-A4C6-8F9C1C29A9C2",
+        "name": "Perfecto Cat ласощі для котів палички лосось та форель",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4036897314124",
+        "branch_id": "777"
+    },
+    {
+        "code": "4587BD76-DFA1-4928-8CB1-5D2A8900B933",
+        "name": "Perfecto Cat ласощі для котів палички птиця та печінка",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4036897314131",
+        "branch_id": "777"
+    },
+    {
+        "code": "3A8FBA15-4BE0-44B6-B80C-E14ABBE18717",
+        "name": "Пакет лапка",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "65672245650",
+        "branch_id": "777"
+    },
+    {
+        "code": "4DEF12D4-86AE-427D-8509-FE782369C7E7",
+        "name": "Нейтралізатор запахів домашніх тварин Lucky Pet з ароматом лайму 500мл",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820276196117",
         "branch_id": "777"
     }
 ]

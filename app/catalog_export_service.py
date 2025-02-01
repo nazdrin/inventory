@@ -7,9 +7,32 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_async_db, DeveloperSettings, EnterpriseSettings
 from app.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
-
+from datetime import datetime,timezone
+import pytz
+local_tz = pytz.timezone('Europe/Kiev')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Получаем путь к временному каталогу из переменной окружения
+TEMP_FILE_PATH = os.getenv("TEMP_FILE_PATH", "./temp_logs")
 
+async def save_catalog_log(enterprise_code: str, formatted_json: dict):
+    """Сохраняет JSON-данные стока в файл в каталоге TEMP_FILE_PATH."""
+    try:
+        # Определяем папку для предприятия
+        catalog_folder = os.path.join(TEMP_FILE_PATH, enterprise_code)
+        os.makedirs(catalog_folder, exist_ok=True)  # Создаем папку, если её нет
+
+        # Формируем имя файла: stock_{дата}.json
+        file_name = f"catalog_{datetime.now(local_tz).strftime('%Y%m%d')}.json"
+        file_path = os.path.join(catalog_folder, file_name)
+
+        # Записываем JSON в файл (перезаписываем предыдущий)
+        with open(file_path, "w", encoding="utf-8") as file:
+            json.dump(formatted_json, file, ensure_ascii=False, indent=4)
+
+        logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
+    except Exception as e:
+        logging.error(f"Failed to save catalog JSON log for enterprise_code={enterprise_code}: {str(e)}")
+        
 # Словарь для преобразования идентификаторов
 SUPPLIER_MAPPING = {
     "morion": 1,
@@ -105,9 +128,9 @@ async def export_catalog(enterprise_code: str, raw_data: list):
             transformed_data = await transform_data(raw_data, developer_settings,enterprise_code)
 
             # Вывод данных в формате JSON в консоль
-            logging.info("Transformed Data (JSON):")
-            print(json.dumps(transformed_data, ensure_ascii=False, indent=4))
-
+            #logging.info("Transformed Data (JSON):")
+            #catalog_log_file=json.dumps(transformed_data, ensure_ascii=False, indent=4)
+            await save_catalog_log(enterprise_code, transformed_data)
             # Формируем URL эндпоинта
             endpoint = f"{developer_settings.endpoint_catalog}/Import/Ref/{enterprise_settings.branch_id}"
             logging.info(f"Prepared endpoint URL: {endpoint}")

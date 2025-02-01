@@ -1,4 +1,5 @@
 import logging
+import os
 from app.models import InventoryData, InventoryStock, EnterpriseSettings
 from app.database import get_async_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +11,25 @@ from app.cleanup_service import cleanup_old_data
 from app.catalog_export_service import export_catalog  # Импорт функции экспорта
 from app.stock_export_service import process_stock_file
 from app.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
+
+# Путь к лог-файлу в корневой директории
+log_file = "database_service.log"
+
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_file, encoding="utf-8"),  # Лог в файл
+        logging.StreamHandler()  # Лог в консоль
+    ]
+)
+
+# Устанавливаем более высокий уровень логирования для консоли
+console_handler = logging.StreamHandler()
+#console_handler.setLevel(logging.WARNING)  # В консоли только WARNING и ERROR
+logging.getLogger().addHandler(console_handler)# Настройка логирования
+#logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 async def process_database_service(file_path: str, data_type: str, enterprise_code: str):
     """

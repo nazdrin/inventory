@@ -9,6 +9,10 @@ from sqlalchemy.future import select
 
 DEFAULT_VAT = 20
 LIMIT = 100  # Лимит количества записей за один запрос
+def log_progress(offset, count):
+    """Логирование процесса обновляемой строкой в консоли"""
+    sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
+    sys.stdout.flush()
 
 async def fetch_developer_settings():
     """Получение API_ENDPOINT из DeveloperSettings."""
@@ -103,6 +107,8 @@ async def run_service(enterprise_code):
             break  # Если список продуктов пуст, заканчиваем
 
         all_products.extend(products)
+         # Логируем прогресс одной строкой
+        log_progress(offset, len(products))
         offset += LIMIT  # Увеличиваем offset
 
     if not all_products:

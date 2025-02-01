@@ -8,6 +8,10 @@ from app.database_service import process_database_service
 from sqlalchemy.future import select
 
 LIMIT = 100  # Лимит количества записей за один запрос
+def log_progress(offset, count):
+    """Логирование процесса обновляемой строкой в консоли"""
+    sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
+    sys.stdout.flush()
 
 # Словарь store_id -> branch_id
 STORE_BRANCH_MAP = {
@@ -118,6 +122,8 @@ async def run_service(enterprise_code):
                 break  # Если список `products` пустой, прекращаем цикл для store_id
 
             all_products.extend(products)
+             # Логируем прогресс одной строкой
+            log_progress(offset, len(products))
             offset += LIMIT  # Увеличиваем offset
 
     if not all_products:

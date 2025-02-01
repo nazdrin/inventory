@@ -16,7 +16,28 @@ import json
 local_tz = pytz.timezone('Europe/Kiev')
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Получаем путь к временному каталогу из переменной окружения
+TEMP_FILE_PATH = os.getenv("TEMP_FILE_PATH", "./temp_logs")
 
+async def save_stock_log(enterprise_code: str, formatted_json: dict):
+    """Сохраняет JSON-данные стока в файл в каталоге TEMP_FILE_PATH."""
+    try:
+        # Определяем папку для предприятия
+        stock_folder = os.path.join(TEMP_FILE_PATH, enterprise_code)
+        os.makedirs(stock_folder, exist_ok=True)  # Создаем папку, если её нет
+
+        # Формируем имя файла: stock_{дата}.json
+        file_name = f"stock_{datetime.now(local_tz).strftime('%Y%m%d')}.json"
+        file_path = os.path.join(stock_folder, file_name)
+
+        # Записываем JSON в файл (перезаписываем предыдущий)
+        with open(file_path, "w", encoding="utf-8") as file:
+            json.dump(formatted_json, file, ensure_ascii=False, indent=4)
+
+        logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
+    except Exception as e:
+        logging.error(f"Failed to save stock JSON log for enterprise_code={enterprise_code}: {str(e)}")
+        
 async def process_stock_file(enterprise_code: str, stock_file: list):
     
 
@@ -86,8 +107,9 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
                 "Branches": list(branches_data.values())
             }
             # Форматируем и выводим данные JSON для удобства в терминале
-            logging.info(f"Formatted JSON data for enterprise_code={enterprise_code}: {json.dumps(formatted_json, indent=4)}")
-            
+            #logging.info(f"Formatted JSON data for enterprise_code={enterprise_code}: {json.dumps(formatted_json, indent=4)}")
+            # Сохраняем JSON вместо вывода в лог
+            await save_stock_log(enterprise_code, formatted_json)
 
             # Отправляем данные на эндпоинт
             result = await db.execute(select(DeveloperSettings).limit(1))
