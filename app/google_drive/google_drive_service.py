@@ -9,7 +9,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from sqlalchemy.future import select
 from app.database import get_async_db, EnterpriseSettings, DeveloperSettings
 from app.google_drive.data_validator import validate_data
-from app.notification_service import send_notification  # Функция для отправки уведомлений
+from app.services.notification_service import send_notification  # Функция для отправки уведомлений
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

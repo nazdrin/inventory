@@ -1,18 +1,16 @@
-import sys
-sys.path.append('C:/Users/nazdr/Documents/inventory')
 import requests
 import json
 import asyncio
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
-from app.database_service import process_database_service
+from app.services.database_service import process_database_service
 from sqlalchemy.future import select
 
 DEFAULT_VAT = 20
 LIMIT = 100  # Лимит количества записей за один запрос
-def log_progress(offset, count):
-    """Логирование процесса обновляемой строкой в консоли"""
-    sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
-    sys.stdout.flush()
+# def log_progress(offset, count):
+#     """Логирование процесса обновляемой строкой в консоли"""
+#     sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
+#     sys.stdout.flush()
 
 async def fetch_developer_settings():
     """Получение API_ENDPOINT из DeveloperSettings."""
@@ -49,23 +47,6 @@ def fetch_products(api_endpoint, api_key, offset=0, limit=LIMIT):
     except requests.RequestException:
         return None
 
-# def transform_products(products, branch_id):
-#     """Трансформация данных продуктов в целевой формат."""
-#     transformed = []
-#     for product in products:
-#         producer = product.get("short_description")
-#         if not producer or producer in [None, "", 0]:  # Фильтрация некорректных значений
-#             producer = "N/A"
-
-#         transformed.append({
-#             "code": product.get("product_id"),
-#             "name": product.get("title"),
-#             "vat": DEFAULT_VAT,
-#             "producer": producer,
-#             "barcode": product.get("barcode"),
-#             "branch_id": branch_id
-#         })
-#     return transformed
 import json
 from collections import Counter
 
@@ -136,7 +117,6 @@ async def run_service(enterprise_code):
             break  # Если список продуктов пуст, заканчиваем
 
         all_products.extend(products)
-         # Логируем прогресс одной строкой
         log_progress(offset, len(products))
         offset += LIMIT  # Увеличиваем offset
 
@@ -150,6 +130,6 @@ async def run_service(enterprise_code):
 
     await process_database_service(json_file_path, "catalog", enterprise_code)
 
-if __name__ == "__main__":
-    TEST_ENTERPRISE_CODE = "2"
-    asyncio.run(run_service(TEST_ENTERPRISE_CODE))
+# if __name__ == "__main__":
+    # TEST_ENTERPRISE_CODE = "2"
+    # asyncio.run(run_service(TEST_ENTERPRISE_CODE))

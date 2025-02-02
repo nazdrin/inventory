@@ -4,7 +4,7 @@ import requests
 import json
 import asyncio
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
-from app.database_service import process_database_service
+from app.services.database_service import process_database_service
 from sqlalchemy.future import select
 
 LIMIT = 100  # Лимит количества записей за один запрос
@@ -13,7 +13,6 @@ def log_progress(offset, count):
     sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
     sys.stdout.flush()
 
-# Словарь store_id -> branch_id
 STORE_BRANCH_MAP = {
     "833a605c-fa32-46b6-9735-067239c68634": "30447",
     # "E0D20C48-9BF2-499D-A7BA-466C97BEC6B7": "222",
@@ -57,28 +56,6 @@ def fetch_products(api_endpoint, api_key, store_id, offset=0, limit=LIMIT):
     except requests.RequestException:
         return None
 
-# def transform_stock(products):
-#     """Трансформация данных продуктов в целевой формат для стока."""
-#     transformed = []
-#     for product in products:
-#         product_id = product.get("product_id")
-#         price_data = product.get("pices", [])
-#         balance = product.get("balance", 0)
-#         qty = max(float(balance), 0)
-#         for price_entry in price_data:
-#             if price_entry.get("price_title") == "Роздрібна":
-#                 store_id = price_entry.get("store_id")
-#                 branch = STORE_BRANCH_MAP.get(store_id)
-
-#                 if branch:
-#                     transformed.append({
-#                         "branch": branch,
-#                         "code": product_id,
-#                         "price": float(price_entry.get("price", 0)),
-#                         "price_reserve": float(price_entry.get("price", 0)),
-#                         "qty": float(balance),  # Используем balance без изменений
-#                     })
-#     return transformed
 def transform_stock(products):
     """Трансформация данных продуктов в целевой формат для стока."""
     transformed = []

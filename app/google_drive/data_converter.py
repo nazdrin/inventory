@@ -5,9 +5,9 @@ import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import EnterpriseSettings
 from sqlalchemy import select
-from app.database_service import process_database_service  # Импорт функции Database_service
+from app.services.database_service import process_database_service  # Импорт функции Database_service
 import xmltodict
-from app.notification_service import send_notification 
+from app.services.notification_service import send_notification 
 xml_data = "<root><element>value</element></root>"
 parsed_data = xmltodict.parse(xml_data)
 print(parsed_data)

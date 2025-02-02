@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 import csv
 from app.google_drive.data_converter import process_data_converter  # Импорт data_converter
 from app.database import get_async_db
-from app.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
+from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

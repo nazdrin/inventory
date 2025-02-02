@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import Base, engine, AsyncSessionLocal, DeveloperSettings
 from app.schemas import LoginSchema
-from app.developer_panel.routes import router as developer_router
+from app.routes import router as developer_router
 
 # Инициализация FastAPI приложения
 app = FastAPI()
