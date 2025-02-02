@@ -86,14 +86,16 @@ async def get_enterprises_for_stock(db: AsyncSession):
 async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseSettings):
     """Обработка остатков для предприятия."""
     try:
-        if enterprise.data_format == "dnttrade":
+        if enterprise.data_format == "Dntrade":
             # Запуск обработки через run_service
             await run_service(enterprise.enterprise_code)
             logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (dnttrade).")
-        elif enterprise.data_transfer_method == "googledrive":
+        elif enterprise.data_format == "GoogleDrive":
             # Запуск обработки через extract_stock_from_google_drive
             await extract_stock_from_google_drive (enterprise.enterprise_code)
             logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (Google Drive).")
+        elif enterprise.data_format == "Blank":
+            pass
         else:
             logging.warning(f"Неподдерживаемый формат данных для предприятия {enterprise.enterprise_code}.")
             send_notification(f"Ошибка обработки остатков: неподдерживаемый формат данных ({enterprise.enterprise_code}).", enterprise.enterprise_code)
