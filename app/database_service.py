@@ -12,15 +12,12 @@ from app.catalog_export_service import export_catalog  # Импорт функц
 from app.stock_export_service import process_stock_file
 from app.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
 
-# Путь к лог-файлу в корневой директории
-log_file = "database_service.log"
 
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(log_file, encoding="utf-8"),  # Лог в файл
         logging.StreamHandler()  # Лог в консоль
     ]
 )

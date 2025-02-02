@@ -69,33 +69,12 @@ const EnterprisePanel = () => {
         { name: "token", label: "Токен подключения к API предприятия", type: "text" },
         { name: "tabletki_login", label: "Tabletki login (Логин tabletki )", type: "text" },
         { name: "tabletki_password", label: "Tabletki Password (Пароль tabletki)", type: "password" },
-        { name: "email", label: "Email (Електронна пошта)", type: "email" },
         { name: "branch_id", label: "Branch ID (ID філії)", type: "text" },
         {
             name: "data_format",
             label: "Data Format (Формат даних)",
             type: "select",
             options: dataFormats.map((format) => ({ value: format.format_name, label: format.format_name })),
-        },
-        {
-            name: "file_format",
-            label: "File Format (Формат файлів)",
-            type: "select",
-            options: [
-                { value: "xml", label: "XML" },
-                { value: "excel", label: "Excel" },
-                { value: "csv", label: "CSV" },
-            ],
-        },
-        {
-            name: "data_transfer_method",
-            label: "Data Transfer Method (Метод передачі даних)",
-            type: "select",
-            options: [
-                { value: "api", label: "API" },
-                { value: "googledrive", label: "Google Drive" },
-                { value: "panel", label: "Панель" },
-            ],
         },
         { name: "single_store", label: "Single Store (Єдиний магазин)", type: "checkbox" },
         { name: "store_serial", label: "Store Serial (Серійний номер магазину)", type: "text" },

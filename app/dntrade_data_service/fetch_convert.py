@@ -49,23 +49,52 @@ def fetch_products(api_endpoint, api_key, offset=0, limit=LIMIT):
     except requests.RequestException:
         return None
 
+# def transform_products(products, branch_id):
+#     """Трансформация данных продуктов в целевой формат."""
+#     transformed = []
+#     for product in products:
+#         producer = product.get("short_description")
+#         if not producer or producer in [None, "", 0]:  # Фильтрация некорректных значений
+#             producer = "N/A"
+
+#         transformed.append({
+#             "code": product.get("product_id"),
+#             "name": product.get("title"),
+#             "vat": DEFAULT_VAT,
+#             "producer": producer,
+#             "barcode": product.get("barcode"),
+#             "branch_id": branch_id
+#         })
+#     return transformed
+import json
+from collections import Counter
+
 def transform_products(products, branch_id):
     """Трансформация данных продуктов в целевой формат."""
     transformed = []
+    seen_product_ids = set()
+    product_id_counts = Counter(product.get("product_id") for product in products)
+    
     for product in products:
+        product_id = product.get("product_id")
+        if product_id in seen_product_ids:
+            continue  # Пропускаем дублирующийся product_id
+        
         producer = product.get("short_description")
         if not producer or producer in [None, "", 0]:  # Фильтрация некорректных значений
             producer = "N/A"
-
+        
         transformed.append({
-            "code": product.get("product_id"),
+            "code": product_id,
             "name": product.get("title"),
             "vat": DEFAULT_VAT,
             "producer": producer,
             "barcode": product.get("barcode"),
             "branch_id": branch_id
         })
+        seen_product_ids.add(product_id)  # Запоминаем обработанный product_id
     return transformed
+
 
 def save_to_json(data, filename):
     """Сохранение данных в файл JSON."""

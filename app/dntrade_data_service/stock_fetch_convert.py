@@ -15,11 +15,11 @@ def log_progress(offset, count):
 
 # Словарь store_id -> branch_id
 STORE_BRANCH_MAP = {
-    "833a605c-fa32-46b6-9735-067239c68634": "111",
-    "E0D20C48-9BF2-499D-A7BA-466C97BEC6B7": "222",
-    "AB160935-AD2E-4539-A937-2F05F9F4775F": "333",
-    "99AB8090-5090-4638-BC02-B781CA861976": "444",
-    "A86790BA-CBDC-44D7-A780-F05FE7B1FFB7": "555",
+    "833a605c-fa32-46b6-9735-067239c68634": "30447",
+    # "E0D20C48-9BF2-499D-A7BA-466C97BEC6B7": "222",
+    # "AB160935-AD2E-4539-A937-2F05F9F4775F": "333",
+    # "99AB8090-5090-4638-BC02-B781CA861976": "444",
+    # "A86790BA-CBDC-44D7-A780-F05FE7B1FFB7": "555",
 }
 
 async def fetch_developer_settings():
@@ -57,14 +57,65 @@ def fetch_products(api_endpoint, api_key, store_id, offset=0, limit=LIMIT):
     except requests.RequestException:
         return None
 
+# def transform_stock(products):
+#     """Трансформация данных продуктов в целевой формат для стока."""
+#     transformed = []
+#     for product in products:
+#         product_id = product.get("product_id")
+#         price_data = product.get("pices", [])
+#         balance = product.get("balance", 0)
+#         qty = max(float(balance), 0)
+#         for price_entry in price_data:
+#             if price_entry.get("price_title") == "Роздрібна":
+#                 store_id = price_entry.get("store_id")
+#                 branch = STORE_BRANCH_MAP.get(store_id)
+
+#                 if branch:
+#                     transformed.append({
+#                         "branch": branch,
+#                         "code": product_id,
+#                         "price": float(price_entry.get("price", 0)),
+#                         "price_reserve": float(price_entry.get("price", 0)),
+#                         "qty": float(balance),  # Используем balance без изменений
+#                     })
+#     return transformed
 def transform_stock(products):
     """Трансформация данных продуктов в целевой формат для стока."""
     transformed = []
+    log_data = []
+    full_input_log_filename = "full_input_data.json"  # Файл для логирования всех входящих данных
+    log_filename = "stock_logs.json"  # Файл для логирования конкретных товаров
+    
+    # Логирование всех входящих данных
+    try:
+        with open(full_input_log_filename, "w", encoding="utf-8") as full_log_file:
+            json.dump(products, full_log_file, ensure_ascii=False, indent=4)
+    except IOError as e:
+        print(f"Ошибка записи полного входного лога: {e}")
+    
     for product in products:
         product_id = product.get("product_id")
         price_data = product.get("pices", [])
-        balance = product.get("balance", 0)
-
+        balance = product.get("balance")
+        
+        # Проверка, если balance не число или None, устанавливаем в 0
+        try:
+            balance = float(balance)
+        except (TypeError, ValueError):
+            balance = 0
+        
+        # Устанавливаем qty в 0, если balance отрицательный
+        qty = max(balance, 0)
+        
+        # Логирование, если product_id совпадает с указанным
+        if product_id == "65FF6A4D-A87A-4BE4-A3B3-FF768CD2E88D":
+            log_data.append({
+                "product_id": product_id,
+                "balance": balance,
+                "qty": qty,
+                "price_data": price_data
+            })
+        
         for price_entry in price_data:
             if price_entry.get("price_title") == "Роздрібна":
                 store_id = price_entry.get("store_id")
@@ -76,9 +127,20 @@ def transform_stock(products):
                         "code": product_id,
                         "price": float(price_entry.get("price", 0)),
                         "price_reserve": float(price_entry.get("price", 0)),
-                        "qty": float(balance),  # Используем balance без изменений
+                        "qty": qty,  # Используем скорректированное значение qty
                     })
+    
+    # Запись логов в файл, если есть данные для логирования
+    if log_data:
+        try:
+            with open(log_filename, "w", encoding="utf-8") as log_file:
+                json.dump(log_data, log_file, ensure_ascii=False, indent=4)
+        except IOError as e:
+            print(f"Ошибка записи лога: {e}")
+    
     return transformed
+
+
 
 def save_to_json(data, filename):
     """Сохранение данных в файл JSON."""
@@ -137,5 +199,5 @@ async def run_service(enterprise_code):
     await process_database_service(json_file_path, "stock", enterprise_code)
 
 if __name__ == "__main__":
-    TEST_ENTERPRISE_CODE = "2"
+    TEST_ENTERPRISE_CODE = "238"
     asyncio.run(run_service(TEST_ENTERPRISE_CODE))

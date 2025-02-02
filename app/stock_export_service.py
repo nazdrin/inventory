@@ -17,7 +17,7 @@ local_tz = pytz.timezone('Europe/Kiev')
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 # Получаем путь к временному каталогу из переменной окружения
-TEMP_FILE_PATH = os.getenv("TEMP_FILE_PATH", "./temp_logs")
+TEMP_FILE_PATH = os.getenv("TEMP_DIR", "./temp_logs")
 
 async def save_stock_log(enterprise_code: str, formatted_json: dict):
     """Сохраняет JSON-данные стока в файл в каталоге TEMP_FILE_PATH."""

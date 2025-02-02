@@ -5,11 +5,6 @@ from app.database import Base, engine, AsyncSessionLocal, DeveloperSettings
 from app.schemas import LoginSchema
 from app.developer_panel.routes import router as developer_router
 
-#from app.tabletki_data_service.app.routers.data_upload import router as data_upload_router
-#from app.tabletki_data_service.app.routers.validation import router as validation_router
-#from app.tabletki_data_service.app.routers.transformation import router as transformation_router
-#from app.tabletki_data_service.app.routers.notification import router as notification_router
-
 # Инициализация FastAPI приложения
 app = FastAPI()
 
