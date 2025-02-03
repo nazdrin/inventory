@@ -1,3 +1,4 @@
+import sys
 import requests
 import json
 import asyncio
@@ -7,10 +8,10 @@ from sqlalchemy.future import select
 
 DEFAULT_VAT = 20
 LIMIT = 100  # Лимит количества записей за один запрос
-# def log_progress(offset, count):
+def log_progress(offset, count):
 #     """Логирование процесса обновляемой строкой в консоли"""
-#     sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
-#     sys.stdout.flush()
+    sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
+    sys.stdout.flush()
 
 async def fetch_developer_settings():
     """Получение API_ENDPOINT из DeveloperSettings."""

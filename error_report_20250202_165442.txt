@@ -1,1 +1,0 @@
-2025-02-02 16:54:42.080580 - Enterprise Code: 238 - Error: name 'log_progress' is not defined
