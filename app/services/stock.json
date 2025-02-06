@@ -445,7 +445,7 @@
         "code": "B0877140-F28C-4277-AE6D-4C1F864982EF",
         "price": 18.0,
         "price_reserve": 18.0,
-        "qty": 9.0
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -473,7 +473,7 @@
         "code": "57B03D55-CC6B-4F46-BA7A-637352884F16",
         "price": 15.0,
         "price_reserve": 15.0,
-        "qty": 14.0
+        "qty": 10.0
     },
     {
         "branch": "30447",
@@ -837,7 +837,7 @@
         "code": "ADECE858-816C-4384-BDCC-1B3FB18404C1",
         "price": 32.0,
         "price_reserve": 32.0,
-        "qty": 12.0
+        "qty": 11.0
     },
     {
         "branch": "30447",
@@ -872,21 +872,21 @@
         "code": "BDED7D97-9678-4480-9F86-EDFEBB3253CE",
         "price": 32.0,
         "price_reserve": 32.0,
-        "qty": 9.0
+        "qty": 8.825
     },
     {
         "branch": "30447",
         "code": "FB9DDF87-7F05-493C-BC6F-50BF5EBDB5B5",
         "price": 32.0,
         "price_reserve": 32.0,
-        "qty": 5.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
         "code": "16CA324B-C587-4940-8196-B17E37A099FA",
         "price": 32.0,
         "price_reserve": 32.0,
-        "qty": 6.0
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -977,14 +977,14 @@
         "code": "AB0FB16F-002B-4964-A548-DD4773A66EB6",
         "price": 26.0,
         "price_reserve": 26.0,
-        "qty": 3.0
+        "qty": 7.0
     },
     {
         "branch": "30447",
         "code": "44770C44-3AEF-410D-AF9E-6AAD5726AC55",
         "price": 26.0,
         "price_reserve": 26.0,
-        "qty": 7.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
@@ -1320,28 +1320,28 @@
         "code": "5FDB0DC5-D50A-4051-A6F5-F2957CAF0CFC",
         "price": 19.0,
         "price_reserve": 19.0,
-        "qty": 19.0
+        "qty": 20.0
     },
     {
         "branch": "30447",
         "code": "3588F3B6-7A9B-43C8-8B05-676E4512ED29",
         "price": 19.0,
         "price_reserve": 19.0,
-        "qty": 6.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
         "code": "F3F2FE09-6946-4A22-B3BF-85E997AE1122",
         "price": 19.0,
         "price_reserve": 19.0,
-        "qty": 24.0
+        "qty": 27.0
     },
     {
         "branch": "30447",
         "code": "4183AAC9-4B88-4A2D-AB3B-CEDF30600379",
         "price": 19.0,
         "price_reserve": 19.0,
-        "qty": 15.0
+        "qty": 18.0
     },
     {
         "branch": "30447",
@@ -1495,7 +1495,7 @@
         "code": "0EC18C90-6E78-4800-B6A7-032841CCDEA2",
         "price": 341.0,
         "price_reserve": 341.0,
-        "qty": 4.07
+        "qty": 4.57
     },
     {
         "branch": "30447",
@@ -1586,7 +1586,7 @@
         "code": "1E253419-7338-41A4-B47B-40894F9AF453",
         "price": 40.0,
         "price_reserve": 40.0,
-        "qty": 24.0
+        "qty": 25.0
     },
     {
         "branch": "30447",
@@ -1859,7 +1859,7 @@
         "code": "1B0956AD-2576-437B-9B7C-8CAA12D749CD",
         "price": 345.0,
         "price_reserve": 345.0,
-        "qty": 3.405
+        "qty": 4.405
     },
     {
         "branch": "30447",
@@ -2004,9 +2004,9 @@
     {
         "branch": "30447",
         "code": "459BE8C6-A867-4885-A6EF-B98C650E45D5",
-        "price": 41.0,
-        "price_reserve": 41.0,
-        "qty": 0.0
+        "price": 61.0,
+        "price_reserve": 61.0,
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -2032,9 +2032,9 @@
     {
         "branch": "30447",
         "code": "0AC4D157-CE4E-4A12-9BB0-07E8EF66A9ED",
-        "price": 117.0,
-        "price_reserve": 117.0,
-        "qty": 6.0
+        "price": 108.0,
+        "price_reserve": 108.0,
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -2202,7 +2202,7 @@
         "code": "FD01EBB5-C349-4892-BAC3-51A0466DE9B3",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 1.0
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -2244,14 +2244,14 @@
         "code": "2660D1B2-8A41-4EC5-B834-40BC9FBD33CB",
         "price": 84.0,
         "price_reserve": 84.0,
-        "qty": 4.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "09CAC10E-AFB0-4AE2-ABD6-C97A07D119B9",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 0.0
+        "qty": 6.0
     },
     {
         "branch": "30447",
@@ -2272,7 +2272,7 @@
         "code": "FF4278BF-2D45-4453-B3DA-A44C4D93B5FD",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 0.0
+        "qty": 6.0
     },
     {
         "branch": "30447",
@@ -2293,7 +2293,7 @@
         "code": "F9CA5F4C-4CB2-4719-8B2C-81F201BA7DCC",
         "price": 127.0,
         "price_reserve": 127.0,
-        "qty": 1.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -2370,7 +2370,7 @@
         "code": "966324F1-7AAA-42A2-A59B-D27C8DF4DE00",
         "price": 141.0,
         "price_reserve": 141.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -2405,7 +2405,7 @@
         "code": "1339BA19-0CAC-4F3C-B094-BCFEA70FDB34",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 0.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -2417,9 +2417,9 @@
     {
         "branch": "30447",
         "code": "CDAB6D39-35EB-47A2-953A-3252C9433729",
-        "price": 123.0,
-        "price_reserve": 123.0,
-        "qty": 1.0
+        "price": 131.0,
+        "price_reserve": 131.0,
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -2440,21 +2440,21 @@
         "code": "7885ADEE-C590-442E-A5A1-B69C5F5409C9",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 1.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "B78E9257-E96B-4DFF-AE38-01AE69006973",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 0.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "B09DB466-9B7C-4D44-9DA0-402DF9C3ED29",
         "price": 46.0,
         "price_reserve": 46.0,
-        "qty": 0.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -2501,16 +2501,16 @@
     {
         "branch": "30447",
         "code": "9301D6F6-C1EF-4372-A40F-CA2709A52931",
-        "price": 77.0,
-        "price_reserve": 77.0,
-        "qty": 1.0
+        "price": 84.0,
+        "price_reserve": 84.0,
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "E0F96CA3-2061-4990-9CF9-0F1B494C2691",
         "price": 769.0,
         "price_reserve": 769.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -2671,7 +2671,7 @@
         "code": "6E89F4DB-5440-4119-811C-28579C16C6C1",
         "price": 223.0,
         "price_reserve": 223.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -2727,7 +2727,7 @@
         "code": "BB0D2810-145D-482C-8DE8-1A4994263C99",
         "price": 298.0,
         "price_reserve": 298.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -2797,7 +2797,7 @@
         "code": "1AF82CFA-8A18-4F7C-BAF6-58EFE787A858",
         "price": 952.0,
         "price_reserve": 952.0,
-        "qty": 1.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -2923,7 +2923,7 @@
         "code": "E6D8620B-F57A-4EE7-B385-82B20FE02AE8",
         "price": 239.0,
         "price_reserve": 239.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -2937,7 +2937,7 @@
         "code": "326DB73F-1D5A-4697-A4B8-629C4239D9EB",
         "price": 420.0,
         "price_reserve": 420.0,
-        "qty": 3.345
+        "qty": 3.965
     },
     {
         "branch": "30447",
@@ -2979,7 +2979,7 @@
         "code": "B9FD0E34-88AF-4BDB-BF09-84B629CF60C9",
         "price": 163.0,
         "price_reserve": 163.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -3266,7 +3266,7 @@
         "code": "3D099A09-CB78-4BE8-BFB7-228D2ECEAEA5",
         "price": 303.0,
         "price_reserve": 303.0,
-        "qty": 3.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -3343,14 +3343,14 @@
         "code": "4EBEFA36-4E7B-460A-9863-88E4B2FFA7E0",
         "price": 78.0,
         "price_reserve": 78.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "418C4471-4BC6-4EFB-BCF0-301893C7A1B7",
         "price": 78.0,
         "price_reserve": 78.0,
-        "qty": 1.0
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -3497,7 +3497,7 @@
         "code": "84E8A75D-F85A-433F-99B3-9D75C03689CD",
         "price": 177.0,
         "price_reserve": 177.0,
-        "qty": 5.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -3952,7 +3952,7 @@
         "code": "E61DB442-800B-490A-BAC4-85530E78BE2E",
         "price": 50.0,
         "price_reserve": 50.0,
-        "qty": 24.0
+        "qty": 12.0
     },
     {
         "branch": "30447",
@@ -4197,7 +4197,7 @@
         "code": "1B02463A-1F82-4EA2-9B50-1010ABAD5F54",
         "price": 367.0,
         "price_reserve": 367.0,
-        "qty": 12.815
+        "qty": 14.815
     },
     {
         "branch": "30447",
@@ -4307,9 +4307,9 @@
     {
         "branch": "30447",
         "code": "00642436-0740-428F-9338-2197F7F34F5C",
-        "price": 51.0,
-        "price_reserve": 51.0,
-        "qty": 17.0
+        "price": 48.0,
+        "price_reserve": 48.0,
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -4321,8 +4321,8 @@
     {
         "branch": "30447",
         "code": "5DB859DB-E74E-4D47-A210-86740385E845",
-        "price": 48.0,
-        "price_reserve": 48.0,
+        "price": 51.0,
+        "price_reserve": 51.0,
         "qty": 22.0
     },
     {
@@ -4351,14 +4351,14 @@
         "code": "45239DF3-B400-4202-B15E-E7AE358C90DF",
         "price": 54.0,
         "price_reserve": 54.0,
-        "qty": 12.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
         "code": "08F9B52A-2AF0-4E9D-BD83-6DF073EA4F07",
         "price": 51.0,
         "price_reserve": 51.0,
-        "qty": 8.0
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -4643,9 +4643,9 @@
     {
         "branch": "30447",
         "code": "3E53410E-C498-4140-B90A-8E04D7AD4B8F",
-        "price": 179.0,
-        "price_reserve": 179.0,
-        "qty": 4.0
+        "price": 175.0,
+        "price_reserve": 175.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -4708,14 +4708,14 @@
         "code": "00801947-4FB5-48FE-8C30-3C6B385FE6F9",
         "price": 888.0,
         "price_reserve": 888.0,
-        "qty": 1.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "BD6E80B0-EFC4-438A-B581-36D7C8A10062",
         "price": 1.3,
         "price_reserve": 1.3,
-        "qty": 498.0
+        "qty": 483.0
     },
     {
         "branch": "30447",
@@ -4748,9 +4748,9 @@
     {
         "branch": "30447",
         "code": "38F1063F-8BFB-4A84-9E70-812914246B9B",
-        "price": 386.0,
-        "price_reserve": 386.0,
-        "qty": 0.0
+        "price": 426.0,
+        "price_reserve": 426.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -4841,14 +4841,14 @@
         "code": "83AF7794-B970-4A34-882C-B46EA455A1EA",
         "price": 111.0,
         "price_reserve": 111.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "CC2B1D2B-7102-4EA1-965C-B76038F196DC",
         "price": 111.0,
         "price_reserve": 111.0,
-        "qty": 1.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -4869,7 +4869,7 @@
         "code": "012ECB6E-DADA-4AD4-8951-6751423517B6",
         "price": 160.0,
         "price_reserve": 160.0,
-        "qty": 7.855
+        "qty": 8.485
     },
     {
         "branch": "30447",
@@ -5065,7 +5065,7 @@
         "code": "A4476CFC-08A1-4EAD-AAB4-4190681CF4A5",
         "price": 37.0,
         "price_reserve": 37.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -5121,7 +5121,7 @@
         "code": "843403FF-93B8-4498-BD09-5864C036F5B1",
         "price": 59.0,
         "price_reserve": 59.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -5707,9 +5707,9 @@
     {
         "branch": "30447",
         "code": "51CEF165-CC36-4BE2-8784-FB4C7734AC73",
-        "price": 42.0,
-        "price_reserve": 42.0,
-        "qty": 0.0
+        "price": 56.0,
+        "price_reserve": 56.0,
+        "qty": 5.0
     },
     {
         "branch": "30447",
@@ -5772,7 +5772,7 @@
         "code": "E5137AB1-2028-443D-8326-2BF720B31355",
         "price": 186.0,
         "price_reserve": 186.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -6248,7 +6248,7 @@
         "code": "7353E9F9-5EA4-44BC-A9BC-0A13164C148C",
         "price": 37.0,
         "price_reserve": 37.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -6612,7 +6612,7 @@
         "code": "D2DF4C10-9C20-433A-9D4B-EAEBA7762E70",
         "price": 4.5,
         "price_reserve": 4.5,
-        "qty": 52.485
+        "qty": 53.485
     },
     {
         "branch": "30447",
@@ -6836,14 +6836,14 @@
         "code": "118850D9-7EBF-47C9-B0F6-27AEC1DE33CB",
         "price": 111.0,
         "price_reserve": 111.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "4EE9350B-4DBF-4269-85C3-1D6628F77C40",
-        "price": 107.0,
-        "price_reserve": 107.0,
-        "qty": 0.0
+        "price": 111.0,
+        "price_reserve": 111.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -6857,28 +6857,28 @@
         "code": "369ECA17-EA81-48C4-83DE-C10E0AFE3FEE",
         "price": 190.0,
         "price_reserve": 190.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "9ACE71A2-DB5F-49EF-A2A2-CE897953AFF4",
         "price": 190.0,
         "price_reserve": 190.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "644AF09E-F827-4B3D-8983-086B0D5362CD",
         "price": 111.0,
         "price_reserve": 111.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "16F25978-47E8-4EB9-B022-7C92FCAE1906",
-        "price": 111.0,
-        "price_reserve": 111.0,
-        "qty": 0.0
+        "price": 119.0,
+        "price_reserve": 119.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -6913,7 +6913,7 @@
         "code": "D3014B6D-3D59-409C-8D44-A720A834D26E",
         "price": 19.0,
         "price_reserve": 19.0,
-        "qty": 13.0
+        "qty": 8.0
     },
     {
         "branch": "30447",
@@ -7382,7 +7382,7 @@
         "code": "6DDC3BCF-7276-4157-A7A0-5C09E895F502",
         "price": 179.0,
         "price_reserve": 179.0,
-        "qty": 3.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -7613,7 +7613,7 @@
         "code": "A0F4AE5A-9880-4B69-B80C-18F3EDCEB177",
         "price": 103.0,
         "price_reserve": 103.0,
-        "qty": 15.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
@@ -7655,7 +7655,7 @@
         "code": "89423338-290B-4525-9616-B1B80E17A7C2",
         "price": 103.0,
         "price_reserve": 103.0,
-        "qty": 21.0
+        "qty": 15.0
     },
     {
         "branch": "30447",
@@ -7725,7 +7725,7 @@
         "code": "A844D41D-C672-4A2E-AAF0-535295EFA59D",
         "price": 163.0,
         "price_reserve": 163.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -7898,9 +7898,9 @@
     {
         "branch": "30447",
         "code": "F756C061-B1ED-43E6-9AA8-56A1C732E197",
-        "price": 64.0,
-        "price_reserve": 64.0,
-        "qty": 0.0
+        "price": 69.0,
+        "price_reserve": 69.0,
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -7914,7 +7914,7 @@
         "code": "88990C40-0908-4ED3-9FC8-235236C4DC5F",
         "price": 50.0,
         "price_reserve": 50.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -7928,7 +7928,7 @@
         "code": "8EE266F0-17DC-4048-81A2-F69B4C65B49E",
         "price": 43.0,
         "price_reserve": 43.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -8047,7 +8047,7 @@
         "code": "69016F0B-771D-4901-9FD0-6787EA44FEE5",
         "price": 80.0,
         "price_reserve": 80.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -8082,7 +8082,7 @@
         "code": "1FA7B763-8A5C-4301-9007-D2C0A52AA4CB",
         "price": 86.0,
         "price_reserve": 86.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -9417,9 +9417,9 @@
     {
         "branch": "30447",
         "code": "B619F7C4-97D5-4150-ADB8-0AC2D79C4EFD",
-        "price": 210.0,
-        "price_reserve": 210.0,
-        "qty": 0.0
+        "price": 255.0,
+        "price_reserve": 255.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -9431,16 +9431,16 @@
     {
         "branch": "30447",
         "code": "228A78E9-CE60-441E-A218-0463EEA442B3",
-        "price": 415.0,
-        "price_reserve": 415.0,
-        "qty": 0.0
+        "price": 484.0,
+        "price_reserve": 484.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "0423F73C-172E-4C19-8386-F59E20E8376C",
-        "price": 398.0,
-        "price_reserve": 398.0,
-        "qty": 0.0
+        "price": 483.0,
+        "price_reserve": 483.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -10021,7 +10021,7 @@
         "code": "91DAEBD4-A9EA-4CCA-8E75-D0A2077C6E0E",
         "price": 1.0,
         "price_reserve": 1.0,
-        "qty": 542.0
+        "qty": 482.0
     },
     {
         "branch": "30447",
@@ -10250,9 +10250,9 @@
     {
         "branch": "30447",
         "code": "C9462DD8-322B-40CF-A7D7-43B67C510067",
-        "price": 133.0,
-        "price_reserve": 133.0,
-        "qty": 1.0
+        "price": 109.0,
+        "price_reserve": 109.0,
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -10483,7 +10483,7 @@
         "code": "2686E573-0745-41D1-9950-31214D78F922",
         "price": 160.0,
         "price_reserve": 160.0,
-        "qty": 2.14
+        "qty": 3.14
     },
     {
         "branch": "30447",
@@ -10707,7 +10707,7 @@
         "code": "ADB685BC-11DB-40DC-BCF3-896C17472ACD",
         "price": 215.0,
         "price_reserve": 215.0,
-        "qty": 1.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -10875,7 +10875,7 @@
         "code": "340E40BD-05E4-4FB3-8EE6-912B6B35E813",
         "price": 32.0,
         "price_reserve": 32.0,
-        "qty": 5.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -11526,7 +11526,7 @@
         "code": "BB4C86DF-7A56-45CD-A431-24ACD12108EE",
         "price": 94.0,
         "price_reserve": 94.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -11736,7 +11736,7 @@
         "code": "9E96A152-7287-42E9-94CF-49318727789B",
         "price": 21.0,
         "price_reserve": 21.0,
-        "qty": 14.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -11750,7 +11750,7 @@
         "code": "5FF82889-359C-495D-9175-3AA435BEC876",
         "price": 186.0,
         "price_reserve": 186.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -11960,7 +11960,7 @@
         "code": "6F3EEA8F-BE69-421D-B5C1-22C0D1249C63",
         "price": 96.0,
         "price_reserve": 96.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -12093,7 +12093,7 @@
         "code": "83BC9C41-F238-4B5E-B21F-690726B63600",
         "price": 38.0,
         "price_reserve": 38.0,
-        "qty": 30.0
+        "qty": 29.0
     },
     {
         "branch": "30447",
@@ -12317,7 +12317,7 @@
         "code": "81C8184C-538C-4B67-A9ED-A98FE9C417B6",
         "price": 190.0,
         "price_reserve": 190.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -12595,9 +12595,9 @@
     {
         "branch": "30447",
         "code": "1DAD96CA-59E4-4FD4-AE0E-4946126829F1",
-        "price": 310.0,
-        "price_reserve": 310.0,
-        "qty": 0.0
+        "price": 405.0,
+        "price_reserve": 405.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -16258,14 +16258,14 @@
         "code": "9EED3CB8-EF09-46E7-8623-B224565EF263",
         "price": 36.0,
         "price_reserve": 36.0,
-        "qty": 17.0
+        "qty": 16.0
     },
     {
         "branch": "30447",
         "code": "371504E4-C684-482C-93F4-3221EB8AF1CB",
         "price": 36.0,
         "price_reserve": 36.0,
-        "qty": 16.0
+        "qty": 15.0
     },
     {
         "branch": "30447",
@@ -16363,14 +16363,14 @@
         "code": "EA4F7DB5-CEDF-440B-9212-A470864C4FA6",
         "price": 97.0,
         "price_reserve": 97.0,
-        "qty": 0.0
+        "qty": 5.0
     },
     {
         "branch": "30447",
         "code": "B40420E4-C7F8-4956-8A88-C4357E3652CC",
         "price": 18.0,
         "price_reserve": 18.0,
-        "qty": 46.0
+        "qty": 48.0
     },
     {
         "branch": "30447",
@@ -16384,7 +16384,7 @@
         "code": "84AE43D2-6C02-4E2A-920B-3E8FE21765BB",
         "price": 58.0,
         "price_reserve": 58.0,
-        "qty": 1.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -16860,21 +16860,21 @@
         "code": "7D385C59-2672-4EC5-9E56-EF38BDF2299B",
         "price": 131.0,
         "price_reserve": 131.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "45266138-1FBC-4763-827A-20F3A90C39C7",
         "price": 408.0,
         "price_reserve": 408.0,
-        "qty": 6.925
+        "qty": 6.675
     },
     {
         "branch": "30447",
         "code": "5B74E6DD-1754-43EC-B80A-B79A17271C79",
         "price": 397.0,
         "price_reserve": 397.0,
-        "qty": 2.76
+        "qty": 3.27
     },
     {
         "branch": "30447",
@@ -16914,9 +16914,9 @@
     {
         "branch": "30447",
         "code": "BD5CAFC6-3F8D-4823-97E7-8E59DE3569FF",
-        "price": 2257.0,
-        "price_reserve": 2257.0,
-        "qty": 0.0
+        "price": 250.0,
+        "price_reserve": 250.0,
+        "qty": 9.955
     },
     {
         "branch": "30447",
@@ -16986,42 +16986,42 @@
         "code": "8E80593A-735C-4069-831C-94F707F723A6",
         "price": 37.0,
         "price_reserve": 37.0,
-        "qty": 2.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "4DB1D63E-19A3-4529-8DEA-246A1B247E4D",
         "price": 38.0,
         "price_reserve": 38.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "6BB69351-B7B8-4B47-A7ED-2FAB6E8B2044",
         "price": 35.0,
         "price_reserve": 35.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "D4CB4055-07AF-4639-B95C-5DA55D95B63E",
         "price": 38.0,
         "price_reserve": 38.0,
-        "qty": 1.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "BDEC8A6C-53AE-4998-80FD-4266957A69BF",
         "price": 41.0,
         "price_reserve": 41.0,
-        "qty": 1.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "AD2FC2FE-3AA0-4602-9E85-C820DC0AFD5B",
         "price": 40.0,
         "price_reserve": 40.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -17110,9 +17110,9 @@
     {
         "branch": "30447",
         "code": "285965E6-CC3C-4642-A765-DCA66D6F9B6D",
-        "price": 31.0,
-        "price_reserve": 31.0,
-        "qty": 0.0
+        "price": 43.0,
+        "price_reserve": 43.0,
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -17161,7 +17161,7 @@
         "code": "0DAB266C-0CEF-46EB-AB99-B3F4B30BBDF3",
         "price": 948.0,
         "price_reserve": 948.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -17210,7 +17210,7 @@
         "code": "61C2C61A-AA99-443A-BD70-0A1C0660D208",
         "price": 54.0,
         "price_reserve": 54.0,
-        "qty": 16.0
+        "qty": 15.0
     },
     {
         "branch": "30447",
@@ -19364,9 +19364,9 @@
     {
         "branch": "30447",
         "code": "652E4C13-0C73-4833-B338-91E9FB4E9C50",
-        "price": 147.0,
-        "price_reserve": 147.0,
-        "qty": 0.0
+        "price": 166.0,
+        "price_reserve": 166.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -19387,7 +19387,7 @@
         "code": "0C41B30D-A425-4E19-A639-C263669CA2C7",
         "price": 417.0,
         "price_reserve": 417.0,
-        "qty": 7.07
+        "qty": 7.435
     },
     {
         "branch": "30447",
@@ -19882,9 +19882,9 @@
     {
         "branch": "30447",
         "code": "588D073A-83E6-49E0-85F6-3A11B7986926",
-        "price": 139.0,
-        "price_reserve": 139.0,
-        "qty": 0.0
+        "price": 146.0,
+        "price_reserve": 146.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -20094,14 +20094,14 @@
         "code": "962BF622-1D64-4810-AC75-1C76E69A92B6",
         "price": 253.0,
         "price_reserve": 253.0,
-        "qty": 0.0
+        "qty": 1.51
     },
     {
         "branch": "30447",
         "code": "9036ED0C-21B2-4764-814C-4E529401EF1C",
-        "price": 282.0,
-        "price_reserve": 282.0,
-        "qty": 0.0
+        "price": 299.0,
+        "price_reserve": 299.0,
+        "qty": 8.0
     },
     {
         "branch": "30447",
@@ -20395,7 +20395,7 @@
         "code": "1DBA17DA-4807-42E2-B734-9C2967860A8E",
         "price": 131.0,
         "price_reserve": 131.0,
-        "qty": 0.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -20407,9 +20407,9 @@
     {
         "branch": "30447",
         "code": "8CF7EDCD-C3AA-49BA-BB32-E676A296E365",
-        "price": 123.0,
-        "price_reserve": 123.0,
-        "qty": 0.0
+        "price": 131.0,
+        "price_reserve": 131.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -20675,7 +20675,7 @@
         "code": "64762BED-E9B9-42B3-BBA4-A456EF95AA35",
         "price": 420.0,
         "price_reserve": 420.0,
-        "qty": 3.415
+        "qty": 3.82
     },
     {
         "branch": "30447",
@@ -21004,7 +21004,7 @@
         "code": "0A52C826-6F08-4738-9CE3-08594D09F318",
         "price": 211.0,
         "price_reserve": 211.0,
-        "qty": 5.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -21809,7 +21809,7 @@
         "code": "50114475-0EB1-43E4-90D6-32EABC086859",
         "price": 136.0,
         "price_reserve": 136.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -21837,7 +21837,7 @@
         "code": "65E87FAC-1C16-4091-967E-2FCFFE186A0E",
         "price": 293.0,
         "price_reserve": 293.0,
-        "qty": 8.49
+        "qty": 8.145
     },
     {
         "branch": "30447",
@@ -22194,7 +22194,7 @@
         "code": "7B8FA009-A5EC-4E21-B801-258C0AD15261",
         "price": 130.0,
         "price_reserve": 130.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -22285,7 +22285,7 @@
         "code": "4818A44D-CE8F-49B7-8F23-65D16DB34697",
         "price": 123.0,
         "price_reserve": 123.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -22327,7 +22327,7 @@
         "code": "E8021A37-B3BC-4F53-8A11-C82557233D11",
         "price": 114.0,
         "price_reserve": 114.0,
-        "qty": 8.0
+        "qty": 7.0
     },
     {
         "branch": "30447",
@@ -22446,7 +22446,7 @@
         "code": "6E039AAB-00D3-454B-89F2-EAA286C7AF59",
         "price": 356.0,
         "price_reserve": 356.0,
-        "qty": 4.675
+        "qty": 4.355
     },
     {
         "branch": "30447",
@@ -22474,7 +22474,7 @@
         "code": "A94A7FB8-1A0E-47EE-B738-C4921A500523",
         "price": 47.0,
         "price_reserve": 47.0,
-        "qty": 0.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
@@ -22516,14 +22516,14 @@
         "code": "7D7BE548-C2DD-463B-B436-00E023C57C77",
         "price": 18.0,
         "price_reserve": 18.0,
-        "qty": 33.0
+        "qty": 44.0
     },
     {
         "branch": "30447",
         "code": "3C45084E-BE93-4E43-B87A-850A443C8268",
         "price": 18.0,
         "price_reserve": 18.0,
-        "qty": 38.0
+        "qty": 41.0
     },
     {
         "branch": "30447",
@@ -22691,7 +22691,7 @@
         "code": "EAFD4E94-F7DB-42D1-BBAD-98D47BA84A98",
         "price": 972.0,
         "price_reserve": 972.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -22838,7 +22838,7 @@
         "code": "DA7442BA-EE22-45DA-928E-9DF8A29796C5",
         "price": 228.0,
         "price_reserve": 228.0,
-        "qty": 0.535
+        "qty": 1.535
     },
     {
         "branch": "30447",
@@ -23104,14 +23104,14 @@
         "code": "E871D446-66A0-469E-957C-98DF4465EEF6",
         "price": 123.0,
         "price_reserve": 123.0,
-        "qty": 2.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "C6B034D4-56EE-4FCC-9782-83D469D68121",
         "price": 161.0,
         "price_reserve": 161.0,
-        "qty": 4.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -23629,7 +23629,7 @@
         "code": "1E01F20C-DFC6-4F23-A212-B66EBA93A7D0",
         "price": 78.0,
         "price_reserve": 78.0,
-        "qty": 3.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -23692,14 +23692,14 @@
         "code": "FC6A3583-1E12-4705-8B0D-960224709315",
         "price": 133.0,
         "price_reserve": 133.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
         "code": "1995A144-0BD2-45DE-8D9A-FD31AEB8EFF8",
         "price": 133.0,
         "price_reserve": 133.0,
-        "qty": 4.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
@@ -23776,7 +23776,7 @@
         "code": "7B872BDF-1111-49BA-A639-FABDF7ECDEBF",
         "price": 325.0,
         "price_reserve": 325.0,
-        "qty": 17.2
+        "qty": 17.09
     },
     {
         "branch": "30447",
@@ -24081,41 +24081,6 @@
     },
     {
         "branch": "30447",
-        "code": "3D99E030-58F2-433E-B363-824532FD9EC8",
-        "price": 159.0,
-        "price_reserve": 159.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "56E1CBB7-F141-4CCF-A38C-02D1A29571FC",
-        "price": 144.0,
-        "price_reserve": 144.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "AD4503E3-758E-4079-801A-6E72AA80292C",
-        "price": 193.0,
-        "price_reserve": 193.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "9027B7C3-7BE0-4823-924B-2EF4FCCCCF86",
-        "price": 223.0,
-        "price_reserve": 223.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "D5641E58-F855-40F2-9B58-CE493A472F80",
-        "price": 173.0,
-        "price_reserve": 173.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
         "code": "E0F863F3-5F7A-405E-8EEF-A3FA177F1E70",
         "price": 143.0,
         "price_reserve": 143.0,
@@ -24208,9 +24173,9 @@
     {
         "branch": "30447",
         "code": "4B18300D-8575-4EC9-B346-B64209FFACB7",
-        "price": 118.0,
-        "price_reserve": 118.0,
-        "qty": 0.0
+        "price": 135.0,
+        "price_reserve": 135.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -24229,15 +24194,22 @@
     {
         "branch": "30447",
         "code": "27C2652E-9BC3-4463-BC2F-824A73CE77C9",
-        "price": 209.0,
-        "price_reserve": 209.0,
-        "qty": 0.0
+        "price": 219.0,
+        "price_reserve": 219.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "1E5C0FEB-D5BB-4306-925E-A3BB955E2D5D",
         "price": 947.0,
         "price_reserve": 947.0,
+        "qty": 1.0
+    },
+    {
+        "branch": "30447",
+        "code": "A247E129-8693-40DB-A53A-C86EDF14DCE4",
+        "price": 72.0,
+        "price_reserve": 72.0,
         "qty": 0.0
     },
     {
@@ -24448,28 +24420,28 @@
         "code": "F74E4FCE-6E52-4A4B-9CF9-883102AF771A",
         "price": 44.0,
         "price_reserve": 44.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "22C9A308-235B-45B5-986F-A3C83B8D51FA",
         "price": 44.0,
         "price_reserve": 44.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "C3D38B1C-F179-4819-970A-01E8BEE99F1B",
         "price": 44.0,
         "price_reserve": 44.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "F5CF13CD-A9E9-4F6C-B4B7-F796CA15B382",
         "price": 44.0,
         "price_reserve": 44.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -24712,30 +24684,30 @@
     {
         "branch": "30447",
         "code": "D9C264B8-4C4D-4F23-BB3A-A12C2EC392BE",
-        "price": 80.0,
-        "price_reserve": 80.0,
-        "qty": 2.0
+        "price": 86.0,
+        "price_reserve": 86.0,
+        "qty": 8.0
     },
     {
         "branch": "30447",
         "code": "AE0C0819-9389-4916-8BB1-89A9C4CBD788",
-        "price": 67.0,
-        "price_reserve": 67.0,
-        "qty": 0.0
+        "price": 73.0,
+        "price_reserve": 73.0,
+        "qty": 6.0
     },
     {
         "branch": "30447",
         "code": "B1C20F97-DDA1-49AF-864B-7D89969F3760",
-        "price": 108.0,
-        "price_reserve": 108.0,
-        "qty": 0.0
+        "price": 118.0,
+        "price_reserve": 118.0,
+        "qty": 6.0
     },
     {
         "branch": "30447",
         "code": "1064598A-25D2-4F40-8D1C-41F243111C02",
-        "price": 90.0,
-        "price_reserve": 90.0,
-        "qty": 2.0
+        "price": 105.0,
+        "price_reserve": 105.0,
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -25034,9 +25006,9 @@
     {
         "branch": "30447",
         "code": "D62B01D9-54C0-44A1-BAE2-3CDEB5A66271",
-        "price": 195.0,
-        "price_reserve": 195.0,
-        "qty": 0.0
+        "price": 220.0,
+        "price_reserve": 220.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -25055,16 +25027,16 @@
     {
         "branch": "30447",
         "code": "15BB27B5-723C-4B99-8A9A-8D350F9B0BA0",
-        "price": 111.0,
-        "price_reserve": 111.0,
-        "qty": 0.0
+        "price": 107.0,
+        "price_reserve": 107.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
         "code": "A436C98E-C9FD-46C8-AF99-D5A116BF642C",
-        "price": 111.0,
-        "price_reserve": 111.0,
-        "qty": 0.0
+        "price": 107.0,
+        "price_reserve": 107.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -25295,14 +25267,14 @@
         "code": "C554C72E-4717-454E-9720-70FC806B0743",
         "price": 44.0,
         "price_reserve": 44.0,
-        "qty": 0.0
+        "qty": 2.0
     },
     {
         "branch": "30447",
         "code": "F297D809-FC6D-44EB-A1B5-FF2B5C93B423",
         "price": 204.0,
         "price_reserve": 204.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -25596,7 +25568,7 @@
         "code": "FE0122BD-35C2-435B-B1DB-7C3D8BBE2CF8",
         "price": 88.0,
         "price_reserve": 88.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -25638,7 +25610,7 @@
         "code": "24D4C910-6F2C-4F7D-A762-494CB791772C",
         "price": 17.0,
         "price_reserve": 17.0,
-        "qty": 12.0
+        "qty": 13.0
     },
     {
         "branch": "30447",
@@ -25659,7 +25631,7 @@
         "code": "23755B1D-452B-4EA6-B84B-479CF6F1A21A",
         "price": 17.0,
         "price_reserve": 17.0,
-        "qty": 14.0
+        "qty": 15.0
     },
     {
         "branch": "30447",
@@ -25862,7 +25834,7 @@
         "code": "6CA92FEF-52B1-4020-834E-8938891742CA",
         "price": 111.0,
         "price_reserve": 111.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -26394,7 +26366,7 @@
         "code": "77582A1B-A5D8-4FF3-8867-943D0AC46729",
         "price": 357.0,
         "price_reserve": 357.0,
-        "qty": 8.5185
+        "qty": 9.0835
     },
     {
         "branch": "30447",
@@ -26471,7 +26443,14 @@
         "code": "DACC8EBB-81E7-45D8-BCC6-82C366F3BF40",
         "price": 111.0,
         "price_reserve": 111.0,
-        "qty": 0.0
+        "qty": 2.0
+    },
+    {
+        "branch": "30447",
+        "code": "17DADCA5-D28F-42F5-8EAF-AACEF554B3AD",
+        "price": 24.0,
+        "price_reserve": 24.0,
+        "qty": 10.0
     },
     {
         "branch": "30447",
@@ -26492,7 +26471,7 @@
         "code": "3009B186-F9B7-4C6C-8DEF-9AD87F27AFD5",
         "price": 214.0,
         "price_reserve": 214.0,
-        "qty": 1.8
+        "qty": 2.0
     },
     {
         "branch": "30447",
@@ -26611,7 +26590,7 @@
         "code": "DEBE99DD-2F96-40C5-A692-25EA6168444A",
         "price": 96.0,
         "price_reserve": 96.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -27255,7 +27234,7 @@
         "code": "E39ED383-6E6D-4095-96C5-D79FA53CC36F",
         "price": 185.0,
         "price_reserve": 185.0,
-        "qty": 1.0
+        "qty": 0.0
     },
     {
         "branch": "30447",
@@ -27339,14 +27318,14 @@
         "code": "C87C149B-804E-4F72-9B1B-52B6EA336A61",
         "price": 114.0,
         "price_reserve": 114.0,
-        "qty": 4.0
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "1C262BCB-D819-427E-BCD9-C73520984FA1",
         "price": 1170.0,
         "price_reserve": 1170.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -27430,7 +27409,7 @@
         "code": "EC03A300-E9C3-4BBA-9D7C-84E74373E5F1",
         "price": 1192.0,
         "price_reserve": 1192.0,
-        "qty": 0.345
+        "qty": 0.27
     },
     {
         "branch": "30447",
@@ -27710,7 +27689,7 @@
         "code": "3F102475-01C4-432A-B5F7-B902C957A2ED",
         "price": 135.0,
         "price_reserve": 135.0,
-        "qty": 5.0
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -27771,16 +27750,16 @@
     {
         "branch": "30447",
         "code": "FF7FBEC3-E434-49FA-A403-4FB4806EDB05",
-        "price": 131.0,
-        "price_reserve": 131.0,
-        "qty": 0.0
+        "price": 143.0,
+        "price_reserve": 143.0,
+        "qty": 3.0
     },
     {
         "branch": "30447",
         "code": "6CFADFA4-7DC6-4857-9569-5CC14B56F7FA",
-        "price": 145.0,
-        "price_reserve": 145.0,
-        "qty": 1.0
+        "price": 158.0,
+        "price_reserve": 158.0,
+        "qty": 4.0
     },
     {
         "branch": "30447",
@@ -28522,7 +28501,7 @@
         "code": "433831E0-4614-4526-8A1B-6D836D6FCE8D",
         "price": 1350.0,
         "price_reserve": 1350.0,
-        "qty": 0.31
+        "qty": 0.36
     },
     {
         "branch": "30447",
@@ -28550,7 +28529,7 @@
         "code": "23A38C53-9F7F-40D1-819B-77BECB08DCC4",
         "price": 814.0,
         "price_reserve": 814.0,
-        "qty": 0.515
+        "qty": 0.45
     },
     {
         "branch": "30447",
@@ -29584,9 +29563,9 @@
     {
         "branch": "30447",
         "code": "E10BF4B6-5F3E-4450-BFC3-82F044820061",
-        "price": 356.0,
-        "price_reserve": 356.0,
-        "qty": 0.0
+        "price": 373.0,
+        "price_reserve": 373.0,
+        "qty": 7.5
     },
     {
         "branch": "30447",
@@ -29626,9 +29605,9 @@
     {
         "branch": "30447",
         "code": "74554594-5F0D-4843-A9AF-D07CF8626532",
-        "price": 85.0,
-        "price_reserve": 85.0,
-        "qty": 0.0
+        "price": 95.0,
+        "price_reserve": 95.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -29663,7 +29642,7 @@
         "code": "D9D4A1C7-38D3-4E06-9F63-6F700D481E8F",
         "price": 43.0,
         "price_reserve": 43.0,
-        "qty": 34.0
+        "qty": 33.0
     },
     {
         "branch": "30447",
@@ -29852,7 +29831,7 @@
         "code": "7AAB3149-702E-4D47-9212-F57AA4D021AD",
         "price": 30.0,
         "price_reserve": 30.0,
-        "qty": 8.0
+        "qty": 13.0
     },
     {
         "branch": "30447",
@@ -30195,7 +30174,7 @@
         "code": "40F6749A-6CBF-40CF-AF68-2AFDF2DB9188",
         "price": 370.0,
         "price_reserve": 370.0,
-        "qty": 8.895
+        "qty": 8.78
     },
     {
         "branch": "30447",
@@ -31147,7 +31126,7 @@
         "code": "359F206A-91FD-4F73-BF52-1BDB231568DA",
         "price": 246.0,
         "price_reserve": 246.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -31217,7 +31196,7 @@
         "code": "8DEEFC85-BC61-410A-9D54-F9FEB49085B5",
         "price": 320.0,
         "price_reserve": 320.0,
-        "qty": 0.64
+        "qty": 0.44
     },
     {
         "branch": "30447",
@@ -31252,6 +31231,13 @@
         "code": "C05C2CD0-A0D4-4254-8780-68B8C8FCB964",
         "price": 207.0,
         "price_reserve": 207.0,
+        "qty": 0.0
+    },
+    {
+        "branch": "30447",
+        "code": "CCB49C7A-CE97-45D4-9C9C-01649C544708",
+        "price": 3413.0,
+        "price_reserve": 3413.0,
         "qty": 0.0
     },
     {
@@ -31693,7 +31679,7 @@
         "code": "F7A1A4FF-E464-4434-8636-BB52ADF879F9",
         "price": 63.0,
         "price_reserve": 63.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -31833,7 +31819,7 @@
         "code": "BAF301AB-CF33-4595-9AFA-91AE5DC6FD51",
         "price": 28.0,
         "price_reserve": 28.0,
-        "qty": 5.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
@@ -31924,7 +31910,7 @@
         "code": "3B9A4ACE-A902-4833-BB40-10E4462386B6",
         "price": 155.0,
         "price_reserve": 155.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -32134,7 +32120,7 @@
         "code": "13191A6F-BAF4-4EF9-B62D-E7B10E8C4C51",
         "price": 43.0,
         "price_reserve": 43.0,
-        "qty": 11.0
+        "qty": 9.0
     },
     {
         "branch": "30447",
@@ -32386,7 +32372,7 @@
         "code": "57AF3BD5-2F08-48D2-91E6-F7297772B453",
         "price": 114.0,
         "price_reserve": 114.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -32407,14 +32393,14 @@
         "code": "4BCF4DCE-C62C-4F12-A56C-A38559F1021A",
         "price": 13.0,
         "price_reserve": 13.0,
-        "qty": 17.0
+        "qty": 15.0
     },
     {
         "branch": "30447",
         "code": "1379613B-2A66-4D61-9F70-6F7E5FE0124E",
         "price": 21.0,
         "price_reserve": 21.0,
-        "qty": 25.0
+        "qty": 28.0
     },
     {
         "branch": "30447",
@@ -32428,7 +32414,7 @@
         "code": "082AB2AB-970E-4FA7-8E9E-04ED6B222041",
         "price": 160.0,
         "price_reserve": 160.0,
-        "qty": 2.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -32512,7 +32498,7 @@
         "code": "19D02AF8-3F11-4A90-A11E-2417DBEB1056",
         "price": 323.0,
         "price_reserve": 323.0,
-        "qty": 0.0
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -32547,7 +32533,7 @@
         "code": "0A6E6B7C-0D0B-401F-AB1C-063A7E286EA6",
         "price": 4.0,
         "price_reserve": 4.0,
-        "qty": 78.0
+        "qty": 90.0
     },
     {
         "branch": "30447",
@@ -32603,7 +32589,14 @@
         "code": "ED8E38F0-93B3-4D9A-AE65-BEC3823DE444",
         "price": 36.0,
         "price_reserve": 36.0,
-        "qty": 16.0
+        "qty": 15.0
+    },
+    {
+        "branch": "30447",
+        "code": "AE3D77A1-32C0-4995-9F7C-E86A8EF03128",
+        "price": 68.0,
+        "price_reserve": 68.0,
+        "qty": 1.0
     },
     {
         "branch": "30447",
@@ -32800,33 +32793,5 @@
         "price": 210.0,
         "price_reserve": 210.0,
         "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "5150F89C-BE2A-41C7-B874-B8171EBEA5F1",
-        "price": 246.0,
-        "price_reserve": 246.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "7E242477-2EA8-4BE0-8BA5-595565B155CA",
-        "price": 398.0,
-        "price_reserve": 398.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "DC25BA0C-F717-4CC6-9526-2AFD791D16AA",
-        "price": 523.0,
-        "price_reserve": 523.0,
-        "qty": 1.0
-    },
-    {
-        "branch": "30447",
-        "code": "BAC3FD63-CC5F-4020-8736-797B5F3553CD",
-        "price": 96.0,
-        "price_reserve": 96.0,
-        "qty": 3.0
     }
 ]
