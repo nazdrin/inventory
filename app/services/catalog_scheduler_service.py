@@ -15,7 +15,7 @@ now = datetime.now(tz=pytz.utc).astimezone(KIEV_TZ)
 from app.dntrade_data_service.fetch_convert import run_service
 from app.google_drive.google_drive_service import extract_catalog_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
-from .notification_service import send_notification  # Импортируем функцию для отправки уведомлений
+from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

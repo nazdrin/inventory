@@ -84,7 +84,7 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
                 if file_type == "catalog":
                     if not isinstance(json_data, dict) or "catalog" not in json_data:
                         logging.warning(f"Некорректная структура XML файла {file_path}. Ожидалась структура с 'Catalog'.")
-                        send_notification(f"Некорректная структура XML файла {file_path} для предприятия{enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
+                        #send_notification(f"Некорректная структура XML файла {file_path} для предприятия{enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
                         return None
                     data = json_data.get("catalog", {}).get("item", [])
           
@@ -95,13 +95,13 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
                     # Приводим данные к списку, если они представлены как словарь (один элемент)
                     if isinstance(data, dict):
                         logging.warning("Данные из XML представлены в виде словаря, конвертация в список.")
-                        send_notification(f"Данные из XML представлены в виде словаря, конвертация в список.для предприятия {enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
+                        #send_notification(f"Данные из XML представлены в виде словаря, конвертация в список.для предприятия {enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
                         data = [data]
 
                     # Проверка на корректный формат данных
                     if not isinstance(data, list):
                         logging.error(f"Неожиданный тип данных для 'stock': {type(data)}")
-                        send_notification(f"Данные из XML представлены в виде словаря, конвертация в список.для предприятия {enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
+                        #send_notification(f"Данные из XML представлены в виде словаря, конвертация в список.для предприятия {enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
                         raise ValueError("Неверный формат данных для 'stock'. Ожидался список или словарь.")
 
                     # Нормализация данных: ключи приводим к нижнему регистру
