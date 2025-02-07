@@ -62,7 +62,7 @@ const EnterprisePanel = () => {
     };
 
     const fields = [
-        { name: "enterprise_code", label: "Enterprise Code (Код підприємства)", type: "text", disabled: isEditing },
+        { name: "enterprise_code", label: "Enterprise Code (Код підприємства)", type: "text" },
         { name: "enterprise_name", label: "Enterprise Name (Назва підприємства)", type: "text" },
         { name: "enterprise_login", label: "Enterprise Login (Логін підприємства)", type: "text" },
         { name: "enterprise_password", label: "Enterprise Password (Пароль підприємства)", type: "password" },
