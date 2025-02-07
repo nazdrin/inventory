@@ -17,7 +17,7 @@ local_tz = pytz.timezone('Europe/Kiev')
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 # Получаем путь к временному каталогу из переменной окружения
-TEMP_FILE_PATH = os.getenv("TEMP_DIR", "./temp_logs")
+TEMP_FILE_PATH = os.getenv("TEMP_FILE_PATH", "./temp_logs")
 
 async def save_stock_log(enterprise_code: str, formatted_json: dict):
     """Сохраняет JSON-данные стока в файл в каталоге TEMP_FILE_PATH."""
@@ -107,7 +107,7 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
                 "Branches": list(branches_data.values())
             }
             # Форматируем и выводим данные JSON для удобства в терминале
-            #logging.info(f"Formatted JSON data for enterprise_code={enterprise_code}: {json.dumps(formatted_json, indent=4)}")
+            logging.info(f"Formatted JSON data for enterprise_code={enterprise_code}: {json.dumps(formatted_json, indent=4)}")
             # Сохраняем JSON вместо вывода в лог
             await save_stock_log(enterprise_code, formatted_json)
 
