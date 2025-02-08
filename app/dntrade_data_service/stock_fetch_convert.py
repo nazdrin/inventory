@@ -84,14 +84,14 @@ def transform_stock(products):
         # Устанавливаем qty в 0, если balance отрицательный
         qty = max(balance, 0)
         
-        # Логирование, если product_id совпадает с указанным
-        if product_id == "65FF6A4D-A87A-4BE4-A3B3-FF768CD2E88D":
-            log_data.append({
-                "product_id": product_id,
-                "balance": balance,
-                "qty": qty,
-                "price_data": price_data
-            })
+        # !Логирование, если product_id совпадает с указанным
+        # if product_id == "65FF6A4D-A87A-4BE4-A3B3-FF768CD2E88D":
+            # log_data.append({
+            #     "product_id": product_id,
+            #     "balance": balance,
+            #     "qty": qty,
+            #     "price_data": price_data
+            # })
         
         for price_entry in price_data:
             if price_entry.get("price_title") == "Роздрібна":
