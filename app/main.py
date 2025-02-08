@@ -7,7 +7,7 @@ from app.routes import router as developer_router
 
 # Инициализация FastAPI приложения
 app = FastAPI()
-
+app.include_router(developer_router)
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
