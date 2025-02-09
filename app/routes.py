@@ -8,28 +8,34 @@ from fastapi.encoders import jsonable_encoder
 from app.database import DeveloperSettings, EnterpriseSettings, DataFormat
 from sqlalchemy.future import select
 from app.services.database_service import process_database_service
-import json
-
 from fastapi import APIRouter, HTTPException, Request
+from app.services.notification_service import send_notification
 import json
+import os
 
 router = APIRouter()
 
-# @router.post("/developer_panel/unipro/data")
-# async def receive_unipro_data(request: Request, body: dict):
-#     """
-#     Эндпоинт для получения данных от Unipro через POST-запрос.
-#     """
-#     try:
-#         # Выводим полученные данные в консоль
-#         print("\n📌 Полученные данные от Unipro:")
-#         print(json.dumps(body, indent=4, ensure_ascii=False))
+# Определяем путь к log-файлу в той же папке, где находится текущий файл
+LOG_FILE = os.path.join(os.path.dirname(__file__), "unipro_requests.json")
 
-#         return {"status": "success", "message": json.dumps(body, indent=4, ensure_ascii=False)}
-
-#     except Exception as e:
-#         print(f"❌ Ошибка обработки данных: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
+@router.post("/developer_panel/unipro/data")
+async def receive_unipro_data(request: Request, body: dict):
+    """
+    Эндпоинт для получения данных от Unipro через POST-запрос.
+    """
+    try:
+        # Сохранение данных в log-файл
+        with open(LOG_FILE, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(body, ensure_ascii=False, indent=4) + "\n")
+        
+        # Отправка уведомления
+        send_notification("Получены данные от Unipro", enterprise_code="1")
+        
+        return {"status": "success", "message": "Данные успешно получены и записаны в лог"}
+    
+    except Exception as e:
+        print(f"❌ Ошибка обработки данных: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Dependency для работы с базой данных
