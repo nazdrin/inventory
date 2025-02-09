@@ -67,7 +67,7 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
             if discount_rate > 0:
                 for item in stock_file:
                     if 'price_reserve' in item:
-                        item['price_reserve'] = round(item['price_reserve'] * (1 + discount_rate / 100), 2)
+                        item['price_reserve'] = round(item['price_reserve'] * (1 - discount_rate / 100), 2)
 
             # Process stock_correction
             if enterprise_settings.stock_correction:
