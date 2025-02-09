@@ -55,15 +55,12 @@ class ReservedItemsSchema(BaseModel):
 class EnterpriseSettingsSchema(BaseModel):
     enterprise_code: str
     enterprise_name: str
-    email: str
     enterprise_login: Optional[str] = None  # Логин предприятия
     enterprise_password: Optional[str] = None  # Пароль предприятия
     tabletki_login: Optional[str] = None
     tabletki_password: Optional[str] = None
     token: Optional[str] = None # Токен подключения к API предприятия
     data_format: Optional[str] = None  # Поставщик данных
-    file_format: Optional[str] = None  # Формат данных
-    data_transfer_method: Optional[str] = None  # Метод передачи данных
     single_store: Optional[bool] = False
     store_serial: Optional[str] = None  # Серийный номер магазина
     stock_upload_frequency: Optional[int] = None  # Частота загрузки остатков
@@ -88,8 +85,6 @@ class DeveloperSettingsSchema(BaseModel):
     endpoint_stock: Optional[str] = None
     endpoint_orders: Optional[str] = None
     telegram_token_developer: Optional[str] = None
-    error_email_developer: Optional[str] = None
-    google_drive_file_name: Optional[str] = None
     catalog_data_retention: Optional[int] = None
     stock_data_retention: Optional[int] = None
     morion: Optional[str] = None
