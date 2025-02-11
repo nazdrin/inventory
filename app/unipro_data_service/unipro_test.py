@@ -1,0 +1,216 @@
+import requests
+import json
+
+# URL сервера
+URL = "http://127.0.0.1:8000/developer_panel/unipro/data"
+
+# Данные для отправки
+DATA = {
+	"info": {
+		"ver": 1,
+		"sourceID": "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA",
+		"jsondocdate": "20250210131647"
+	},
+	"goodsgroups": [
+		{
+			"name": "Товары",
+			"fullpath": "\\Товары",
+			"level": 1,
+			"lid": 2,
+			"guid": "175C45F4-DE0F-4ADB-A6BD-C069A4318A0B",
+			"children": [
+				{
+					"name": "Біопрепарати",
+					"fullpath": "\\Товары\\Біопрепарати",
+					"level": 2,
+					"lid": 6,
+					"guid": "E46A10BB-F8B1-4AA6-A55B-F82DE09AE0DE"
+				},
+				{
+					"name": "Ветпрепарати",
+					"fullpath": "\\Товары\\Ветпрепарати",
+					"level": 2,
+					"lid": 3,
+					"guid": "C3A291FA-5B1E-418E-8731-CA3115C9377F"
+				},
+				{
+					"name": "Royal Canin",
+					"fullpath": "\\Товары\\Royal Canin",
+					"level": 2,
+					"lid": 4,
+					"guid": "EDA3C19E-0B2B-4838-8871-1BDBA256E9D9"
+				},
+				{
+					"name": "Зоотовари",
+					"fullpath": "\\Товары\\Зоотовари",
+					"level": 2,
+					"lid": 7,
+					"guid": "F8B43F2C-516F-4DBF-BD16-563817D03F39"
+				}
+			]
+		},
+		{
+			"name": "Послуги",
+			"fullpath": "\\Послуги",
+			"level": 1,
+			"lid": 5,
+			"guid": "2929462C-BC34-45A9-8DCC-C9B1A8331EFE"
+		}
+	],
+	"recipes": [],
+	"goods": [
+		{
+			"guid": "ED9327A6-61DB-471F-A982-7566EAAAAF7C",
+			"lid": 2,
+			"qtty": 2,
+			"code": "00002",
+			"name": "Енроксил, 150мг, 10шт",
+			"namefull": "Енроксил, 150мг, 10шт",
+			"desc": "",
+			"barcode": "",
+			"barcodelist": "",
+			"barcode2": "",
+			"barcode3": "",
+			"unit1": "шт.",
+			"unit2": "Ящик",
+			"unit3": "Паллета",
+			"coeff2": 1,
+			"coeff3": 1,
+			"type": 0,
+			"vat": 2,
+			"visible": 1,
+			"group": "C3A291FA-5B1E-418E-8731-CA3115C9377F",
+			"dopprop1": "",
+			"dopprop2": "",
+			"dopprop3": "",
+			"dopprop4": "",
+			"dopprop5": "",
+			"uktzed": "",
+			"pin": 123.6,
+			"p1": 170,
+			"p2": 0,
+			"p3": 0,
+			"p4": 0,
+			"p5": 0,
+			"p6": 0,
+			"p7": 0,
+			"p8": 0,
+			"p9": 0,
+			"p10": 0,
+			"del": 0,
+			"min": 0,
+			"nom": 0,
+			"vendor": "31B915CC-C00C-4DAD-81BB-662F1FBF6EA7",
+			"plu": 0,
+			"scs": 0,
+			"tare": 0,
+			"piece": 0,
+			"outw": 0,
+			"lost": 0
+		},
+		{
+			"guid": "DF6856BA-6288-494F-92DE-75189970D2B0",
+			"lid": 3,
+			"qtty": 4,
+			"code": "00003",
+			"name": "Селафорт спот-он для котів 2,6-7,5 кг",
+			"namefull": "Селафорт спот-он для котів 2,6-7,5 кг",
+			"desc": "",
+			"barcode": "3838989724542",
+			"barcodelist": ";4650104751801;",
+			"barcode2": "",
+			"barcode3": "",
+			"unit1": "шт.",
+			"unit2": "Ящик",
+			"unit3": "Паллета",
+			"coeff2": 1,
+			"coeff3": 1,
+			"type": 0,
+			"vat": 2,
+			"visible": 1,
+			"group": "C3A291FA-5B1E-418E-8731-CA3115C9377F",
+			"dopprop1": "",
+			"dopprop2": "",
+			"dopprop3": "",
+			"dopprop4": "",
+			"dopprop5": "",
+			"uktzed": "",
+			"pin": 172.8,
+			"p1": 240,
+			"p2": 0,
+			"p3": 0,
+			"p4": 0,
+			"p5": 0,
+			"p6": 0,
+			"p7": 0,
+			"p8": 0,
+			"p9": 0,
+			"p10": 0,
+			"del": 0,
+			"min": 0,
+			"nom": 0,
+			"vendor": "C1113106-E364-4EA3-9798-214B035B9FC6",
+			"plu": 0,
+			"scs": 0,
+			"tare": 0,
+			"piece": 0,
+			"outw": 0,
+			"lost": 0
+		},
+		{
+			"guid": "4A60155A-6C98-4645-8F6D-A24F52B9B292",
+			"lid": 4,
+			"qtty": 1,
+			"code": "00194",
+			"name": "Сімалджекс, 80мг",
+			"namefull": "Сімалджекс, 80мг",
+			"desc": "",
+			"barcode": "3605874160903",
+			"barcodelist": "",
+			"barcode2": "",
+			"barcode3": "",
+			"unit1": "шт.",
+			"unit2": "Ящик",
+			"unit3": "Паллета",
+			"coeff2": 1,
+			"coeff3": 1,
+			"type": 0,
+			"vat": 2,
+			"visible": 1,
+			"group": "C3A291FA-5B1E-418E-8731-CA3115C9377F",
+			"dopprop1": "",
+			"dopprop2": "",
+			"dopprop3": "",
+			"dopprop4": "",
+			"dopprop5": "",
+			"uktzed": "",
+			"pin": 858,
+			"p1": 1200,
+			"p2": 0,
+			"p3": 0,
+			"p4": 0,
+			"p5": 0,
+			"p6": 0,
+			"p7": 0,
+			"p8": 0,
+			"p9": 0,
+			"p10": 0,
+			"del": 0,
+			"min": 0,
+			"nom": 0,
+			"vendor": "31B915CC-C00C-4DAD-81BB-662F1FBF6EA7",
+			"plu": 0,
+			"scs": 0,
+			"tare": 0,
+			"piece": 0,
+			"outw": 0,
+			"lost": 0
+		}
+	]
+}
+# Отправка POST-запроса
+response = requests.post(URL, json=DATA)
+
+# Вывод ответа сервера
+print("Статус-код:", response.status_code)
+print("Ответ:", response.json())
