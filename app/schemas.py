@@ -55,8 +55,6 @@ class ReservedItemsSchema(BaseModel):
 class EnterpriseSettingsSchema(BaseModel):
     enterprise_code: str
     enterprise_name: str
-    enterprise_login: Optional[str] = None  # Логин предприятия
-    enterprise_password: Optional[str] = None  # Пароль предприятия
     tabletki_login: Optional[str] = None
     tabletki_password: Optional[str] = None
     token: Optional[str] = None # Токен подключения к API предприятия
