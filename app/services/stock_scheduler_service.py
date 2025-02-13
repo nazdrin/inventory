@@ -90,6 +90,8 @@ async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseS
             # Запуск обработки через extract_stock_from_google_drive
             await extract_stock_from_google_drive (enterprise.enterprise_code)
             logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (Google Drive).")
+        elif enterprise.data_format == "Unipro":
+            pass
         elif enterprise.data_format == "Blank":
             pass
         else:

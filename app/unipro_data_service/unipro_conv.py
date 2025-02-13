@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # Словарь соответствий для получения enterprise_code и branch
 mapping = {
-    "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("121", "34564")
+    "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("253", "30467"),
 }
 
 # Переменная счетчика запусков
@@ -42,7 +42,7 @@ def convert_catalog(data, enterprise_code):
             "code": item["guid"],
             "name": item["namefull"],
             "vat": 20.0,
-            "producer": "n/a",
+            "producer": item.get("dopprop1") or "n/a",
             "barcode": item.get("barcode", ""),
             "branch_id": enterprise_code
         }
