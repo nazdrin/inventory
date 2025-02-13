@@ -1,0 +1,28 @@
+{
+    "Branches": [
+        {
+            "Code": "34564",
+            "Rests": [
+                {
+                    "Code": "ED9327A6-61DB-471F-A982-7566EAAAAF7C",
+                    "Price": 170,
+                    "Qty": 2,
+                    "PriceReserve": 170
+                },
+                {
+                    "Code": "DF6856BA-6288-494F-92DE-75189970D2B0",
+                    "Price": 240,
+                    "Qty": 4,
+                    "PriceReserve": 240
+                },
+                {
+                    "Code": "4A60155A-6C98-4645-8F6D-A24F52B9B292",
+                    "Price": 1200,
+                    "Qty": 1,
+                    "PriceReserve": 1200
+                }
+            ],
+            "DateTime": "11.02.2025 15:14:46"
+        }
+    ]
+}
