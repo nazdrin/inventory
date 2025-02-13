@@ -96,6 +96,8 @@ async def process_catalog_for_enterprise(db: AsyncSession, enterprise: Enterpris
             # Обработка с помощью extract_catalog_from_google_drive
             await extract_catalog_from_google_drive(enterprise.enterprise_code)
             logging.info(f"Catalog extracted successfully for Enterprise Code={enterprise.enterprise_code} with data transfer method 'googledrive'")
+        elif enterprise.data_format == "Unipro":
+            pass
         elif enterprise.data_format == "Blank":
             pass
 

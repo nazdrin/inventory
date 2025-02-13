@@ -71,8 +71,6 @@ class EnterpriseSettings(Base):
     enterprise_code = Column(String, primary_key=True)
     enterprise_name = Column(String, nullable=False)
     branch_id = Column(String, nullable=False)
-    enterprise_login = Column(String, nullable=True)
-    enterprise_password = Column(String, nullable=True)
     tabletki_login = Column(String, nullable=True)
     tabletki_password = Column(String, nullable=True)
     token = Column(String, nullable=True)
