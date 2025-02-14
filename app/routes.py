@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.services.notification_service import send_notification
 import json
 import os
+from app.unipro_data_service.unipro_conv import unipro_convert
 
 router = APIRouter()
 
@@ -24,19 +25,20 @@ async def receive_unipro_data(request: Request, body: dict):
     Эндпоинт для получения данных от Unipro через POST-запрос.
     """
     try:
-        # Сохранение данных в log-файл
-        with open(LOG_FILE, "a", encoding="utf-8") as log_file:
+        with open(LOG_FILE, "w", encoding="utf-8") as log_file:
             log_file.write(json.dumps(body, ensure_ascii=False, indent=4) + "\n")
-        
+        # Создание временного JSON-файла перед передачей в unipro_convert
+        json_file_path = "unipro_temp.json"
+        with open(json_file_path, "w", encoding="utf-8") as json_file:
+            json.dump(body, json_file, ensure_ascii=False, indent=4)
+
+        await unipro_convert(json_file_path)
         # Отправка уведомления
         send_notification("Получены данные от Unipro", enterprise_code="1")
-        
         return {"status": "success", "message": "Данные успешно получены и записаны в лог"}
-    
     except Exception as e:
         print(f"❌ Ошибка обработки данных: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # Dependency для работы с базой данных
 async def get_db():
