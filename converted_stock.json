@@ -1,6 +1,13 @@
 [
     {
         "branch": "30467",
+        "code": "4886F240-A807-4A5B-B336-F1EBAC5689E4",
+        "price": 1300,
+        "qty": 0,
+        "price_reserve": 1300
+    },
+    {
+        "branch": "30467",
         "code": "ED9327A6-61DB-471F-A982-7566EAAAAF7C",
         "price": 170,
         "qty": 2,
@@ -10,7 +17,7 @@
         "branch": "30467",
         "code": "DF6856BA-6288-494F-92DE-75189970D2B0",
         "price": 240,
-        "qty": 4,
+        "qty": 11,
         "price_reserve": 240
     },
     {
@@ -19,6 +26,13 @@
         "price": 1200,
         "qty": 1,
         "price_reserve": 1200
+    },
+    {
+        "branch": "30467",
+        "code": "27DEBE63-68D8-4EB8-BA91-04776B68678F",
+        "price": 750,
+        "qty": 0,
+        "price_reserve": 750
     },
     {
         "branch": "30467",
@@ -66,7 +80,7 @@
         "branch": "30467",
         "code": "BB4DC839-F8D2-4823-88E5-CEBD9DC76B2A",
         "price": 50,
-        "qty": 8,
+        "qty": 6,
         "price_reserve": 50
     },
     {
@@ -80,7 +94,7 @@
         "branch": "30467",
         "code": "6D07F2F3-66DE-4013-8D72-57995C5F7111",
         "price": 270,
-        "qty": 5,
+        "qty": 8,
         "price_reserve": 270
     },
     {
@@ -108,7 +122,7 @@
         "branch": "30467",
         "code": "6EB8D7A6-EA46-4327-851E-76FD256E69B2",
         "price": 410,
-        "qty": 4,
+        "qty": 6,
         "price_reserve": 410
     },
     {
@@ -205,9 +219,9 @@
     {
         "branch": "30467",
         "code": "5E41CDAF-AA05-4BC9-8FAE-3C225A387475",
-        "price": 35,
-        "qty": 3,
-        "price_reserve": 35
+        "price": 40,
+        "qty": 8,
+        "price_reserve": 40
     },
     {
         "branch": "30467",
@@ -269,7 +283,7 @@
         "branch": "30467",
         "code": "DBE62BA8-1284-43A6-B2F5-CD0142BEBD1C",
         "price": 180,
-        "qty": 3,
+        "qty": 5,
         "price_reserve": 180
     },
     {
@@ -297,7 +311,7 @@
         "branch": "30467",
         "code": "C6C1E27C-AD6C-4339-9610-684B76973AC3",
         "price": 70,
-        "qty": 12,
+        "qty": 4,
         "price_reserve": 70
     },
     {
@@ -332,7 +346,7 @@
         "branch": "30467",
         "code": "09C9B67C-DAEA-4C47-B054-8626A0EE8066",
         "price": 25,
-        "qty": 15,
+        "qty": 20,
         "price_reserve": 25
     },
     {
@@ -358,6 +372,160 @@
     },
     {
         "branch": "30467",
+        "code": "2E2C1803-B9A9-4C01-B3C2-2D0C4E8CC203",
+        "price": 190,
+        "qty": 5,
+        "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "9CA05E10-DE81-47B1-B670-F5F0692CFC3B",
+        "price": 190,
+        "qty": 3,
+        "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "BC98AAA3-CAD3-4156-A533-7E57C3229F3D",
+        "price": 120,
+        "qty": 6,
+        "price_reserve": 120
+    },
+    {
+        "branch": "30467",
+        "code": "0463B092-F48B-497B-A374-87B5EC663058",
+        "price": 650,
+        "qty": 2,
+        "price_reserve": 650
+    },
+    {
+        "branch": "30467",
+        "code": "59CB8665-D43B-4632-9A63-F5C54B5D2C48",
+        "price": 300,
+        "qty": 0,
+        "price_reserve": 300
+    },
+    {
+        "branch": "30467",
+        "code": "47A988DD-F4C1-4A7E-945A-04614B0A0619",
+        "price": 270,
+        "qty": 0,
+        "price_reserve": 270
+    },
+    {
+        "branch": "30467",
+        "code": "3C687E53-079B-4E5F-8CB9-AC4BD789EED7",
+        "price": 1140,
+        "qty": 1,
+        "price_reserve": 1140
+    },
+    {
+        "branch": "30467",
+        "code": "F02070CA-D701-42BF-8FBA-000D2D5E7135",
+        "price": 190,
+        "qty": 2,
+        "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "B8A035D9-679E-4D03-A246-E3FF571DFED5",
+        "price": 800,
+        "qty": 1,
+        "price_reserve": 800
+    },
+    {
+        "branch": "30467",
+        "code": "7416908D-0307-4B37-92CA-B1D435465399",
+        "price": 200,
+        "qty": 2,
+        "price_reserve": 200
+    },
+    {
+        "branch": "30467",
+        "code": "0326B6D4-D317-4F13-969E-CC19BD408BEF",
+        "price": 190,
+        "qty": 1,
+        "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "70867C84-937B-46A7-901F-1C7B5FD28A85",
+        "price": 300,
+        "qty": 1,
+        "price_reserve": 300
+    },
+    {
+        "branch": "30467",
+        "code": "FA002D3E-B621-4555-AD56-DA38E9F2F61F",
+        "price": 40,
+        "qty": 0,
+        "price_reserve": 40
+    },
+    {
+        "branch": "30467",
+        "code": "B3B65239-065C-4E5F-BDB3-4878F6753A10",
+        "price": 110,
+        "qty": 4,
+        "price_reserve": 110
+    },
+    {
+        "branch": "30467",
+        "code": "DF33CB49-478D-47D9-9187-599D0FB1790F",
+        "price": 50,
+        "qty": 0,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "DA3BD1DE-1EAC-47D9-BDAD-245825D1C969",
+        "price": 45,
+        "qty": 0,
+        "price_reserve": 45
+    },
+    {
+        "branch": "30467",
+        "code": "F654A74B-5531-43DD-A93A-74C9897A2CB7",
+        "price": 50,
+        "qty": 5,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "4467C451-87F7-4046-863A-DBFEB55E1860",
+        "price": 520,
+        "qty": 0,
+        "price_reserve": 520
+    },
+    {
+        "branch": "30467",
+        "code": "3AF50F16-955A-4405-AC59-877EBBC1CEFD",
+        "price": 3200,
+        "qty": 0,
+        "price_reserve": 3200
+    },
+    {
+        "branch": "30467",
+        "code": "52C609F6-1249-4974-9FE7-3E9E1518244E",
+        "price": 55,
+        "qty": 3,
+        "price_reserve": 55
+    },
+    {
+        "branch": "30467",
+        "code": "31A0315E-5313-4A6C-A5E8-302A43AA2EB7",
+        "price": 55,
+        "qty": 19,
+        "price_reserve": 55
+    },
+    {
+        "branch": "30467",
+        "code": "A5CBA3F5-063D-41D4-8E84-48EB108EC724",
+        "price": 50,
+        "qty": 8,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
         "code": "A3C5391C-1433-4BA9-9C86-BB6A2701D296",
         "price": 60,
         "qty": 5,
@@ -367,7 +535,7 @@
         "branch": "30467",
         "code": "3B2441C8-742B-4AA4-B556-5E1947EC3743",
         "price": 75,
-        "qty": 5,
+        "qty": 4,
         "price_reserve": 75
     },
     {
@@ -381,8 +549,15 @@
         "branch": "30467",
         "code": "69B45483-DB60-4607-B2A6-7447D47C39F7",
         "price": 35,
-        "qty": 8,
+        "qty": 28,
         "price_reserve": 35
+    },
+    {
+        "branch": "30467",
+        "code": "439CB86D-F753-40B5-A805-86BF8F7DA049",
+        "price": 760,
+        "qty": 0,
+        "price_reserve": 760
     },
     {
         "branch": "30467",
@@ -416,7 +591,7 @@
         "branch": "30467",
         "code": "0AC9CA0E-3C6B-4E69-BBD7-52E5277209AA",
         "price": 70,
-        "qty": 4,
+        "qty": 3,
         "price_reserve": 70
     },
     {
@@ -430,8 +605,29 @@
         "branch": "30467",
         "code": "A1F24FF6-709C-4DE6-852F-4325E6E0C5D6",
         "price": 50,
-        "qty": 5,
+        "qty": 4,
         "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "1EF51327-EEB0-4FE9-A715-85A216F713FF",
+        "price": 3200,
+        "qty": 2,
+        "price_reserve": 3200
+    },
+    {
+        "branch": "30467",
+        "code": "98C26C84-4F81-480D-9D2B-02D2F9F1A568",
+        "price": 260,
+        "qty": 0,
+        "price_reserve": 260
+    },
+    {
+        "branch": "30467",
+        "code": "C2EAABA5-5FE5-4C27-94E5-14C31F8A550E",
+        "price": 790,
+        "qty": 1,
+        "price_reserve": 790
     },
     {
         "branch": "30467",
@@ -442,10 +638,31 @@
     },
     {
         "branch": "30467",
+        "code": "C1ADF643-4AF4-4A48-A81C-8CDA4810097C",
+        "price": 50,
+        "qty": 7,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
         "code": "5B873FD9-1F63-47A2-BE4C-53F1632FBFD0",
         "price": 80,
         "qty": 30,
         "price_reserve": 80
+    },
+    {
+        "branch": "30467",
+        "code": "4624DC54-1C8C-4FE5-83EE-77347406FEAC",
+        "price": 110,
+        "qty": 5,
+        "price_reserve": 110
+    },
+    {
+        "branch": "30467",
+        "code": "DBEBA1D8-23AE-47B3-800B-80EE1311E460",
+        "price": 45,
+        "qty": 0,
+        "price_reserve": 45
     },
     {
         "branch": "30467",
@@ -465,8 +682,29 @@
         "branch": "30467",
         "code": "9AE5DF7A-0995-45EB-B817-5215F3FCF225",
         "price": 440,
-        "qty": 3,
+        "qty": 2,
         "price_reserve": 440
+    },
+    {
+        "branch": "30467",
+        "code": "12551E92-3A5D-4D56-A7E2-B3387E1B0FBE",
+        "price": 870,
+        "qty": 3,
+        "price_reserve": 870
+    },
+    {
+        "branch": "30467",
+        "code": "2D5E6FB4-3BD8-49ED-9A71-B74121D6E01A",
+        "price": 50,
+        "qty": 3,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "EE80E595-E5DF-49F0-8761-39088B1294F2",
+        "price": 50,
+        "qty": 11,
+        "price_reserve": 50
     },
     {
         "branch": "30467",
@@ -493,7 +731,7 @@
         "branch": "30467",
         "code": "20124F32-83E9-4476-9EB9-56D7311BEB04",
         "price": 200,
-        "qty": 3,
+        "qty": 2,
         "price_reserve": 200
     },
     {
@@ -507,8 +745,22 @@
         "branch": "30467",
         "code": "E6222842-922F-4C5C-82F9-DFA111E0DD9D",
         "price": 230,
-        "qty": 4,
+        "qty": 3,
         "price_reserve": 230
+    },
+    {
+        "branch": "30467",
+        "code": "078ED726-1CD2-4FA4-B4AE-5137AD8B5FB4",
+        "price": 190,
+        "qty": 4,
+        "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "7A873004-2C7A-4B86-AA14-BC1B7152D1AC",
+        "price": 2800,
+        "qty": 1,
+        "price_reserve": 2800
     },
     {
         "branch": "30467",
@@ -516,6 +768,20 @@
         "price": 380,
         "qty": 2,
         "price_reserve": 380
+    },
+    {
+        "branch": "30467",
+        "code": "6CF82161-F177-4AA5-A1C1-B10693C47C01",
+        "price": 855,
+        "qty": 0,
+        "price_reserve": 855
+    },
+    {
+        "branch": "30467",
+        "code": "21603E64-FBC9-41EC-BD4A-8792519209A8",
+        "price": 500,
+        "qty": 0,
+        "price_reserve": 500
     },
     {
         "branch": "30467",
@@ -542,21 +808,21 @@
         "branch": "30467",
         "code": "77E1784C-A988-433C-809A-770E55551E02",
         "price": 35,
-        "qty": 9,
+        "qty": 7,
         "price_reserve": 35
     },
     {
         "branch": "30467",
         "code": "DB857D2C-15D9-4C7B-B700-E0546809B1D2",
         "price": 65,
-        "qty": 14,
+        "qty": 12,
         "price_reserve": 65
     },
     {
         "branch": "30467",
         "code": "9DA52D01-0609-4585-A4F0-6C1D383C7AF1",
         "price": 25,
-        "qty": 10,
+        "qty": 7,
         "price_reserve": 25
     },
     {
@@ -610,10 +876,45 @@
     },
     {
         "branch": "30467",
+        "code": "74063AA0-F9A8-4F44-A0E4-A0E49B04CDE0",
+        "price": 900,
+        "qty": 1,
+        "price_reserve": 900
+    },
+    {
+        "branch": "30467",
+        "code": "52373EDC-5FB0-4F99-A181-81D3FD31A16D",
+        "price": 1100,
+        "qty": 0,
+        "price_reserve": 1100
+    },
+    {
+        "branch": "30467",
+        "code": "7CFF68B9-E93B-4659-8BCA-927EFCF24F78",
+        "price": 240,
+        "qty": 1,
+        "price_reserve": 240
+    },
+    {
+        "branch": "30467",
+        "code": "1F828D2D-012B-49CC-965D-5A3AA6607BBF",
+        "price": 620,
+        "qty": 0,
+        "price_reserve": 620
+    },
+    {
+        "branch": "30467",
         "code": "67C4BE86-3D95-477C-934A-EBD31501A8A4",
         "price": 10,
         "qty": 26,
         "price_reserve": 10
+    },
+    {
+        "branch": "30467",
+        "code": "E0340B29-1D88-4B46-8FBA-30FE7D0D15B6",
+        "price": 540,
+        "qty": 0,
+        "price_reserve": 540
     },
     {
         "branch": "30467",
@@ -624,6 +925,20 @@
     },
     {
         "branch": "30467",
+        "code": "C032453D-6389-478F-BD16-71409F4B85E9",
+        "price": 3100,
+        "qty": 0,
+        "price_reserve": 3100
+    },
+    {
+        "branch": "30467",
+        "code": "16F5A137-9AC4-4E1A-8BAC-7AAC5E014D05",
+        "price": 1080,
+        "qty": 0,
+        "price_reserve": 1080
+    },
+    {
+        "branch": "30467",
         "code": "891378E0-AD55-4EDB-BC87-240B1CE1BB1E",
         "price": 20,
         "qty": 0,
@@ -631,10 +946,45 @@
     },
     {
         "branch": "30467",
+        "code": "76AE3727-57F6-4688-A3A0-1CD50B7F722C",
+        "price": 1370,
+        "qty": 0,
+        "price_reserve": 1370
+    },
+    {
+        "branch": "30467",
         "code": "FD1C0FFD-A923-40FE-AD91-0CD4F1250BCE",
         "price": 420,
         "qty": 3,
         "price_reserve": 420
+    },
+    {
+        "branch": "30467",
+        "code": "3E41C1AB-8395-42FF-BC49-079475C27296",
+        "price": 930,
+        "qty": 0,
+        "price_reserve": 930
+    },
+    {
+        "branch": "30467",
+        "code": "633A5464-77A1-41F4-89D6-CFBA57554E4B",
+        "price": 55,
+        "qty": 7,
+        "price_reserve": 55
+    },
+    {
+        "branch": "30467",
+        "code": "28E1E636-1EF2-4846-9DA0-81D2DBE4A16E",
+        "price": 3000,
+        "qty": 0,
+        "price_reserve": 3000
+    },
+    {
+        "branch": "30467",
+        "code": "F747C8E7-E9B6-44E5-A21C-5F262D1B969F",
+        "price": 210,
+        "qty": 2,
+        "price_reserve": 210
     },
     {
         "branch": "30467",
@@ -659,6 +1009,13 @@
     },
     {
         "branch": "30467",
+        "code": "3FA6BE43-E73E-47ED-BF52-770E1D9F6378",
+        "price": 200,
+        "qty": 0,
+        "price_reserve": 200
+    },
+    {
+        "branch": "30467",
         "code": "94D1E8F1-10E0-420A-B195-9AC1AA2A112A",
         "price": 20,
         "qty": 76,
@@ -666,10 +1023,87 @@
     },
     {
         "branch": "30467",
+        "code": "AFE4A805-D12E-49F3-BA9A-83373A64872F",
+        "price": 630,
+        "qty": 0,
+        "price_reserve": 630
+    },
+    {
+        "branch": "30467",
+        "code": "08055A93-FC7F-4341-B8DA-1EF83DCF508B",
+        "price": 730,
+        "qty": 0,
+        "price_reserve": 730
+    },
+    {
+        "branch": "30467",
+        "code": "7AB28798-8555-465F-A173-5D025920C209",
+        "price": 850,
+        "qty": 0,
+        "price_reserve": 850
+    },
+    {
+        "branch": "30467",
+        "code": "1445355B-1E80-4E67-AAE5-2D909AFFC4B8",
+        "price": 600,
+        "qty": 1,
+        "price_reserve": 600
+    },
+    {
+        "branch": "30467",
+        "code": "1C27A021-3971-4DEC-9395-C1E3CD4CBE3D",
+        "price": 450,
+        "qty": 1,
+        "price_reserve": 450
+    },
+    {
+        "branch": "30467",
+        "code": "DEC80030-A3D2-4AD7-9085-EB3C688910C5",
+        "price": 810,
+        "qty": 3,
+        "price_reserve": 810
+    },
+    {
+        "branch": "30467",
+        "code": "672CDD62-7797-47EB-A05D-8A010A6144B9",
+        "price": 220,
+        "qty": 2,
+        "price_reserve": 220
+    },
+    {
+        "branch": "30467",
+        "code": "638F4F29-CD03-4B5E-AD69-C197AB6D23F4",
+        "price": 850,
+        "qty": 0,
+        "price_reserve": 850
+    },
+    {
+        "branch": "30467",
+        "code": "4A4EFAE0-D2E3-4CC0-A75E-5C6B1FC43C1C",
+        "price": 220,
+        "qty": 0,
+        "price_reserve": 220
+    },
+    {
+        "branch": "30467",
+        "code": "1E7D3786-7B11-4FC6-9E8B-C5C50B05B550",
+        "price": 220,
+        "qty": 1,
+        "price_reserve": 220
+    },
+    {
+        "branch": "30467",
         "code": "133698A8-9477-4B02-A3CB-293AFE45D219",
         "price": 250,
         "qty": 2,
         "price_reserve": 250
+    },
+    {
+        "branch": "30467",
+        "code": "B7CD3F2C-F652-4CF8-8A24-DCCAF9F76D8D",
+        "price": 840,
+        "qty": 6,
+        "price_reserve": 840
     },
     {
         "branch": "30467",
@@ -701,6 +1135,13 @@
     },
     {
         "branch": "30467",
+        "code": "0BF74650-7360-46C0-B727-7511326B5007",
+        "price": 850,
+        "qty": 0,
+        "price_reserve": 850
+    },
+    {
+        "branch": "30467",
         "code": "F8A6366C-7A4C-4FFC-B283-C7A5D4476D7B",
         "price": 150,
         "qty": 5,
@@ -715,10 +1156,38 @@
     },
     {
         "branch": "30467",
+        "code": "DE2D0F0F-6935-42F4-A142-41BE5AA4A7E6",
+        "price": 670,
+        "qty": 0,
+        "price_reserve": 670
+    },
+    {
+        "branch": "30467",
         "code": "AE51694C-D8FB-4639-9042-EAB4B14C5EF3",
         "price": 2300,
         "qty": 1,
         "price_reserve": 2300
+    },
+    {
+        "branch": "30467",
+        "code": "B1346C83-B550-4AFF-A6CF-2428BA16B809",
+        "price": 230,
+        "qty": 0,
+        "price_reserve": 230
+    },
+    {
+        "branch": "30467",
+        "code": "72274AC2-273D-4B40-A7BE-92A7A2634BB9",
+        "price": 870,
+        "qty": 0,
+        "price_reserve": 870
+    },
+    {
+        "branch": "30467",
+        "code": "FD0D14E1-BED2-4BD6-BD56-0715C431EDBA",
+        "price": 3760,
+        "qty": 1,
+        "price_reserve": 3760
     },
     {
         "branch": "30467",
@@ -733,6 +1202,48 @@
         "price": 300,
         "qty": 1,
         "price_reserve": 300
+    },
+    {
+        "branch": "30467",
+        "code": "FB591627-A735-47ED-BEE8-9DEF073A949A",
+        "price": 110,
+        "qty": 3,
+        "price_reserve": 110
+    },
+    {
+        "branch": "30467",
+        "code": "CE4FDA10-62D9-45C8-B91B-DB2ED6DECE1B",
+        "price": 50,
+        "qty": 0,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "A2EF2796-5839-4663-8D13-EBE3A4D16FF8",
+        "price": 430,
+        "qty": 1,
+        "price_reserve": 430
+    },
+    {
+        "branch": "30467",
+        "code": "58805F58-904B-42BD-A168-8AA996408EA6",
+        "price": 150,
+        "qty": 1,
+        "price_reserve": 150
+    },
+    {
+        "branch": "30467",
+        "code": "7DD1B0CE-100E-45BB-BB48-EE01CC3E7404",
+        "price": 570,
+        "qty": 2,
+        "price_reserve": 570
+    },
+    {
+        "branch": "30467",
+        "code": "951C8DAF-E2DE-436F-A7CE-8EB885C58EFF",
+        "price": 210,
+        "qty": 7,
+        "price_reserve": 210
     },
     {
         "branch": "30467",
@@ -757,6 +1268,69 @@
     },
     {
         "branch": "30467",
+        "code": "780EDBA0-5AEE-403F-8DB3-706D33696A49",
+        "price": 770,
+        "qty": 0,
+        "price_reserve": 770
+    },
+    {
+        "branch": "30467",
+        "code": "ABD86992-89F2-48F8-A3AE-66EF92FC7683",
+        "price": 710,
+        "qty": 0,
+        "price_reserve": 710
+    },
+    {
+        "branch": "30467",
+        "code": "B3381C2D-FB82-46D3-B5B0-6CC75841F4EE",
+        "price": 530,
+        "qty": 0,
+        "price_reserve": 530
+    },
+    {
+        "branch": "30467",
+        "code": "98344914-2766-4D30-8ACD-E790710DFE05",
+        "price": 50,
+        "qty": 3,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "EA895D90-703D-43EC-9192-02081BFAB44F",
+        "price": 1380,
+        "qty": 0,
+        "price_reserve": 1380
+    },
+    {
+        "branch": "30467",
+        "code": "B98880C7-B49C-4C50-9B6E-CBFE3FC053D0",
+        "price": 50,
+        "qty": 4,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "9590EF6E-652A-4641-82CA-E66B7CC8947E",
+        "price": 2820,
+        "qty": 0,
+        "price_reserve": 2820
+    },
+    {
+        "branch": "30467",
+        "code": "52E7506A-94E8-4ABB-9E30-8A9FA3C185AF",
+        "price": 220,
+        "qty": 2,
+        "price_reserve": 220
+    },
+    {
+        "branch": "30467",
+        "code": "16F1CDE1-CB84-402B-A7D0-6883653DB717",
+        "price": 50,
+        "qty": 14,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
         "code": "884A2661-AF77-4075-BEF5-FD83CD98CAE2",
         "price": 25,
         "qty": 5,
@@ -768,6 +1342,34 @@
         "price": 200,
         "qty": 2,
         "price_reserve": 200
+    },
+    {
+        "branch": "30467",
+        "code": "F098B735-33C7-405F-AA21-99C3FF458E0A",
+        "price": 160,
+        "qty": 2,
+        "price_reserve": 160
+    },
+    {
+        "branch": "30467",
+        "code": "1F3FF1E3-36E6-4303-9E44-9493A6DE014D",
+        "price": 50,
+        "qty": 0,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "CA623978-8CEE-49CB-8B16-5718A12EBC81",
+        "price": 770,
+        "qty": 0,
+        "price_reserve": 770
+    },
+    {
+        "branch": "30467",
+        "code": "436DC07A-84C5-4E4E-8E2C-72B729DA2C49",
+        "price": 35,
+        "qty": 0,
+        "price_reserve": 35
     },
     {
         "branch": "30467",
@@ -787,15 +1389,50 @@
         "branch": "30467",
         "code": "C05F712C-A0A1-404C-A2D4-D9FC6DD08E75",
         "price": 750,
-        "qty": 1,
+        "qty": 0,
         "price_reserve": 750
+    },
+    {
+        "branch": "30467",
+        "code": "A3EB491E-4102-4129-BBE9-7C4BB20D0B78",
+        "price": 190,
+        "qty": 1,
+        "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "89A579CF-64E3-4C80-A3A7-6EDE088804B2",
+        "price": 320,
+        "qty": 1,
+        "price_reserve": 320
     },
     {
         "branch": "30467",
         "code": "5900FBF2-B6D6-44BA-AE7A-B75B1181C0D5",
         "price": 190,
-        "qty": 1,
+        "qty": 2,
         "price_reserve": 190
+    },
+    {
+        "branch": "30467",
+        "code": "2215E2E0-D7EC-4786-8842-2916A346D557",
+        "price": 3840,
+        "qty": 0,
+        "price_reserve": 3840
+    },
+    {
+        "branch": "30467",
+        "code": "CD2FED93-9069-459C-A34D-3480D8D88ABF",
+        "price": 230,
+        "qty": 0,
+        "price_reserve": 230
+    },
+    {
+        "branch": "30467",
+        "code": "5C54A9BB-FC19-49EF-998D-E3543FE6CB69",
+        "price": 230,
+        "qty": 0,
+        "price_reserve": 230
     },
     {
         "branch": "30467",
@@ -820,10 +1457,38 @@
     },
     {
         "branch": "30467",
+        "code": "79E24D5E-CB48-40EB-82B6-6B4451C1E796",
+        "price": 150,
+        "qty": 2,
+        "price_reserve": 150
+    },
+    {
+        "branch": "30467",
+        "code": "75472D07-43E8-4C1F-90EC-63AFCEB25BF4",
+        "price": 630,
+        "qty": 1,
+        "price_reserve": 630
+    },
+    {
+        "branch": "30467",
+        "code": "8D2D67D3-6E56-48A0-898D-763F77C30683",
+        "price": 150,
+        "qty": 0,
+        "price_reserve": 150
+    },
+    {
+        "branch": "30467",
         "code": "12CB7945-19D5-4BB1-BFEC-6E1D7B0C326E",
         "price": 650,
         "qty": 1,
         "price_reserve": 650
+    },
+    {
+        "branch": "30467",
+        "code": "263F622A-A57C-49D9-A89A-F6B7ADCC7248",
+        "price": 300,
+        "qty": 3,
+        "price_reserve": 300
     },
     {
         "branch": "30467",
@@ -862,10 +1527,31 @@
     },
     {
         "branch": "30467",
+        "code": "4F64553B-F24B-4687-8C66-AD325C599706",
+        "price": 240,
+        "qty": 0,
+        "price_reserve": 240
+    },
+    {
+        "branch": "30467",
+        "code": "969F2D12-B1F2-49A7-B3D0-97FC970626EA",
+        "price": 45,
+        "qty": 5,
+        "price_reserve": 45
+    },
+    {
+        "branch": "30467",
         "code": "412C8763-D9C2-4D74-B99C-F9BA5FCF8900",
         "price": 320,
         "qty": 1,
         "price_reserve": 320
+    },
+    {
+        "branch": "30467",
+        "code": "EA793539-169A-45AD-81CA-DCA52101AD4F",
+        "price": 270,
+        "qty": 1,
+        "price_reserve": 270
     },
     {
         "branch": "30467",
@@ -878,29 +1564,57 @@
         "branch": "30467",
         "code": "C13A5106-D0B8-45C7-BDD6-24192EC65A46",
         "price": 130,
-        "qty": 1,
+        "qty": 3,
         "price_reserve": 130
     },
     {
         "branch": "30467",
         "code": "628543C5-8068-4DCB-9BC6-85D9F116CB12",
         "price": 310,
-        "qty": 3,
+        "qty": 2,
         "price_reserve": 310
+    },
+    {
+        "branch": "30467",
+        "code": "DAB443D7-8E0E-4204-8676-966F0691407E",
+        "price": 50,
+        "qty": 6,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "7F9ABFC8-9ABE-40C0-8596-2DE4A12F3F37",
+        "price": 50,
+        "qty": 0,
+        "price_reserve": 50
+    },
+    {
+        "branch": "30467",
+        "code": "4ABDFB14-879E-4916-8693-0E7F7C0D581D",
+        "price": 800,
+        "qty": 1,
+        "price_reserve": 800
+    },
+    {
+        "branch": "30467",
+        "code": "F93FAEB3-5EB1-4FCD-83D5-05FA5E29A40E",
+        "price": 320,
+        "qty": 1,
+        "price_reserve": 320
     },
     {
         "branch": "30467",
         "code": "DD1F2E84-74A3-476F-8382-2664B459F314",
         "price": 200,
-        "qty": 3,
+        "qty": 2,
         "price_reserve": 200
     },
     {
         "branch": "30467",
         "code": "D4F8AD24-F5B9-43C9-B75B-9B919D266C9B",
-        "price": 30,
-        "qty": 0,
-        "price_reserve": 30
+        "price": 35,
+        "qty": 2,
+        "price_reserve": 35
     },
     {
         "branch": "30467",
@@ -908,6 +1622,41 @@
         "price": 290,
         "qty": 1,
         "price_reserve": 290
+    },
+    {
+        "branch": "30467",
+        "code": "F8FEE217-4516-4C3F-937C-A6100FF61DD4",
+        "price": 160,
+        "qty": 5,
+        "price_reserve": 160
+    },
+    {
+        "branch": "30467",
+        "code": "83530D41-B4BF-4D4F-87F5-D2CE3288D091",
+        "price": 930,
+        "qty": 0,
+        "price_reserve": 930
+    },
+    {
+        "branch": "30467",
+        "code": "82541154-41A5-4918-BF7B-9905AE163C7B",
+        "price": 1050,
+        "qty": 1,
+        "price_reserve": 1050
+    },
+    {
+        "branch": "30467",
+        "code": "10974375-BBD4-4A33-ADBC-980AB256273F",
+        "price": 600,
+        "qty": 0,
+        "price_reserve": 600
+    },
+    {
+        "branch": "30467",
+        "code": "F766F0F4-2000-4723-A5E6-7B24E505C232",
+        "price": 50,
+        "qty": 8,
+        "price_reserve": 50
     },
     {
         "branch": "30467",
@@ -929,5 +1678,12 @@
         "price": 210,
         "qty": 0,
         "price_reserve": 210
+    },
+    {
+        "branch": "30467",
+        "code": "07103F38-1513-4E86-8C51-9446C9CC8A5F",
+        "price": 55,
+        "qty": 9,
+        "price_reserve": 55
     }
 ]
