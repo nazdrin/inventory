@@ -25,3 +25,4 @@ yarn-error.log*
 stock_logs.json
 stock.json
 full_input_data.json
+alembic.ini
