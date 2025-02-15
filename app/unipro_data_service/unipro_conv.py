@@ -26,9 +26,9 @@ def get_conversion_type():
     
     count += 1
     with open(COUNTER_FILE, "w") as f:
-        f.write(str(count % 2))
+        f.write(str(count % 20))
     
-    return "catalog" if count % 2 == 0 else "stock"
+    return "catalog" if count % 20 == 0 else "stock"
 
 def get_enterprise_info(source_id):
     """Получает enterprise_code и branch из mapping по sourceID."""

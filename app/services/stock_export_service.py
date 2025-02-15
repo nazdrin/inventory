@@ -128,7 +128,7 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
             await send_to_endpoint(endpoint, formatted_json, login, password,enterprise_code)
 
             logging.info(f"Stock file for enterprise_code={enterprise_code} processed successfully.")
-            send_notification(f"Отправка на ендпоинт стока прошла успешно для предприятия {enterprise_code}",enterprise_code)
+            #send_notification(f"Отправка на ендпоинт стока прошла успешно для предприятия {enterprise_code}",enterprise_code)
 
         except Exception as e:
             logging.exception(f"Error processing stock file for enterprise_code={enterprise_code}: {str(e)}")
