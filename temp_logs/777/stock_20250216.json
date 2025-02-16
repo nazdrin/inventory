@@ -1,0 +1,610 @@
+{
+    "Branches": [
+        {
+            "Code": "777",
+            "Rests": [
+                {
+                    "Code": "2395832857",
+                    "Price": 5500.0,
+                    "Qty": 0,
+                    "PriceReserve": 5500.0
+                },
+                {
+                    "Code": "2395558729",
+                    "Price": 5500.0,
+                    "Qty": 0,
+                    "PriceReserve": 5500.0
+                },
+                {
+                    "Code": "2395436400",
+                    "Price": 4200.0,
+                    "Qty": 3,
+                    "PriceReserve": 4200.0
+                },
+                {
+                    "Code": "2395415661",
+                    "Price": 3200.0,
+                    "Qty": 0,
+                    "PriceReserve": 3200.0
+                },
+                {
+                    "Code": "2395406984",
+                    "Price": 5600.0,
+                    "Qty": 2,
+                    "PriceReserve": 5600.0
+                },
+                {
+                    "Code": "2394491407",
+                    "Price": 7400.0,
+                    "Qty": 2,
+                    "PriceReserve": 7400.0
+                },
+                {
+                    "Code": "2394329884",
+                    "Price": 3400.0,
+                    "Qty": 0,
+                    "PriceReserve": 3400.0
+                },
+                {
+                    "Code": "2393275264",
+                    "Price": 2400.0,
+                    "Qty": 2,
+                    "PriceReserve": 2400.0
+                },
+                {
+                    "Code": "2387943692",
+                    "Price": 7000.0,
+                    "Qty": 0,
+                    "PriceReserve": 7000.0
+                },
+                {
+                    "Code": "2387896684",
+                    "Price": 7000.0,
+                    "Qty": 0,
+                    "PriceReserve": 7000.0
+                },
+                {
+                    "Code": "2387873347",
+                    "Price": 6800.0,
+                    "Qty": 0,
+                    "PriceReserve": 6800.0
+                },
+                {
+                    "Code": "2387127751",
+                    "Price": 5500.0,
+                    "Qty": 2,
+                    "PriceReserve": 5500.0
+                },
+                {
+                    "Code": "2387082544",
+                    "Price": 7600.0,
+                    "Qty": 0,
+                    "PriceReserve": 7600.0
+                },
+                {
+                    "Code": "2373442884",
+                    "Price": 7600.0,
+                    "Qty": 2,
+                    "PriceReserve": 7600.0
+                },
+                {
+                    "Code": "2373292362",
+                    "Price": 3800.0,
+                    "Qty": 2,
+                    "PriceReserve": 3800.0
+                },
+                {
+                    "Code": "2373274826",
+                    "Price": 3900.0,
+                    "Qty": 1,
+                    "PriceReserve": 3900.0
+                },
+                {
+                    "Code": "2372234776",
+                    "Price": 3699.0,
+                    "Qty": 2,
+                    "PriceReserve": 3699.0
+                },
+                {
+                    "Code": "2272961098",
+                    "Price": 3250.0,
+                    "Qty": 2,
+                    "PriceReserve": 3250.0
+                },
+                {
+                    "Code": "2272956498",
+                    "Price": 4500.0,
+                    "Qty": 3,
+                    "PriceReserve": 4500.0
+                },
+                {
+                    "Code": "2272951677",
+                    "Price": 6670.0,
+                    "Qty": 2,
+                    "PriceReserve": 6670.0
+                },
+                {
+                    "Code": "2272946694",
+                    "Price": 6770.0,
+                    "Qty": 2,
+                    "PriceReserve": 6770.0
+                },
+                {
+                    "Code": "2272935254",
+                    "Price": 4270.0,
+                    "Qty": 6,
+                    "PriceReserve": 4270.0
+                },
+                {
+                    "Code": "2272928069",
+                    "Price": 2700.0,
+                    "Qty": 52,
+                    "PriceReserve": 2700.0
+                },
+                {
+                    "Code": "2178800435",
+                    "Price": 165.0,
+                    "Qty": 0,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832160097",
+                    "Price": 165.0,
+                    "Qty": 7000,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832160096",
+                    "Price": 165.0,
+                    "Qty": 6985,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832158733",
+                    "Price": 150.0,
+                    "Qty": 7000,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1832158732",
+                    "Price": 150.0,
+                    "Qty": 7000,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1832157871",
+                    "Price": 165.0,
+                    "Qty": 5000,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832157870",
+                    "Price": 165.0,
+                    "Qty": 4993,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832142665",
+                    "Price": 155.0,
+                    "Qty": 9998,
+                    "PriceReserve": 155.0
+                },
+                {
+                    "Code": "1832142104",
+                    "Price": 160.0,
+                    "Qty": 31990,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832140521",
+                    "Price": 165.0,
+                    "Qty": 20000,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832140228",
+                    "Price": 180.0,
+                    "Qty": 5987,
+                    "PriceReserve": 180.0
+                },
+                {
+                    "Code": "1832140012",
+                    "Price": 160.0,
+                    "Qty": 0,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832140011",
+                    "Price": 160.0,
+                    "Qty": 9999,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832139643",
+                    "Price": 160.0,
+                    "Qty": 10000,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832139642",
+                    "Price": 160.0,
+                    "Qty": 0,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832139358",
+                    "Price": 160.0,
+                    "Qty": 3000,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832139357",
+                    "Price": 160.0,
+                    "Qty": 2991,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1832136253",
+                    "Price": 165.0,
+                    "Qty": 898,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832135442",
+                    "Price": 165.0,
+                    "Qty": 0,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1832132857",
+                    "Price": 125.0,
+                    "Qty": 2000,
+                    "PriceReserve": 125.0
+                },
+                {
+                    "Code": "1832132203",
+                    "Price": 125.0,
+                    "Qty": 7000,
+                    "PriceReserve": 125.0
+                },
+                {
+                    "Code": "1832123269",
+                    "Price": 145.0,
+                    "Qty": 7000,
+                    "PriceReserve": 145.0
+                },
+                {
+                    "Code": "1832123268",
+                    "Price": 145.0,
+                    "Qty": 0,
+                    "PriceReserve": 145.0
+                },
+                {
+                    "Code": "1832123267",
+                    "Price": 145.0,
+                    "Qty": 6979,
+                    "PriceReserve": 145.0
+                },
+                {
+                    "Code": "1832059235",
+                    "Price": 150.0,
+                    "Qty": 7000,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1832059234",
+                    "Price": 150.0,
+                    "Qty": 6995,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1832059233",
+                    "Price": 150.0,
+                    "Qty": 6998,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1832059022",
+                    "Price": 140.0,
+                    "Qty": 8000,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1832059021",
+                    "Price": 140.0,
+                    "Qty": 0,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1832059020",
+                    "Price": 140.0,
+                    "Qty": 7985,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1832058778",
+                    "Price": 140.0,
+                    "Qty": 6000,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1832058777",
+                    "Price": 140.0,
+                    "Qty": 5999,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1832058776",
+                    "Price": 140.0,
+                    "Qty": 6000,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1577150076",
+                    "Price": 180.0,
+                    "Qty": 11999,
+                    "PriceReserve": 180.0
+                },
+                {
+                    "Code": "1577148511",
+                    "Price": 125.0,
+                    "Qty": 6985,
+                    "PriceReserve": 125.0
+                },
+                {
+                    "Code": "1577146583",
+                    "Price": 125.0,
+                    "Qty": 1997,
+                    "PriceReserve": 125.0
+                },
+                {
+                    "Code": "1509543003",
+                    "Price": 130.0,
+                    "Qty": 1137,
+                    "PriceReserve": 130.0
+                },
+                {
+                    "Code": "1426758026",
+                    "Price": 165.0,
+                    "Qty": 994,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1413328277",
+                    "Price": 300.0,
+                    "Qty": 9995,
+                    "PriceReserve": 300.0
+                },
+                {
+                    "Code": "1413327893",
+                    "Price": 170.0,
+                    "Qty": 0,
+                    "PriceReserve": 170.0
+                },
+                {
+                    "Code": "1413326914",
+                    "Price": 165.0,
+                    "Qty": 0,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1413326528",
+                    "Price": 170.0,
+                    "Qty": 0,
+                    "PriceReserve": 170.0
+                },
+                {
+                    "Code": "1413326421",
+                    "Price": 170.0,
+                    "Qty": 0,
+                    "PriceReserve": 170.0
+                },
+                {
+                    "Code": "1413325011",
+                    "Price": 250.0,
+                    "Qty": 0,
+                    "PriceReserve": 250.0
+                },
+                {
+                    "Code": "1340053689",
+                    "Price": 160.0,
+                    "Qty": 0,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1340053271",
+                    "Price": 160.0,
+                    "Qty": 9999,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1340052181",
+                    "Price": 160.0,
+                    "Qty": 10000,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1340051382",
+                    "Price": 165.0,
+                    "Qty": 7996,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1340050483",
+                    "Price": 180.0,
+                    "Qty": 0,
+                    "PriceReserve": 180.0
+                },
+                {
+                    "Code": "1340049280",
+                    "Price": 165.0,
+                    "Qty": 19997,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1334207383",
+                    "Price": 100.0,
+                    "Qty": 7998,
+                    "PriceReserve": 100.0
+                },
+                {
+                    "Code": "1314275977",
+                    "Price": 160.0,
+                    "Qty": 31958,
+                    "PriceReserve": 160.0
+                },
+                {
+                    "Code": "1291273417",
+                    "Price": 180.0,
+                    "Qty": 100,
+                    "PriceReserve": 180.0
+                },
+                {
+                    "Code": "1291272987",
+                    "Price": 165.0,
+                    "Qty": 0,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1283449857",
+                    "Price": 300.0,
+                    "Qty": 4369,
+                    "PriceReserve": 300.0
+                },
+                {
+                    "Code": "1252362140",
+                    "Price": 7.0,
+                    "Qty": 387,
+                    "PriceReserve": 7.0
+                },
+                {
+                    "Code": "1252361705",
+                    "Price": 135.0,
+                    "Qty": 100,
+                    "PriceReserve": 135.0
+                },
+                {
+                    "Code": "1252351688",
+                    "Price": 7.0,
+                    "Qty": 180,
+                    "PriceReserve": 7.0
+                },
+                {
+                    "Code": "1252351183",
+                    "Price": 165.0,
+                    "Qty": 4952,
+                    "PriceReserve": 165.0
+                },
+                {
+                    "Code": "1252350531",
+                    "Price": 0.9,
+                    "Qty": 4200,
+                    "PriceReserve": 0.9
+                },
+                {
+                    "Code": "1252350393",
+                    "Price": 7.0,
+                    "Qty": 269,
+                    "PriceReserve": 7.0
+                },
+                {
+                    "Code": "1252350281",
+                    "Price": 7.0,
+                    "Qty": 0,
+                    "PriceReserve": 7.0
+                },
+                {
+                    "Code": "1252350118",
+                    "Price": 450.0,
+                    "Qty": 0,
+                    "PriceReserve": 450.0
+                },
+                {
+                    "Code": "1252349647",
+                    "Price": 5.0,
+                    "Qty": 30,
+                    "PriceReserve": 5.0
+                },
+                {
+                    "Code": "1252349200",
+                    "Price": 140.0,
+                    "Qty": 5974,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1210763730",
+                    "Price": 150.0,
+                    "Qty": 4995,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1201050070",
+                    "Price": 180.0,
+                    "Qty": 0,
+                    "PriceReserve": 180.0
+                },
+                {
+                    "Code": "1201049504",
+                    "Price": 150.0,
+                    "Qty": 0,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1201045875",
+                    "Price": 150.0,
+                    "Qty": 0,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1192743845",
+                    "Price": 6.0,
+                    "Qty": 4273,
+                    "PriceReserve": 6.0
+                },
+                {
+                    "Code": "1160679747",
+                    "Price": 140.0,
+                    "Qty": 7980,
+                    "PriceReserve": 140.0
+                },
+                {
+                    "Code": "1160679634",
+                    "Price": 150.0,
+                    "Qty": 6995,
+                    "PriceReserve": 150.0
+                },
+                {
+                    "Code": "1160679582",
+                    "Price": 3.0,
+                    "Qty": 0,
+                    "PriceReserve": 3.0
+                },
+                {
+                    "Code": "1160679348",
+                    "Price": 135.0,
+                    "Qty": 3993,
+                    "PriceReserve": 135.0
+                },
+                {
+                    "Code": "1160679244",
+                    "Price": 135.0,
+                    "Qty": 4486,
+                    "PriceReserve": 135.0
+                },
+                {
+                    "Code": "1160679186",
+                    "Price": 350.0,
+                    "Qty": 0,
+                    "PriceReserve": 350.0
+                },
+                {
+                    "Code": "1160677973",
+                    "Price": 240.0,
+                    "Qty": 0,
+                    "PriceReserve": 240.0
+                }
+            ],
+            "DateTime": "16.02.2025 12:43:36"
+        }
+    ]
+}
