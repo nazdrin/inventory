@@ -1,1 +1,0 @@
-2025-02-15 14:23:52.641088 - Enterprise Code: 777 - Error: '>' not supported between instances of 'int' and 'NoneType'
