@@ -15,6 +15,7 @@ now = datetime.now(tz=pytz.utc).astimezone(KIEV_TZ)
 
 # Импорт сервисов
 from app.dntrade_data_service.stock_fetch_convert import run_service
+from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
@@ -86,6 +87,10 @@ async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseS
             # Запуск обработки через run_service
             await run_service(enterprise.enterprise_code)
             logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (dnttrade).")
+        elif enterprise.data_format == "Prom":
+            # Запуск обработки через run_service
+            await run_prom(enterprise.enterprise_code)
+            logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (prom).")
         elif enterprise.data_format == "GoogleDrive":
             # Запуск обработки через extract_stock_from_google_drive
             await extract_stock_from_google_drive (enterprise.enterprise_code)
