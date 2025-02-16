@@ -13,6 +13,7 @@ now = datetime.now(tz=pytz.utc).astimezone(KIEV_TZ)
 
 # Импорт сервисов
 from app.dntrade_data_service.fetch_convert import run_service
+from app.prom_data_service.prom_catalog import run_prom
 from app.google_drive.google_drive_service import extract_catalog_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
@@ -92,6 +93,10 @@ async def process_catalog_for_enterprise(db: AsyncSession, enterprise: Enterpris
             # Обработка с помощью run_service
             await run_service(enterprise.enterprise_code)
             logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format 'dnttrade'")
+        elif enterprise.data_format == "Prom":
+            # Обработка с помощью run_service
+            await run_prom(enterprise.enterprise_code)
+            logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format 'prom'")
         elif enterprise.data_format == "GoogleDrive":
             # Обработка с помощью extract_catalog_from_google_drive
             await extract_catalog_from_google_drive(enterprise.enterprise_code)
