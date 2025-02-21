@@ -4,6 +4,11 @@ import asyncio
 from app.database import get_async_db, EnterpriseSettings
 from sqlalchemy.future import select
 from app.services.database_service import process_database_service
+import tempfile
+import os
+import logging
+from dotenv import load_dotenv
+load_dotenv()
 
 PROM_API_URL = "https://my.prom.ua/api/v1/products/list"
 LIMIT = 100000  # Фиксированный лимит записей
@@ -49,15 +54,23 @@ def transform_products(products, branch_id):
         })
     return transformed
 
-def save_to_json(data, filename):
-    """Сохранение данных в JSON-файл."""
+def save_to_json(data, enterprise_code, file_type):
+    """Сохранение данных в JSON-файл в указанную временную директорию из .env."""
     try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        print(f"Данные сохранены в {filename}")
-        return filename
-    except IOError:
-        print("Ошибка сохранения JSON-файла")
+        # Получаем временный путь из переменной окружения, иначе используем системный temp
+        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Формируем путь к JSON-файлу
+        json_file_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_data.json")
+
+        with open(json_file_path, "w", encoding="utf-8") as json_file:
+            json.dump(data, json_file, ensure_ascii=False, indent=4)
+
+        logging.info(f"JSON записан в файл: {json_file_path}")
+        return json_file_path
+    except IOError as e:
+        logging.error(f"Ошибка при сохранении JSON-файла: {e}")
         return None
 
 async def run_prom(enterprise_code):
@@ -71,7 +84,8 @@ async def run_prom(enterprise_code):
     response = fetch_products(api_key, limit=LIMIT)
     if response:
         transformed_data = transform_products(response, enterprise_settings.branch_id)
-        json_file_path = save_to_json(transformed_data, JSON_FILENAME)
+        file_type = "stock"
+        json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
         if json_file_path:
             await process_database_service(json_file_path, "stock", enterprise_code)
     else:

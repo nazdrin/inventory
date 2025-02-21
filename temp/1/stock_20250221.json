@@ -1,0 +1,676 @@
+{
+    "Branches": [
+        {
+            "Code": "30423",
+            "Rests": [
+                {
+                    "Code": "218",
+                    "Price": 11.0,
+                    "Qty": 0,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "461",
+                    "Price": 13.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "602",
+                    "Price": 15.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "787",
+                    "Price": 17.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 094",
+                    "Price": 19.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 356",
+                    "Price": 21.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 456",
+                    "Price": 23.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 759",
+                    "Price": 25.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 002",
+                    "Price": 27.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 465",
+                    "Price": 29.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 863",
+                    "Price": 31.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 942",
+                    "Price": 33.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 044",
+                    "Price": 35.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 139",
+                    "Price": 37.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 255",
+                    "Price": 39.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 335",
+                    "Price": 41.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 550",
+                    "Price": 43.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 664",
+                    "Price": 45.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 739",
+                    "Price": 47.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 775",
+                    "Price": 49.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 895",
+                    "Price": 51.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 175",
+                    "Price": 53.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 453",
+                    "Price": 55.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 656",
+                    "Price": 57.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 913",
+                    "Price": 59.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 031",
+                    "Price": 61.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 402",
+                    "Price": 63.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 478",
+                    "Price": 65.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 580",
+                    "Price": 67.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 662",
+                    "Price": 69.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 728",
+                    "Price": 71.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 023",
+                    "Price": 73.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 320",
+                    "Price": 76.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 498",
+                    "Price": 78.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 702",
+                    "Price": 80.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 033",
+                    "Price": 82.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 318",
+                    "Price": 84.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 493",
+                    "Price": 86.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 851",
+                    "Price": 88.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 922",
+                    "Price": 90.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 073",
+                    "Price": 92.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 379",
+                    "Price": 94.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 562",
+                    "Price": 96.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 745",
+                    "Price": 98.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 952",
+                    "Price": 100.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 241",
+                    "Price": 102.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 668",
+                    "Price": 104.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 822",
+                    "Price": 106.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "10 296",
+                    "Price": 108.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "65",
+                    "Price": 10.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "437",
+                    "Price": 12.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "509",
+                    "Price": 14.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "654",
+                    "Price": 16.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "805",
+                    "Price": 18.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                }
+            ],
+            "DateTime": "21.02.2025 13:56:59"
+        },
+        {
+            "Code": "30422",
+            "Rests": [
+                {
+                    "Code": "65",
+                    "Price": 10.0,
+                    "Qty": 0,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "437",
+                    "Price": 12.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "509",
+                    "Price": 14.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "654",
+                    "Price": 16.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "805",
+                    "Price": 18.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 185",
+                    "Price": 20.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 388",
+                    "Price": 22.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 705",
+                    "Price": 24.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "1 970",
+                    "Price": 26.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 142",
+                    "Price": 28.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 634",
+                    "Price": 30.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 892",
+                    "Price": 32.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "2 992",
+                    "Price": 34.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 064",
+                    "Price": 36.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 181",
+                    "Price": 38.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 309",
+                    "Price": 40.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 359",
+                    "Price": 42.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 661",
+                    "Price": 44.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 687",
+                    "Price": 46.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 750",
+                    "Price": 48.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "3 836",
+                    "Price": 50.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 010",
+                    "Price": 52.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 398",
+                    "Price": 54.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 567",
+                    "Price": 56.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 695",
+                    "Price": 58.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "4 981",
+                    "Price": 60.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 052",
+                    "Price": 62.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 419",
+                    "Price": 64.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 508",
+                    "Price": 66.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 651",
+                    "Price": 68.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 694",
+                    "Price": 70.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "5 824",
+                    "Price": 72.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 131",
+                    "Price": 75.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 444",
+                    "Price": 77.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "6 540",
+                    "Price": 79.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 024",
+                    "Price": 81.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 223",
+                    "Price": 83.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 423",
+                    "Price": 85.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 700",
+                    "Price": 87.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "7 902",
+                    "Price": 89.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 063",
+                    "Price": 91.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 287",
+                    "Price": 93.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 547",
+                    "Price": 95.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 607",
+                    "Price": 97.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "8 854",
+                    "Price": 99.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 028",
+                    "Price": 101.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 404",
+                    "Price": 103.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 680",
+                    "Price": 105.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "9 899",
+                    "Price": 107.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "10 344",
+                    "Price": 109.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "218",
+                    "Price": 11.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "461",
+                    "Price": 13.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "602",
+                    "Price": 15.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                },
+                {
+                    "Code": "787",
+                    "Price": 17.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                }
+            ],
+            "DateTime": "21.02.2025 13:56:59"
+        },
+        {
+            "Code": "30435",
+            "Rests": [
+                {
+                    "Code": "6 080",
+                    "Price": 74.0,
+                    "Qty": 5,
+                    "PriceReserve": 9.0
+                }
+            ],
+            "DateTime": "21.02.2025 13:56:59"
+        }
+    ]
+}
