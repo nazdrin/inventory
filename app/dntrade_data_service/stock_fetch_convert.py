@@ -6,6 +6,11 @@ import asyncio
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
 from app.services.database_service import process_database_service
 from sqlalchemy.future import select
+import tempfile
+import os
+import logging
+from dotenv import load_dotenv
+load_dotenv()
 
 LIMIT = 100  # Лимит количества записей за один запрос
 def log_progress(offset, count):
@@ -14,7 +19,7 @@ def log_progress(offset, count):
     sys.stdout.flush()
 
 STORE_BRANCH_MAP = {
-    "833a605c-fa32-46b6-9735-067239c68634": "30447",
+    "833a605c-fa32-46b6-9735-067239c68634": "30447"
     # "E0D20C48-9BF2-499D-A7BA-466C97BEC6B7": "222",
     # "AB160935-AD2E-4539-A937-2F05F9F4775F": "333",
     # "99AB8090-5090-4638-BC02-B781CA861976": "444",
@@ -84,15 +89,6 @@ def transform_stock(products):
         # Устанавливаем qty в 0, если balance отрицательный
         qty = max(balance, 0)
         
-        # !Логирование, если product_id совпадает с указанным
-        # if product_id == "65FF6A4D-A87A-4BE4-A3B3-FF768CD2E88D":
-            # log_data.append({
-            #     "product_id": product_id,
-            #     "balance": balance,
-            #     "qty": qty,
-            #     "price_data": price_data
-            # })
-        
         for price_entry in price_data:
             if price_entry.get("price_title") == "Роздрібна":
                 store_id = price_entry.get("store_id")
@@ -119,13 +115,25 @@ def transform_stock(products):
 
 
 
-def save_to_json(data, filename):
-    """Сохранение данных в файл JSON."""
+
+
+def save_to_json(data, enterprise_code, file_type):
+    """Сохранение данных в JSON-файл в указанную временную директорию из .env."""
     try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        return filename
-    except IOError:
+        # Получаем временный путь из переменной окружения, иначе используем системный temp
+        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Формируем путь к JSON-файлу
+        json_file_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_data.json")
+
+        with open(json_file_path, "w", encoding="utf-8") as json_file:
+            json.dump(data, json_file, ensure_ascii=False, indent=4)
+
+        logging.info(f"JSON записан в файл: {json_file_path}")
+        return json_file_path
+    except IOError as e:
+        logging.error(f"Ошибка при сохранении JSON-файла: {e}")
         return None
 
 async def run_service(enterprise_code):
@@ -161,7 +169,7 @@ async def run_service(enterprise_code):
                 break  # Если список `products` пустой, прекращаем цикл для store_id
 
             all_products.extend(products)
-             # Логируем прогресс одной строкой
+            # Логируем прогресс одной строкой
             log_progress(offset, len(products))
             offset += LIMIT  # Увеличиваем offset
 
@@ -169,11 +177,13 @@ async def run_service(enterprise_code):
         return  # Нет данных для сохранения
 
     transformed_data = transform_stock(all_products)
-    json_file_path = save_to_json(transformed_data, "stock.json")
+    file_type = "stock"
+    json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
     if not json_file_path:
         return  # Ошибка сохранения JSON
 
-    await process_database_service(json_file_path, "stock", enterprise_code)
+    await process_database_service(json_file_path, file_type, enterprise_code)
+    
 
 if __name__ == "__main__":
     TEST_ENTERPRISE_CODE = "238"
