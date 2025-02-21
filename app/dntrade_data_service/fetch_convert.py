@@ -5,6 +5,12 @@ import asyncio
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
 from app.services.database_service import process_database_service
 from sqlalchemy.future import select
+from collections import Counter
+import tempfile
+import os
+import logging
+from dotenv import load_dotenv
+load_dotenv()
 
 DEFAULT_VAT = 20
 LIMIT = 100  # Лимит количества записей за один запрос
@@ -48,8 +54,6 @@ def fetch_products(api_endpoint, api_key, offset=0, limit=LIMIT):
     except requests.RequestException:
         return None
 
-import json
-from collections import Counter
 
 def transform_products(products, branch_id):
     """Трансформация данных продуктов в целевой формат."""
@@ -77,15 +81,26 @@ def transform_products(products, branch_id):
         seen_product_ids.add(product_id)  # Запоминаем обработанный product_id
     return transformed
 
-
-def save_to_json(data, filename):
-    """Сохранение данных в файл JSON."""
+def save_to_json(data, enterprise_code, file_type):
+    """Сохранение данных в JSON-файл в указанную временную директорию из .env."""
     try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        return filename
-    except IOError:
+        # Получаем временный путь из переменной окружения, иначе используем системный temp
+        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Формируем путь к JSON-файлу
+        json_file_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_data.json")
+
+        with open(json_file_path, "w", encoding="utf-8") as json_file:
+            json.dump(data, json_file, ensure_ascii=False, indent=4)
+
+        logging.info(f"JSON записан в файл: {json_file_path}")
+        return json_file_path
+    except IOError as e:
+        logging.error(f"Ошибка при сохранении JSON-файла: {e}")
         return None
+
+
 
 async def run_service(enterprise_code):
     """Основной сервис выполнения задачи."""
@@ -125,12 +140,13 @@ async def run_service(enterprise_code):
         return  # Нет данных для сохранения
 
     transformed_data = transform_products(all_products, branch_id)
-    json_file_path = save_to_json(transformed_data, "products.json")
+    file_type = "catalog"
+    json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
+
     if not json_file_path:
         return  # Ошибка сохранения JSON
 
-    await process_database_service(json_file_path, "catalog", enterprise_code)
-
+    await process_database_service(json_file_path, file_type, enterprise_code)
 # if __name__ == "__main__":
     # TEST_ENTERPRISE_CODE = "2"
     # asyncio.run(run_service(TEST_ENTERPRISE_CODE))
