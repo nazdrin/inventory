@@ -7,6 +7,8 @@ from app.models import EnterpriseSettings
 from sqlalchemy import select
 from app.services.database_service import process_database_service  # Импорт функции Database_service
 import xmltodict
+from dotenv import load_dotenv
+load_dotenv()
 from app.services.notification_service import send_notification 
 xml_data = "<root><element>value</element></root>"
 parsed_data = xmltodict.parse(xml_data)
@@ -213,7 +215,7 @@ async def transform_data_types(data, file_type,enterprise_code):
             transformed_item = {}
             if file_type == "catalog":
                 transformed_item = {
-                     "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),  
+                    "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),  
                     "name": str(item.get("name", "")).strip(),
                     "vat": float(item.get("vat", 0.0)),  # Значение по умолчанию — 0.0
                     "producer": str(item.get("producer", "")).strip(),
@@ -241,48 +243,6 @@ async def transform_data_types(data, file_type,enterprise_code):
         send_notification(f"Ошибка преобразования типов данных: {str(e)}для предприятия {enterprise_code}",enterprise_code)
         raise
 
-# async def process_data_converter(
-#     enterprise_code, file_path, file_type, store_serial, single_store, db_session
-# ):
-    
-#     try:
-#         branch_id = None
-#         if file_type == "catalog":
-#             branch_id = await get_branch_id(enterprise_code, db_session)
-            
-
-#         converted_data = await convert_to_json(file_path, file_type,enterprise_code)
-       
-#         if not converted_data:
-#             logging.warning(f"Пустые данные после конвертации файла {file_path}")
-
-#         converted_data = add_branch_information(converted_data, single_store, store_serial, branch_id,enterprise_code)
-       
-#         if not converted_data:
-#             logging.warning(f"Пустые данные после добавления branch информации для файла {file_path}")
-
-       
-#         transformed_data = await transform_data_types(converted_data, file_type,enterprise_code)
-        
-#         if not transformed_data:
-#             logging.warning(f"Пустые данные после преобразования типов для файла {file_path}")
-
-#         json_file_path = f"/tmp/{enterprise_code}_{file_type}_data.json"
-#         with open(json_file_path, "w", encoding="utf-8") as json_file:
-#             json.dump(transformed_data, json_file, ensure_ascii=False, indent=4)
-#         logging.info(f"JSON записан в файл: {json_file_path}")
-
-#         # Передача enterprise_code в process_database_service
-      
-       
-#         await process_database_service(json_file_path, file_type, enterprise_code)
-#         logging.info(f"Данные успешно обработаны и переданы в Database_service.")
-#     except Exception as e:
-#         error_message = f"Ошибка обработки файла {file_path} для предприятия {enterprise_code}: {str(e)}"
-#         logging.error(error_message)
-#         send_notification(error_message,enterprise_code)
-#         raise
-
 async def process_data_converter(
     enterprise_code, file_path, file_type, store_serial, single_store, db_session
 ):
@@ -307,7 +267,9 @@ async def process_data_converter(
             logging.warning(f"Пустые данные после преобразования типов для файла {file_path}")
 
         # Используем временную директорию, совместимую с Windows и macOS
-        temp_dir = tempfile.gettempdir()
+        # temp_dir = tempfile.gettempdir()
+        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+        os.makedirs(temp_dir, exist_ok=True)
         json_file_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_data.json")
         
         with open(json_file_path, "w", encoding="utf-8") as json_file:
