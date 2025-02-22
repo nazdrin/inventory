@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Словарь соответствий для получения enterprise_code и branch
 mapping = {
-    "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("253", "30467"),
+    "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("2343", "57503"),
 }
 
 def save_to_json(data, enterprise_code, file_type):
@@ -42,7 +42,7 @@ def get_conversion_type():
     """Определяет тип конвертации (catalog или stock) без файла, используя глобальную переменную."""
     global conversion_counter
     conversion_counter += 1
-    return "catalog" if conversion_counter % 2 == 0 else "stock"
+    return "catalog" if conversion_counter % 10 == 0 else "stock"
 
 def get_enterprise_info(source_id):
     """Получает enterprise_code и branch из mapping по sourceID."""

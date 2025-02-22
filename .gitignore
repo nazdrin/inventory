@@ -27,6 +27,6 @@ stock_logs.json
 stock.json
 full_input_data.json
 alembic.ini
-/temp_logs
-temp_logs/
+/temp
+temp/
 product.json

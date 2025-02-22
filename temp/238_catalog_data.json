@@ -5260,7 +5260,7 @@
         "name": "Роял SENSITIVITY CONTROL DOG 1,5кг",
         "vat": 20,
         "producer": "N/A",
-        "barcode": "3182550939959",
+        "barcode": "3182550940047",
         "branch_id": "30448"
     },
     {
@@ -21801,7 +21801,7 @@
     },
     {
         "code": "0D7D1EB2-6FD8-49D8-AC73-218BCCF4A6E6",
-        "name": "Роял GASTROINTESTINAL PUPPY  195г",
+        "name": "УДАЛИТЬ Роял GASTROINTESTINAL PUPPY  195г",
         "vat": 20,
         "producer": "N/A",
         "barcode": "65672240403",
@@ -69937,7 +69937,7 @@
     },
     {
         "code": "557F8078-B808-4D6B-9CA7-26F05FFB5731",
-        "name": "Дог чау для собак з ягням",
+        "name": "DOG CHOW з ягням 2.5 кг",
         "vat": 20,
         "producer": "N/A",
         "barcode": "7613034485946",
@@ -70725,6 +70725,14 @@
         "vat": 20,
         "producer": "N/A",
         "barcode": "2000981007058",
+        "branch_id": "30448"
+    },
+    {
+        "code": "7F2BCF13-E163-4D33-8938-70A3A2ABC76E",
+        "name": "HOME FOOD CAT ADULT Для британських та шотландських порід індичка, 0,4кг",
+        "vat": 20,
+        "producer": "N/A",
+        "barcode": "4820235021016",
         "branch_id": "30448"
     }
 ]
