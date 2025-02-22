@@ -13,11 +13,48 @@ from app.services.notification_service import send_notification
 import json
 import os
 from app.unipro_data_service.unipro_conv import unipro_convert
+import tempfile
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения
+load_dotenv()
+router = APIRouter()
+
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from app.database import MappingBranch
+from app.schemas import MappingBranchSchema
+from app.database import AsyncSessionLocal
 
 router = APIRouter()
 
-# Определяем путь к log-файлу в той же папке, где находится текущий файл
-LOG_FILE = os.path.join(os.path.dirname(__file__), "unipro_requests.json")
+# Dependency для получения сессии БД
+async def get_db():
+    async with AsyncSessionLocal() as db:
+        yield db
+
+@router.post("/mapping_branch/")
+async def create_mapping_branch(
+    mapping_data: MappingBranchSchema, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Эндпоинт для создания записи в таблице mapping_branch.
+    """
+    # Проверяем, существует ли запись с таким branch
+    existing_entry = await db.execute(select(MappingBranch).filter(MappingBranch.branch == mapping_data.branch))
+    if existing_entry.scalars().first():
+        raise HTTPException(status_code=400, detail="Branch already exists.")
+
+    # Создаем новую запись
+    new_entry = MappingBranch(**mapping_data.dict())
+    db.add(new_entry)
+    await db.commit()
+    await db.refresh(new_entry)
+
+    return {"detail": "Mapping branch created successfully", "data": new_entry}
+
 
 @router.post("/developer_panel/unipro/data")
 async def receive_unipro_data(request: Request, body: dict):
@@ -25,16 +62,17 @@ async def receive_unipro_data(request: Request, body: dict):
     Эндпоинт для получения данных от Unipro через POST-запрос.
     """
     try:
-        with open(LOG_FILE, "w", encoding="utf-8") as log_file:
-            log_file.write(json.dumps(body, ensure_ascii=False, indent=4) + "\n")
-        # Создание временного JSON-файла перед передачей в unipro_convert
-        json_file_path = "unipro_temp.json"
+        # Определяем временную директорию
+        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+        os.makedirs(temp_dir, exist_ok=True)  # Создаём папку, если её нет
+        file_type = "unipro_data"
+        json_file_path = os.path.join(temp_dir, f"{file_type}.json")
+
+        # Записываем входные данные в JSON в указанную временную папку
         with open(json_file_path, "w", encoding="utf-8") as json_file:
             json.dump(body, json_file, ensure_ascii=False, indent=4)
 
         await unipro_convert(json_file_path)
-        # Отправка уведомления
-        send_notification("Получены данные от Unipro", enterprise_code="1")
         return {"status": "success", "message": "Данные успешно получены и записаны в лог"}
     except Exception as e:
         print(f"❌ Ошибка обработки данных: {e}")
