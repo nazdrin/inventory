@@ -19,11 +19,11 @@ def log_progress(offset, count):
     sys.stdout.flush()
 
 STORE_BRANCH_MAP = {
-    "833a605c-fa32-46b6-9735-067239c68634": "30447"
+    #"833a605c-fa32-46b6-9735-067239c68634": "111",
     # "E0D20C48-9BF2-499D-A7BA-466C97BEC6B7": "222",
     # "AB160935-AD2E-4539-A937-2F05F9F4775F": "333",
     # "99AB8090-5090-4638-BC02-B781CA861976": "444",
-    # "A86790BA-CBDC-44D7-A780-F05FE7B1FFB7": "555",
+    "A86790BA-CBDC-44D7-A780-F05FE7B1FFB7": "57230"
 }
 
 async def fetch_developer_settings():
