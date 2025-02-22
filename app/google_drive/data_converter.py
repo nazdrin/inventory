@@ -224,7 +224,7 @@ async def transform_data_types(data, file_type,enterprise_code):
                     "barcode": str(item.get("barcode", "")).strip(),
                     "badm": str(item.get("badm", "")).strip(),
                     "optima": str(item.get("optima", "")).strip(),
-                    "branch_id": str(item.get("branch_id", "")).strip()
+                    # "branch_id": str(item.get("branch_id", "")).strip()
                 }
             elif file_type == "stock":
                 transformed_item = {

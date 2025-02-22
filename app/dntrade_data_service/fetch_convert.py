@@ -76,7 +76,7 @@ def transform_products(products, branch_id):
             "vat": DEFAULT_VAT,
             "producer": producer,
             "barcode": product.get("barcode"),
-            "branch_id": branch_id
+            # "branch_id": branch_id
         })
         seen_product_ids.add(product_id)  # Запоминаем обработанный product_id
     return transformed
