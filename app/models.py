@@ -33,7 +33,7 @@ class InventoryData(Base, TimestampMixin):
     badm = Column(String, nullable=True)
     venta = Column(String, nullable=True)
 
-    branch_id = Column(String, nullable=False)
+    # branch_id = Column(String, nullable=False)
 
 
 # Таблица остатков
@@ -85,7 +85,12 @@ class EnterpriseSettings(Base):
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
     stock_correction = Column(Boolean, default=False)
-
+# Сопоставление аптек 
+class MappingBranch(Base):
+    __tablename__ = "mapping_branch"
+    enterprise_code = Column(String, nullable=False)
+    branch = Column(String, primary_key=True)
+    store_id = Column(String, nullable=False)
 
 # Таблица глобальных настроек разработчика
 class DeveloperSettings(Base):

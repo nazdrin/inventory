@@ -20,6 +20,42 @@ from dotenv import load_dotenv
 load_dotenv()
 router = APIRouter()
 
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from app.database import MappingBranch
+from app.schemas import MappingBranchSchema
+from app.database import AsyncSessionLocal
+
+router = APIRouter()
+
+# Dependency для получения сессии БД
+async def get_db():
+    async with AsyncSessionLocal() as db:
+        yield db
+
+@router.post("/mapping_branch/")
+async def create_mapping_branch(
+    mapping_data: MappingBranchSchema, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Эндпоинт для создания записи в таблице mapping_branch.
+    """
+    # Проверяем, существует ли запись с таким branch
+    existing_entry = await db.execute(select(MappingBranch).filter(MappingBranch.branch == mapping_data.branch))
+    if existing_entry.scalars().first():
+        raise HTTPException(status_code=400, detail="Branch already exists.")
+
+    # Создаем новую запись
+    new_entry = MappingBranch(**mapping_data.dict())
+    db.add(new_entry)
+    await db.commit()
+    await db.refresh(new_entry)
+
+    return {"detail": "Mapping branch created successfully", "data": new_entry}
+
+
 @router.post("/developer_panel/unipro/data")
 async def receive_unipro_data(request: Request, body: dict):
     """

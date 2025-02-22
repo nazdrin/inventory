@@ -22,7 +22,7 @@ class InventoryDataSchema(BaseModel):
     badm: Optional[str] = None
     venta: Optional[str] = None
 
-    branch_id: str
+    # branch_id: str
     updated_at: Optional[datetime] = None
 
     class Config:
@@ -74,6 +74,13 @@ class EnterpriseSettingsSchema(BaseModel):
     class Config:
         from_attributes = True  # Включено для использования from_orm
 
+# Схема таблицы mapping
+class MappingBranchSchema(BaseModel):
+    enterprise_code: str
+    branch: str
+    store_id: str
+    class Config:
+        from_attributes = True  # Включено для использования from_orm
 
 # Схема для глобальных настроек системы
 class DeveloperSettingsSchema(BaseModel):

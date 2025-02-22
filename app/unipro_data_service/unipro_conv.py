@@ -7,15 +7,20 @@ import tempfile
 import os
 import logging
 from dotenv import load_dotenv
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import MappingBranch
+from app.database import get_async_db  # Импортируем get_async_db
 load_dotenv()
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Словарь соответствий для получения enterprise_code и branch
-mapping = {
-    "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("253", "30467"),
-}
+# mapping = {
+    # "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("253", "30467
+# }
+
 
 def save_to_json(data, enterprise_code, file_type):
     """Сохранение данных в JSON-файл в указанную временную директорию из .env."""
@@ -44,9 +49,23 @@ def get_conversion_type():
     conversion_counter += 1
     return "catalog" if conversion_counter % 2 == 0 else "stock"
 
-def get_enterprise_info(source_id):
-    """Получает enterprise_code и branch из mapping по sourceID."""
-    return mapping.get(source_id, (None, None))
+
+async def get_enterprise_info(source_id: str, db: AsyncSession):
+    """
+    Получает enterprise_code и branch из таблицы mapping_branch по storeID (source_id).
+    
+    :param source_id: store_id, который используется для поиска.
+    :param db: Асинхронная сессия базы данных.
+    :return: Кортеж (enterprise_code, branch) или (None, None), если не найдено.
+    """
+    result = await db.execute(
+        select(MappingBranch.enterprise_code, MappingBranch.branch).where(MappingBranch.store_id == source_id)
+    )
+    mapping = result.first()  # Получаем первую найденную запись
+
+    if mapping:
+        return mapping.enterprise_code, mapping.branch
+    return None, None
 
 def convert_catalog(data, enterprise_code):
     """Конвертирует данные каталога в нужный формат."""
@@ -58,7 +77,7 @@ def convert_catalog(data, enterprise_code):
             "vat": 20.0,
             "producer": item.get("dopprop1") or "n/a",
             "barcode": item.get("barcode", ""),
-            "branch_id": enterprise_code
+            # "branch_id": enterprise_code
         }
         for item in goods
     ]
@@ -86,8 +105,10 @@ async def unipro_convert(json_file_path):
             data = json.load(f)
         
         source_id = data.get("info", {}).get("sourceID")
-        
-        enterprise_code, branch = get_enterprise_info(source_id)
+
+        async with get_async_db() as db:  # Создаем сессию БД
+            enterprise_code, branch = await get_enterprise_info(source_id, db)  # Теперь `db` передается корректно
+
         if not enterprise_code:
             logger.error("❌ Enterprise code не найден для sourceID")
             raise ValueError("Enterprise code not found for sourceID")
@@ -99,7 +120,6 @@ async def unipro_convert(json_file_path):
         else:
             converted_data = convert_stock(data, branch)
         
-
         json_file_path = save_to_json(converted_data, enterprise_code, conversion_type)
 
         with open(json_file_path, "w", encoding="utf-8") as f:
