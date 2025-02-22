@@ -21,7 +21,7 @@ async def save_catalog_log(enterprise_code: str, formatted_json: dict):
         os.makedirs(catalog_folder, exist_ok=True)  # Создаем папку, если её нет
 
         # Формируем имя файла: stock_{дата}.json
-        file_name = f"catalog_{datetime.now(local_tz).strftime('%Y%m%d')}.json"
+        file_name = "catalog.json"
         file_path = os.path.join(catalog_folder, file_name)
 
         # Записываем JSON в файл (перезаписываем предыдущий)

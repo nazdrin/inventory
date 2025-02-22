@@ -27,7 +27,7 @@ async def save_stock_log(enterprise_code: str, formatted_json: dict):
         os.makedirs(stock_folder, exist_ok=True)  # Создаем папку, если её нет
 
         # Формируем имя файла: stock_{дата}.json
-        file_name = f"stock_{datetime.now(local_tz).strftime('%Y%m%d')}.json"
+        file_name = "stock.json"
         file_path = os.path.join(stock_folder, file_name)
 
         # Записываем JSON в файл (перезаписываем предыдущий)
