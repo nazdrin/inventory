@@ -1,120 +1,96 @@
 import os
 import asyncio
 import logging
+import time
+import pytz
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.sql import func
-from datetime import datetime, timedelta, timezone
-import pytz
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql import text
+
+# Установка временной зоны Киев
 os.environ['TZ'] = 'UTC'
 KIEV_TZ = pytz.timezone("Europe/Kiev")
-now = datetime.now(tz=pytz.utc).astimezone(KIEV_TZ)
 
 # Импорт сервисов
 from app.dntrade_data_service.fetch_convert import run_service
 from app.prom_data_service.prom_catalog import run_prom
 from app.google_drive.google_drive_service import extract_catalog_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
-from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
+from app.services.notification_service import send_notification
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Настройка временной зоны (Europe/Kiev)
-KIEV_TZ = pytz.timezone("Europe/Kiev")
+# Словарь для вызова соответствующих обработчиков
+PROCESSORS = {
+    "Dntrade": run_service,
+    "Prom": run_prom,
+    "GoogleDrive": extract_catalog_from_google_drive,
+}
 
-# Функция для создания отчета об ошибках
+async def notify_error(message: str, enterprise_code: str = "unknown"):
+    logging.error(message)
+    send_notification(message, enterprise_code)
+
 async def create_error_report(error_message: str, enterprise_code: str):
     file_name = f"error_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(file_name, 'a') as file:
         file.write(f"{datetime.now()} - Enterprise Code: {enterprise_code} - Error: {error_message}\n")
     logging.info(f"Ошибка создания отчета об ошибках: {file_name}")
 
-# Обновленная функция для получения предприятий с учетом нового условия
 async def get_enterprises_for_catalog(db: AsyncSession):
+    """Получает список предприятий для обработки каталога."""
     try:
-        # Очистка кеша SQLAlchemy перед выполнением запросов
+        # Проверка соединения с БД
+        try:
+            
+            await db.execute(text("SELECT 1"))
+        except OperationalError:
+            await notify_error("Соединение с базой данных закрыто, попытка восстановления...")
+            await db.rollback()
+            return []
+
         db.expire_all()
+        now = datetime.now(tz=timezone.utc).astimezone(KIEV_TZ)
+        logging.info(f"Текущее время: {now} [Timezone: {now.tzinfo}]")
 
-        now = datetime.now(tz=timezone.utc).astimezone(KIEV_TZ)  # Текущее время с учетом часового пояса
-        logging.info(f"Текущее время (now): {now} [Timezone: {now.tzinfo}]")
-
-        # Выполнение запроса к базе данных
+        start_time = time.time()
         result = await db.execute(select(EnterpriseSettings))
         enterprises = result.scalars().all()
+        logging.info(f"SQL-запрос выполнен за {time.time() - start_time:.2f} секунд")
 
-        filtered_enterprises = []
-        for enterprise in enterprises:
-            last_upload = enterprise.last_catalog_upload
-            upload_frequency = enterprise.catalog_upload_frequency
+        if not enterprises:
+            logging.warning("В базе данных нет предприятий для обработки.")
 
-            if not upload_frequency or upload_frequency <= 0:
-                logging.warning(
-                    f"Пропуск предприятия с кодом={enterprise.enterprise_code}: Неверная частота загрузки."
-                )
-                send_notification(f"Пропуск предприятия с кодом  {enterprise.enterprise_code} .", enterprise.enterprise_code)
-                continue
-
-            # Обработка времени загрузки
-            if last_upload and last_upload.tzinfo is None:
-                last_upload = last_upload.replace(tzinfo=timezone.utc)
-            last_upload_kiev = last_upload.astimezone(KIEV_TZ) if last_upload else None
-
-            # Расчет следующего времени загрузки
-            next_upload_time = (last_upload_kiev + timedelta(minutes=upload_frequency)
-                                if last_upload_kiev else now)
-
-            logging.info(
-                f"Enterprise Code={enterprise.enterprise_code} | "
-                f"Last Upload={last_upload_kiev}, Next Upload Time={next_upload_time}, Current Time={now}"
-            )
-
-            if next_upload_time <= now:
-                logging.info(
-                    f"Adding Enterprise Code={enterprise.enterprise_code}: Ready for Upload."
-                )
-                filtered_enterprises.append(enterprise)
-            else:
-                logging.info(
-                    f"Skipping Enterprise Code={enterprise.enterprise_code}: Not Time Yet."
-                )
-        return filtered_enterprises
-
+        return [
+            enterprise for enterprise in enterprises
+            if enterprise.catalog_upload_frequency and enterprise.catalog_upload_frequency > 0 and
+            ((enterprise.last_catalog_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.catalog_upload_frequency))
+             if enterprise.last_catalog_upload else now) <= now
+        ]
     except Exception as e:
-        logging.error(f"Ошибка при обработке предприятий в планировщике каталога: {str(e)}")
-        send_notification(f"Ошибка при обработке предприятий в планировщике каталога: {str(e)}", "пусто")
+        await notify_error(f"Ошибка при обработке предприятий в планировщике каталога: {str(e)}")
+        await db.rollback()
         return []
-# Обновленная функция обработки каталога для предприятий
+
 async def process_catalog_for_enterprise(db: AsyncSession, enterprise: EnterpriseSettings):
     try:
-        # Определяем тип обработки в зависимости от формата данных
-        if enterprise.data_format == "Dntrade":
-            # Обработка с помощью run_service
-            await run_service(enterprise.enterprise_code)
-            logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format 'dnttrade'")
-        elif enterprise.data_format == "Prom":
-            # Обработка с помощью run_service
-            await run_prom(enterprise.enterprise_code)
-            logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format 'prom'")
-        elif enterprise.data_format == "GoogleDrive":
-            # Обработка с помощью extract_catalog_from_google_drive
-            await extract_catalog_from_google_drive(enterprise.enterprise_code)
-            logging.info(f"Catalog extracted successfully for Enterprise Code={enterprise.enterprise_code} with data transfer method 'googledrive'")
-        elif enterprise.data_format == "Unipro":
-            pass
-        elif enterprise.data_format == "Blank":
-            pass
-
+        processor = PROCESSORS.get(enterprise.data_format)
+        if processor:
+            await processor(enterprise.enterprise_code)
+            logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
+        elif enterprise.data_format in ["Unipro", "Blank"]:
+            logging.info(f"Skipping processing for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
         else:
             logging.warning(f"Unsupported data format or transfer method for Enterprise Code={enterprise.enterprise_code}")
-            
+
     except Exception as e:
-        logging.error(f"Error processing catalog for Enterprise Code={enterprise.enterprise_code}: {str(e)}")
-        send_notification(f"Ошибка обработки данных для предприятия {enterprise.enterprise_code} .", enterprise.enterprise_code)
+        await notify_error(f"Ошибка обработки данных для предприятия {enterprise.enterprise_code}: {str(e)}", enterprise.enterprise_code)
         await create_error_report(str(e), enterprise.enterprise_code)
 
-# Асинхронное расписание для обработки каталогов
 async def schedule_catalog_tasks():
     try:
         async with get_async_db() as db:
@@ -122,17 +98,13 @@ async def schedule_catalog_tasks():
             while True:
                 logging.info("Starting catalog scheduler loop...")
                 enterprises = await get_enterprises_for_catalog(db)
-                if enterprises:
-                    tasks = [process_catalog_for_enterprise(db, e) for e in enterprises]
-                    await asyncio.gather(*tasks)
-                else:
-                    logging.warning("Предприятия для обработки каталога не найдены.")
-                    #send_notification("Предприятия для обработки каталога не найдены.","Пусто")
-                await asyncio.sleep(interval * 60)  # Ожидание перед следующей итерацией
-    except Exception as main_error:
-        logging.error(f"Critical error in catalog scheduler: {str(main_error)}")
-        send_notification(f"Критический сбой запуска расписания для каталога {str(main_error)}", "unknown")
 
-# Точка входа
+                for enterprise in enterprises:
+                    await process_catalog_for_enterprise(db, enterprise)
+
+                await asyncio.sleep(interval * 60)
+    except Exception as main_error:
+        await notify_error(f"Критический сбой запуска расписания для каталога {str(main_error)}")
+
 if __name__ == "__main__":
     asyncio.run(schedule_catalog_tasks())
