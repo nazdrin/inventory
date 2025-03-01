@@ -81,6 +81,7 @@ class EnterpriseSettings(Base):
     data_format = Column(String, nullable=True)
     discount_rate = Column(Float, nullable=True)
     single_store = Column(Boolean, nullable=True)
+    auto_confirm = Column(Boolean, nullable=True)
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
