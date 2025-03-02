@@ -69,7 +69,6 @@ def transform_products(products, branch_id):
         producer = product.get("short_description")
         if not producer or producer in [None, "", 0]:  # Фильтрация некорректных значений
             producer = "N/A"
-        
         transformed.append({
             "code": product_id,
             "name": product.get("title"),
