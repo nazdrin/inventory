@@ -114,5 +114,5 @@ async def run_service(enterprise_code):
     await process_database_service(json_file_path, file_type, enterprise_code)
 
 if __name__ == "__main__":
-    TEST_ENTERPRISE_CODE = "3"
+    TEST_ENTERPRISE_CODE = "256"
     asyncio.run(run_service(TEST_ENTERPRISE_CODE))
