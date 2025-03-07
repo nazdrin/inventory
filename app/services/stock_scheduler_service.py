@@ -21,6 +21,7 @@ from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
+from app.services.auto_confirm import main as auto_confirm_main  # Импорт main() из auto_confirm.py
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -81,21 +82,39 @@ async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseS
         await create_error_report(str(e), enterprise.enterprise_code)
 
 async def schedule_stock_tasks():
+    """
+    Главный цикл: 
+    - Каждую минуту обновляет остатки
+    - Запускает `main()` из auto_confirm.py
+    """
     try:
         async with get_async_db() as db:
-            interval = 1  # Интервал выполнения расписания в минутах
+            interval = 1  # Интервал в минутах
             while True:
-                logging.info("Запуск планировщика обновления остатков...")
+                logging.info("🚀 Запуск планировщика задач...")
+
+                # 1. Обновляем остатки
                 enterprises = await get_enterprises_for_stock(db)
-                
                 for enterprise in enterprises:
                     await process_stock_for_enterprise(db, enterprise)
-                
+
+                # 2. Вызываем авто-подтверждение заказов
+                logging.info("📦 Запуск auto_confirm.py...")
+                try:
+                    await auto_confirm_main()
+                    logging.info("✅ Авто-подтверждение заказов завершено")
+                except Exception as e:
+                    logging.error(f"❌ Ошибка в auto_confirm.py: {e}")
+                    await notify_error(f"Ошибка в auto_confirm.py: {e}")
+
+                # 3. Ждем 1 минуту перед следующим циклом
+                logging.info("⏳ Ожидание 1 минуты перед следующим циклом...")
                 await asyncio.sleep(interval * 60)
+
     except Exception as main_error:
-        await notify_error(f"Критическая ошибка в планировщике остатков: {str(main_error)}")
+        await notify_error(f"🔥 Критическая ошибка в планировщике: {str(main_error)}")
     finally:
-        await notify_error("Сервис stock_scheduler неожиданно остановлен.", "stock_scheduler")
+        await notify_error("❌ Сервис stock_scheduler неожиданно остановлен.", "stock_scheduler")
 
 if __name__ == "__main__":
     asyncio.run(schedule_stock_tasks())

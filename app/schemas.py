@@ -21,6 +21,7 @@ class InventoryDataSchema(BaseModel):
     optima: Optional[str] = None
     badm: Optional[str] = None
     venta: Optional[str] = None
+    enterprise_code: str
 
     # branch_id: str
     updated_at: Optional[datetime] = None
@@ -36,6 +37,7 @@ class InventoryStockSchema(BaseModel):
     price: float
     qty: int
     price_reserve: float
+    enterprise_code: str
 
     class Config:
         from_attributes = True
