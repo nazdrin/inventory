@@ -47,7 +47,7 @@ def get_conversion_type():
     """Определяет тип конвертации (catalog или stock) без файла, используя глобальную переменную."""
     global conversion_counter
     conversion_counter += 1
-    return "catalog" if conversion_counter % 2 == 0 else "stock"
+    return "catalog" if conversion_counter % 30 == 0 else "stock"
 
 
 async def get_enterprise_info(source_id: str, db: AsyncSession):
