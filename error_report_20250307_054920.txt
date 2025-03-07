@@ -1,1 +1,0 @@
-2025-03-07 05:49:20.785126 - Enterprise Code: 238 - Error: type object 'InventoryStock' has no attribute 'enterprise_code'

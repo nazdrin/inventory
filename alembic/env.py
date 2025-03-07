@@ -1,9 +1,17 @@
+# import sys
 import os
+
+
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.models import Base  # Импортируйте Base из вашего файла models.py
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from dotenv import load_dotenv
+
+# print("Current sys.path:")
+# print("\n".join(sys.path))  # Выведет пути, откуда Python ищет модули
 
 # Загружаем переменные окружения из .env
 load_dotenv()
