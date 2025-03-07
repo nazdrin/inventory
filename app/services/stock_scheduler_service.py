@@ -61,7 +61,7 @@ async def get_enterprises_for_stock(db: AsyncSession):
             enterprise for enterprise in enterprises
             if enterprise.stock_upload_frequency and enterprise.stock_upload_frequency > 0 and
             ((enterprise.last_stock_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.stock_upload_frequency))
-             if enterprise.last_stock_upload else now) <= now
+            if enterprise.last_stock_upload else now) <= now
         ]
     except Exception as e:
         await notify_error(f"Ошибка при получении списка предприятий для обновления остатков: {str(e)}")
