@@ -21,7 +21,7 @@ engine = create_async_engine(
     DATABASE_URL,
     pool_size=10,  # Устанавливаем размер пула соединений
     max_overflow=5,  # Сколько дополнительных соединений можно открыть
-    pool_recycle=1800,  # Перезапуск соединений каждые 30 минут
+    pool_recycle=600,  # Обновление соединений каждые 10 минут
     pool_pre_ping=True  # Проверка соединения перед запросом
 )
 # Создаем SessionLocal для работы с асинхронными сессиями
@@ -35,18 +35,6 @@ async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-# !# Асинхронная функция для получения сессии базы данных
-# @asynccontextmanager
-# async def get_async_db():
-#     async_session = AsyncSessionLocal()  # Создаем сессию
-#     try:
-#         logging.info("Попытка создания сессии базы данных")
-#         yield async_session
-#     except Exception as e:
-#         logging.error(f"Ошибка при работе с базой данных: {e}")
-#     finally:
-#         await async_session.close()  # Закрываем сессию явно
-#         logging.info("Сессия базы данных закрыта")
 
 @asynccontextmanager
 async def get_async_db():
