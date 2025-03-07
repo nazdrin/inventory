@@ -139,22 +139,22 @@ async def send_order_results(session: AsyncSession, processed_orders, auth_heade
                     "id_CancelReason": 2,
                     "rows": [{"goodsCode": item["goodsCode"], "qty": item.get("qty", item.get("qtyShip", 0))} for item in order["rows"]]
                 }]
-                print(f"Отправка запроса на отказ: {cancel_data}")
                 print(f"Отправка запроса на отказ: {json.dumps(cancel_data, indent=2, ensure_ascii=False)}")
                 async with http_session.post(url, json=cancel_data, headers=headers) as response:
                     response_text = await response.text()
                     print(f"Ответ от сервера при отказе заказа {order['id']}: {response_text} (Статус: {response.status})")
             else:
-                valid_rows = [item for item in order["rows"] if item["qtyShip"] > 0]
+                valid_rows = [item for item in order["rows"] if item.get("qtyShip", 0) > 0]
+
                 if not valid_rows:
-                    print(f"Пропущен заказ {order['id']} из-за отсутствия доступных позиций.")
+                    print(f"⚠️ Пропущен заказ {order['id']} - все позиции недоступны.")
                     continue
+                
                 order["rows"] = valid_rows
                 url = f"{endpoint_orders}/api/orders"
                 async with http_session.post(url, json=[order], headers=headers) as response:
                     response_text = await response.text()
-                    print(f"Ответ от сервера при отправке заказа {order['id']}: {response_text}")
-
+                    print(f"✅ Заказ {order['id']} отправлен: {response_text}")
 
 # Основная асинхронная функция
 async def main():
