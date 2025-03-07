@@ -1,132 +1,120 @@
 import os
 import asyncio
 import logging
+import time
+import pytz
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.sql import func
-from datetime import datetime, timedelta, timezone
-import pytz
+from sqlalchemy.exc import OperationalError
 
-# Установить временную зону в UTC
+# Установка временной зоны Киев
 os.environ['TZ'] = 'UTC'
 KIEV_TZ = pytz.timezone("Europe/Kiev")
-now = datetime.now(tz=pytz.utc).astimezone(KIEV_TZ)
 
 # Импорт сервисов
 from app.dntrade_data_service.stock_fetch_convert import run_service
+from app.checkbox_data_service.checkbox_stock_conv import run_service as run_checkbox
+from app.rozetka_data_service.rozetka_stock_conv import run_service as run_rozetka
 from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
-from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
+from app.services.notification_service import send_notification
+from app.services.auto_confirm import main as auto_confirm_main  # Импорт main() из auto_confirm.py
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Словарь для вызова соответствующих обработчиков
+PROCESSORS = {
+    "Dntrade": run_service,
+    "Prom": run_prom,
+    "GoogleDrive": extract_stock_from_google_drive,
+    "Checkbox": run_checkbox,
+    "Rozetka": run_rozetka,
+}
+
+async def notify_error(message: str, enterprise_code: str = "unknown"):
+    logging.error(message)
+    send_notification(message, enterprise_code)
 
 async def create_error_report(error_message: str, enterprise_code: str):
-    """Создание отчета об ошибках"""
     file_name = f"error_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(file_name, 'a') as file:
         file.write(f"{datetime.now()} - Enterprise Code: {enterprise_code} - Error: {error_message}\n")
     logging.info(f"Ошибка сохранена в файл: {file_name}")
 
-
 async def get_enterprises_for_stock(db: AsyncSession):
-    """Получение списка предприятий, для которых необходимо обновить остатки."""
+    """Получение списка предприятий для обновления остатков."""
     try:
-        db.expire_all()  # Очистка кеша SQLAlchemy перед выполнением запросов
+        db.expire_all()
         now = datetime.now(tz=timezone.utc).astimezone(KIEV_TZ)
+        logging.info(f"Текущее время: {now} [Timezone: {now.tzinfo}]")
 
-        # Получение всех предприятий
+        start_time = time.time()
         result = await db.execute(select(EnterpriseSettings))
         enterprises = result.scalars().all()
+        logging.info(f"SQL-запрос выполнен за {time.time() - start_time:.2f} секунд")
 
-        filtered_enterprises = []
-        for enterprise in enterprises:
-            last_upload = enterprise.last_stock_upload
-            upload_frequency = enterprise.stock_upload_frequency
-
-            if not upload_frequency or upload_frequency <= 0:
-                logging.warning(
-                    f"Пропуск предприятия с кодом={enterprise.enterprise_code}: Неверная частота загрузки."
-                )
-                send_notification(f"Пропуск предприятия {enterprise.enterprise_code}: Неверная частота загрузки.", enterprise.enterprise_code)
-                continue
-
-            # Обработка времени загрузки
-            if last_upload and last_upload.tzinfo is None:
-                last_upload = last_upload.replace(tzinfo=timezone.utc)
-            last_upload_kiev = last_upload.astimezone(KIEV_TZ) if last_upload else None
-
-            # Расчет следующего времени загрузки
-            next_upload_time = (last_upload_kiev + timedelta(minutes=upload_frequency)
-                                if last_upload_kiev else now)
-
-            if next_upload_time <= now:
-                logging.info(
-                    f"Добавлено предприятие {enterprise.enterprise_code} в очередь обновления остатков."
-                )
-                filtered_enterprises.append(enterprise)
-            else:
-                logging.info(
-                    f"Пропуск предприятия {enterprise.enterprise_code}: время обновления еще не наступило."
-                )
-        return filtered_enterprises
-
+        return [
+            enterprise for enterprise in enterprises
+            if enterprise.stock_upload_frequency and enterprise.stock_upload_frequency > 0 and
+            ((enterprise.last_stock_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.stock_upload_frequency))
+            if enterprise.last_stock_upload else now) <= now
+        ]
     except Exception as e:
-        logging.error(f"Ошибка при получении списка предприятий для обновления остатков: {str(e)}")
-        send_notification(f"Ошибка при обработке предприятий в планировщике остатков: {str(e)}", "unknown")
+        await notify_error(f"Ошибка при получении списка предприятий для обновления остатков: {str(e)}")
         return []
 
-
 async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseSettings):
-    """Обработка остатков для предприятия."""
     try:
-        if enterprise.data_format == "Dntrade":
-            # Запуск обработки через run_service
-            await run_service(enterprise.enterprise_code)
-            logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (dnttrade).")
-        elif enterprise.data_format == "Prom":
-            # Запуск обработки через run_service
-            await run_prom(enterprise.enterprise_code)
-            logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (prom).")
-        elif enterprise.data_format == "GoogleDrive":
-            # Запуск обработки через extract_stock_from_google_drive
-            await extract_stock_from_google_drive (enterprise.enterprise_code)
-            logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} (Google Drive).")
-        elif enterprise.data_format == "Unipro":
-            pass
-        elif enterprise.data_format == "Blank":
-            pass
+        processor = PROCESSORS.get(enterprise.data_format)
+        if processor:
+            await processor(enterprise.enterprise_code)
+            logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} ({enterprise.data_format}).")
+        elif enterprise.data_format in ["Unipro", "Blank"]:
+            logging.info(f"Пропуск обработки остатков для предприятия {enterprise.enterprise_code} ({enterprise.data_format}).")
         else:
             logging.warning(f"Неподдерживаемый формат данных для предприятия {enterprise.enterprise_code}.")
-            send_notification(f"Ошибка обработки остатков: неподдерживаемый формат данных ({enterprise.enterprise_code}).", enterprise.enterprise_code)
     except Exception as e:
-        logging.error(f"Ошибка обработки остатков для предприятия {enterprise.enterprise_code}: {str(e)}")
-        send_notification(f"Ошибка при обработке остатков для предприятия {enterprise.enterprise_code}: {str(e)}", enterprise.enterprise_code)
+        await notify_error(f"Ошибка обработки остатков для предприятия {enterprise.enterprise_code}: {str(e)}", enterprise.enterprise_code)
         await create_error_report(str(e), enterprise.enterprise_code)
+
 async def schedule_stock_tasks():
-    """Асинхронное расписание для обработки остатков."""
+    """
+    Главный цикл: 
+    - Каждую минуту обновляет остатки
+    - Запускает `main()` из auto_confirm.py
+    """
     try:
         async with get_async_db() as db:
-            interval = 1  # Интервал выполнения расписания в минутах
+            interval = 1  # Интервал в минутах
             while True:
-                logging.info("Запуск планировщика обновления остатков...")
-                enterprises = await get_enterprises_for_stock(db)
-                if enterprises:
-                    tasks = [process_stock_for_enterprise(db, e) for e in enterprises]
-                    await asyncio.gather(*tasks)
-                else:
-                    logging.warning("Нет предприятий для обновления остатков.")
-                await asyncio.sleep(interval * 60)  # Ожидание перед следующей итерацией
-    except Exception as main_error:
-        logging.error(f"Критическая ошибка в планировщике остатков: {str(main_error)}")
-        send_notification(f"Критическая ошибка в планировщике остатков: {str(main_error)}", "unknown")
-    finally:
-        logging.error("Сервис stock_scheduler неожиданно остановлен.")
-        send_notification("Сервис stock_scheduler неожиданно остановлен. Проверьте логи.", "stock_scheduler")
+                logging.info("🚀 Запуск планировщика задач...")
 
+                # 1. Обновляем остатки
+                enterprises = await get_enterprises_for_stock(db)
+                for enterprise in enterprises:
+                    await process_stock_for_enterprise(db, enterprise)
+
+                # 2. Вызываем авто-подтверждение заказов
+                logging.info("📦 Запуск auto_confirm.py...")
+                try:
+                    await auto_confirm_main()
+                    logging.info("✅ Авто-подтверждение заказов завершено")
+                except Exception as e:
+                    logging.error(f"❌ Ошибка в auto_confirm.py: {e}")
+                    await notify_error(f"Ошибка в auto_confirm.py: {e}")
+
+                # 3. Ждем 1 минуту перед следующим циклом
+                logging.info("⏳ Ожидание 1 минуты перед следующим циклом...")
+                await asyncio.sleep(interval * 60)
+
+    except Exception as main_error:
+        await notify_error(f"🔥 Критическая ошибка в планировщике: {str(main_error)}")
+    finally:
+        await notify_error("❌ Сервис stock_scheduler неожиданно остановлен.", "stock_scheduler")
 
 if __name__ == "__main__":
     asyncio.run(schedule_stock_tasks())
