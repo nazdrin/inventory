@@ -1,7 +1,8 @@
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime
+from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_mixin, declarative_base
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
 
 Base = declarative_base()
 
@@ -32,6 +33,7 @@ class InventoryData(Base, TimestampMixin):
     optima = Column(String, nullable=True)
     badm = Column(String, nullable=True)
     venta = Column(String, nullable=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
 
     # branch_id = Column(String, nullable=False)
 
@@ -45,6 +47,7 @@ class InventoryStock(Base, TimestampMixin):
     price = Column(Float, nullable=False)
     qty = Column(Integer, nullable=False)
     price_reserve = Column(Float, nullable=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)  # Добавлено
 
 
 # Таблица забронированных товаров
@@ -81,6 +84,7 @@ class EnterpriseSettings(Base):
     data_format = Column(String, nullable=True)
     discount_rate = Column(Float, nullable=True)
     single_store = Column(Boolean, nullable=True)
+    auto_confirm = Column(Boolean, nullable=True)
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
