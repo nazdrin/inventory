@@ -7,7 +7,7 @@ from sqlalchemy.exc import NoResultFound
 
 from app.models import InventoryData, InventoryStock, EnterpriseSettings
 from app.database import get_async_db
-from app.services.cleanup_service import cleanup_old_data
+# from app.services.cleanup_service import cleanup_old_data
 from app.services.catalog_export_service import export_catalog
 from app.services.stock_export_service import process_stock_file  # Импортируем экспорт стока
 from app.services.stock_update_service import update_stock
@@ -26,7 +26,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
     logging.info(f"Начало обработки {data_type} для предприятия {enterprise_code}")
 
     async with get_async_db() as session:
-        await cleanup_old_data(session)
+        # await cleanup_old_data(session)
 
         try:
             with open(file_path, "r", encoding="utf-8") as json_file:

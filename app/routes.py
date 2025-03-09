@@ -4,8 +4,9 @@ from app import crud, schemas, database
 from app.schemas import EnterpriseSettingsSchema
 from app.schemas import DeveloperSettingsSchema
 from app.schemas import DataFormatSchema
+from app.schemas import MappingBranchSchema
 from fastapi.encoders import jsonable_encoder
-from app.database import DeveloperSettings, EnterpriseSettings, DataFormat
+from app.database import DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
 from sqlalchemy.future import select
 from app.services.database_service import process_database_service
 from fastapi import APIRouter, HTTPException, Request
@@ -15,19 +16,13 @@ import os
 from app.unipro_data_service.unipro_conv import unipro_convert
 import tempfile
 from dotenv import load_dotenv
+from typing import List
+
 
 # Загружаем переменные окружения
 load_dotenv()
 router = APIRouter()
 
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from app.database import MappingBranch
-from app.schemas import MappingBranchSchema
-from app.database import AsyncSessionLocal
-
-router = APIRouter()
 
 # Dependency для получения сессии БД
 async def get_db():
@@ -54,6 +49,28 @@ async def create_mapping_branch(
     await db.refresh(new_entry)
 
     return {"detail": "Mapping branch created successfully", "data": new_entry}
+
+
+
+# @router.get("/mapping_branch/{enterprise_code}", response_model=List[MappingBranchSchema])
+# async def get_mapping_branches(
+#     enterprise_code: str, 
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     """
+#     Получить все записи MappingBranch для заданного enterprise_code.
+#     """
+#     print(f"🔍 Получен GET-запрос на /mapping_branch/{enterprise_code}")
+
+#     result = await db.execute(select(MappingBranch).filter(MappingBranch.enterprise_code == enterprise_code))
+#     branches = result.scalars().all()
+
+#     if not branches:
+#         raise HTTPException(status_code=404, detail="No mapping branches found for this enterprise.")
+
+#     return branches  # ✅ Теперь FastAPI знает, что возвращается List[MappingBranchSchema]
+
+
 
 
 @router.post("/developer_panel/unipro/data")
@@ -291,5 +308,4 @@ async def upload_stock(file: UploadFile, enterprise_code: str, db: AsyncSession 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 

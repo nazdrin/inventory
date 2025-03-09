@@ -1,7 +1,5 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config'; // Импортируем базовый URL из config.js
-
-
 // Получить все предприятия
 export const getEnterprises = async () => {
     try {
@@ -56,4 +54,27 @@ export const updateEnterprise = async (enterpriseCode, enterpriseData) => {
     }
 
     return await response.json();
+};
+
+
+// Получение списка branch по enterprise_code
+export const getMappingBranches = async (enterpriseCode) => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/mapping_branch/${enterpriseCode}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching mapping branches:", error);
+        throw error;
+    }
+};
+
+// Создание новой записи в mapping_branch
+export const createMappingBranch = async (mappingData) => {
+    try {
+        const response = await axios.post(`${API_BASE_URL}/mapping_branch/`, mappingData);
+        return response.data;
+    } catch (error) {
+        console.error("Error creating mapping branch:", error);
+        throw error;
+    }
 };
