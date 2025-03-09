@@ -1,43 +1,49 @@
-import asyncio
-from aiogram import Bot, Dispatcher, types, Router
-from aiogram.filters import Command
-from aiogram.types import Message
-from app.database import get_async_db, MappingBranch
-TOKEN = "7727251903:AAGCcQWTBry4O03gkNYA2HKG-h2xzoPKjbU"
+import requests
+from app.database import get_async_db, EnterpriseSettings  # Импорт таблиц из базы данных
+from sqlalchemy.future import select
 
+def send_notification(message: str, enterprise_code: str):
+    token = '5650306279:AAHZHACK7fqnLdHzLBDvY29vs7SXViMGqFs'  # Токен вашего бота
+    url = f'https://api.telegram.org/bot{token}/sendMessage'
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-router = Router()
+    chat_ids = [807661373, 1041598119]  # Добавьте сюда ID второго (и других) пользователя
 
-dp.include_router(router)
+    for chat_id in chat_ids:
+        payload = {
+            'chat_id': chat_id,  # Отправляем сообщение каждому пользователю
+            "text": f"{message} \n\nEnterprise Code: {enterprise_code}"
+        }
+        try:
+            response = requests.post(url, data=payload)
+            print(f"Сообщение отправлено пользователю {chat_id}: {response.json()}")
+        except Exception as e:
+            print(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
 
-@router.message(Command("start"))
-async def start_handler(message: Message):
-    await message.answer("Пожалуйста, введите серийный номер аптеки/магазина для регистрации:")
+# Функция для отправки сообщений в Telegram администратору предриятия
+async def send_notification_to_admin(message: str, enterprise_code: str):
+    try:
+        # Получаем данные предприятия по кодам
+        async with get_async_db() as db:
+            enterprise = await db.execute(
+                select(EnterpriseSettings).filter(EnterpriseSettings.enterprise_code == enterprise_code)
+            )
+            enterprise = enterprise.scalars().first()
 
-@router.message(lambda message: message.text.isdigit())
-async def branch_handler(message: Message):
-    user_id = str(message.from_user.id)  # Преобразуем ID в строку
-    branch = message.text
-    
-    async with get_async_db() as session:
-        branch_entry = await session.get(MappingBranch, branch)
-        
-        if branch_entry:
-            branch_entry.ID_telegram = user_id  # Преобразуем ID в строку
-            session.add(branch_entry)
-            try:
-                await session.commit()
-                await message.answer("Регистрация успешна! Ваш ID привязан к серийному номеру.")
-            except Exception as e:
-                await message.answer(f"Ошибка базы данных: {e}")
+        # Получаем user_id администратора (email используем как user_id)
+        if enterprise:
+            user_id = enterprise.email  # Email используется как user_id
+            token = '5650306279:AAHZHACK7fqnLdHzLBDvY29vs7SXViMGqFs'  # Токен вашего бота
+            url = f'https://api.telegram.org/bot{token}/sendMessage'
+            payload = {
+                'chat_id': user_id,  # Используем email как user_id
+                "text": f"{message} \n\nEnterprise Code: {enterprise.enterprise_code}\nEnterprise Name: {enterprise.enterprise_name}"
+            }
+
+            # Отправка сообщения в Telegram
+            response = requests.post(url, data=payload)
+            return response.json()
         else:
-            await message.answer("Ошибка! Введите корректный серийный номер.")
-
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+            raise ValueError("Enterprise not found.")
+    
+    except Exception as e:
+        print(f"Ошибка при отправке сообщения: {e}")

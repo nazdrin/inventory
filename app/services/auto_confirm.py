@@ -4,6 +4,7 @@ import aiohttp
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings, MappingBranch, InventoryStock
+from app.services.telegram_bot import notify_user
 
 # 2.1 Подключение к базе через get_async_db
 async def get_enterprises_with_auto_booking(session: AsyncSession):
@@ -169,6 +170,11 @@ async def main():
             orders = await fetch_orders(session, branch, enterprise_code)
             if orders:
                 print(f"Получено {len(orders)} заказов для филиала {branch}")
+                # Извлекаем коды заказов
+                # order_codes = [order["code"] for order in orders]
+                order_codes = list(set(order["code"] for order in orders))
+                # Уведомляем пользователя
+                await notify_user(branch, order_codes)
                 processed_orders = await process_orders(session, orders)
                 print(f"Обработано {len(processed_orders)} заказов для филиала {branch}")
                 enterprise_settings = await session.execute(

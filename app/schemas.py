@@ -1,7 +1,6 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
-
 # Схема для авторизации пользователя
 class LoginSchema(BaseModel):
     developer_login: str
@@ -82,7 +81,7 @@ class MappingBranchSchema(BaseModel):
     enterprise_code: str
     branch: str
     store_id: str
-    ID_telegram: int
+    id_telegram: Optional[List[str]]
     class Config:
         from_attributes = True  # Включено для использования from_orm
 
