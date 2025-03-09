@@ -1,8 +1,7 @@
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey, ARRAY
 from sqlalchemy.orm import declarative_mixin, declarative_base
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
 
 Base = declarative_base()
 
@@ -95,8 +94,8 @@ class MappingBranch(Base):
     enterprise_code = Column(String, nullable=False)
     branch = Column(String, primary_key=True)
     store_id = Column(String, nullable=False)
-    ID_telegram = Column(Integer, nullable=True)
-
+    # id_telegram = Column(Integer, nullable=True)
+    id_telegram = Column(ARRAY(String), nullable=True)
 # Таблица глобальных настроек разработчика
 class DeveloperSettings(Base):
     __tablename__ = "developer_settings"
