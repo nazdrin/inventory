@@ -82,6 +82,7 @@ class MappingBranchSchema(BaseModel):
     enterprise_code: str
     branch: str
     store_id: str
+    ID_telegram: int
     class Config:
         from_attributes = True  # Включено для использования from_orm
 

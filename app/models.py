@@ -95,6 +95,7 @@ class MappingBranch(Base):
     enterprise_code = Column(String, nullable=False)
     branch = Column(String, primary_key=True)
     store_id = Column(String, nullable=False)
+    ID_telegram = Column(Integer, nullable=True)
 
 # Таблица глобальных настроек разработчика
 class DeveloperSettings(Base):
