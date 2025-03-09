@@ -93,8 +93,8 @@ class DeveloperSettingsSchema(BaseModel):
     endpoint_stock: Optional[str] = None
     endpoint_orders: Optional[str] = None
     telegram_token_developer: Optional[str] = None
-    catalog_data_retention: Optional[int] = None
-    stock_data_retention: Optional[int] = None
+    # catalog_data_retention: Optional[int] = None
+    # stock_data_retention: Optional[int] = None
     morion: Optional[str] = None
     tabletki: Optional[str] = None
     barcode: Optional[str] = None

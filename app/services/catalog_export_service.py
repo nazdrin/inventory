@@ -28,7 +28,7 @@ async def save_catalog_log(enterprise_code: str, formatted_json: dict):
         with open(file_path, "w", encoding="utf-8") as file:
             json.dump(formatted_json, file, ensure_ascii=False, indent=4)
 
-        logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
+        # logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
     except Exception as e:
         logging.error(f"Failed to save catalog JSON log for enterprise_code={enterprise_code}: {str(e)}")
         
@@ -94,7 +94,7 @@ async def post_data_to_endpoint(endpoint: str, data: dict, login: str, password:
         async with aiohttp.ClientSession() as session:
             async with session.post(endpoint, json=data, headers=headers, auth=auth) as response:
                 response_text = await response.text()
-                logging.info(f"Response from endpoint: {response.status} - {response_text}")
+                # logging.info(f"Response from endpoint: {response.status} - {response_text}")
                 return response.status, response_text
     except Exception as e:
         logging.error(f"Error posting data to endpoint: {str(e)}")
@@ -141,7 +141,8 @@ async def export_catalog(enterprise_code: str, raw_data: list):
             response = await post_data_to_endpoint(endpoint,transformed_data, enterprise_settings.tabletki_login, enterprise_settings.tabletki_password,enterprise_code )
             
             #logging.info(f"Real response: {response}")
-            send_notification(f"Отправка каталога на эндпоинт для предприятия {enterprise_code} произошла",enterprise_code)
+            send_notification(f"🟡 Каталог успешно отправлен!", enterprise_code)
+
 
         except Exception as e:
             logging.error(f"Error exporting catalog for enterprise_code={enterprise_code}: {str(e)}")

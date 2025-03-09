@@ -37,6 +37,7 @@ def save_to_json(data, enterprise_code, file_type):
 
         logging.info(f"JSON записан в файл: {json_file_path}")
         return json_file_path
+        
     except IOError as e:
         logging.error(f"Ошибка при сохранении JSON-файла: {e}")
         return None

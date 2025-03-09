@@ -15,9 +15,10 @@ def send_notification(message: str, enterprise_code: str):
         }
         try:
             response = requests.post(url, data=payload)
-            print(f"Сообщение отправлено пользователю {chat_id}: {response.json()}")
+            # print(f"Сообщение отправлено пользователю {chat_id}: {response.json()}")
         except Exception as e:
-            print(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+            # print(f"Ошибка при отправке сообщения пользователю {chat_id}: {e}")
+            pass
 
 # Функция для отправки сообщений в Telegram администратору предриятия
 async def send_notification_to_admin(message: str, enterprise_code: str):
@@ -46,4 +47,5 @@ async def send_notification_to_admin(message: str, enterprise_code: str):
             raise ValueError("Enterprise not found.")
     
     except Exception as e:
-        print(f"Ошибка при отправке сообщения: {e}")
+        # print(f"Ошибка при отправке сообщения: {e}")
+        pass
