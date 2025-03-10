@@ -12,7 +12,7 @@ load_dotenv()
 from app.services.notification_service import send_notification 
 xml_data = "<root><element>value</element></root>"
 parsed_data = xmltodict.parse(xml_data)
-print(parsed_data)
+# print(parsed_data)
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -206,10 +206,10 @@ async def transform_data_types(data, file_type,enterprise_code):
             
             # Проверка и фильтрация записей
             if file_type == "catalog" and not item.get("code"):
-                logging.warning(f"Пропуск записи с пустым 'сode': {item}")
+                # logging.warning(f"Пропуск записи с пустым 'сode': {item}")
                 continue
             if file_type == "stock" and (not item.get("code") or not item.get("branch")):
-                logging.warning(f"Пропуск записи с пустыми 'Branch' или 'Code': {item}")
+                # logging.warning(f"Пропуск записи с пустыми 'Branch' или 'Code': {item}")
                 continue
 
             transformed_item = {}
@@ -278,7 +278,7 @@ async def process_data_converter(
 
         # Передача enterprise_code в process_database_service
         await process_database_service(json_file_path, file_type, enterprise_code)
-        logging.info(f"Данные успешно обработаны и переданы в Database_service.")
+        # logging.info(f"Данные успешно обработаны и переданы в Database_service.")
     except Exception as e:
         error_message = f"Ошибка обработки файла {file_path} для предприятия {enterprise_code}: {str(e)}"
         logging.error(error_message)

@@ -103,7 +103,19 @@ const EnterprisePanel = () => {
 
     return (
         <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+            <div style={{
+                position: "sticky",
+                top: 0,
+                backgroundColor: "#f0f0f0",
+                zIndex: 10,
+                padding: "10px 20px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                borderBottom: "1px solid #ccc",
+
+                // display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px"
+            }}>
                 <h1>Enterprise Settings</h1>
                 {selectedEnterprise && (
                     <div>
@@ -137,7 +149,10 @@ const EnterprisePanel = () => {
                     </div>
                 )}
             </div>
-            <div style={{ marginBottom: "20px" }}>
+            <div style={{
+                marginBottom: "10px", marginTop: "10px", marginLeft: "20px"
+
+            }}>
                 <label htmlFor="enterprise-select" style={{ marginRight: "10px" }}>
                     Select Enterprise:
                 </label>
@@ -178,12 +193,13 @@ const EnterprisePanel = () => {
                         setOriginalCode(null);
                         setIsEditing(false);
                     }}
-                    style={{ padding: "10px 20px", marginTop: "20px", display: "block", margin: "0 auto" }}
+                    style={{ padding: "10px 20px", marginTop: "20px", border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: '#ffc107', display: "block", margin: "0 auto" }}
                 >
                     Add New
                 </button>
-            )}
-        </div>
+            )
+            }
+        </div >
     );
 };
 

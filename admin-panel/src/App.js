@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
-import Navbar from "./components/Navbar";
+// import Navbar from "./components/Navbar";
 import DeveloperPanel from "./pages/DeveloperPanel";
 import EnterprisePanel from "./pages/EnterprisePanel";
+import MappingBranchPage from "./pages/MappingBranchPage";
+
 import Login from "./pages/Login";
 
 const App = () => {
@@ -46,6 +48,7 @@ const App = () => {
                             style={{
                                 padding: "10px 20px",
                                 backgroundColor: "#007BFF",
+                                marginRight: 10,
                                 color: "white",
                                 border: "none",
                                 cursor: "pointer",
@@ -54,6 +57,19 @@ const App = () => {
                             onClick={() => navigate("/enterprise")}
                         >
                             Enterprise Panel
+                        </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/mapping_branch")}
+                        >
+                            Mapping Branch
                         </button>
                     </>
                 )}
@@ -67,6 +83,10 @@ const App = () => {
                 <Route
                     path="/enterprise"
                     element={<PrivateRoute element={<EnterprisePanel authUser={authUser} />} />}
+                />
+                <Route
+                    path="/mapping_branch"
+                    element={<PrivateRoute element={<MappingBranchPage />} />}
                 />
             </Routes>
         </div>

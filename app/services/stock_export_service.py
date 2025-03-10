@@ -29,7 +29,7 @@ async def save_stock_log(enterprise_code: str, formatted_json: dict):
         with open(file_path, "w", encoding="utf-8") as file:
             json.dump(formatted_json, file, ensure_ascii=False, indent=4)
 
-        logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
+        # logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
     except Exception as e:
         logging.error(f"Failed to save stock JSON log for enterprise_code={enterprise_code}: {str(e)}")
 
@@ -77,7 +77,7 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
                 })
 
             formatted_json = {"Branches": list(branches_data.values())}
-            logging.info(f"Formatted JSON data for enterprise_code={enterprise_code}: {json.dumps(formatted_json, indent=4)}")
+            # logging.info(f"Formatted JSON data for enterprise_code={enterprise_code}: {json.dumps(formatted_json, indent=4)}")
 
             await save_stock_log(enterprise_code, formatted_json)
 
@@ -95,7 +95,8 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
             await send_to_endpoint(endpoint, formatted_json, login, password, enterprise_code)
 
             logging.info(f"Stock file for enterprise_code={enterprise_code} processed successfully.")
-            send_notification(f"Отправка стока на API прошла успешно для {enterprise_code}", enterprise_code)
+            send_notification(f"✅ Сток успешно отправлен!", enterprise_code)
+
 
         except Exception as e:
             logging.exception(f"Error processing stock file for {enterprise_code}: {str(e)}")
@@ -110,7 +111,7 @@ async def send_to_endpoint(endpoint: str, data: list, login: str, password: str,
         async with aiohttp.ClientSession() as session:
             async with session.post(endpoint, json=data, headers=headers, auth=auth) as response:
                 response_text = await response.text()
-                logging.info(f"Response from endpoint: {response.status} - {response_text}")
+                # logging.info(f"Response from endpoint: {response.status} - {response_text}")
                 return response.status, response_text
     except Exception as e:
         logging.error(f"Error sending data to endpoint: {str(e)}")

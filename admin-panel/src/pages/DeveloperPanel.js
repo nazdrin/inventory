@@ -57,8 +57,8 @@ const DeveloperPanel = ({ authUser }) => {
         { name: "endpoint_stock", label: "Stock Endpoint" },
         { name: "endpoint_orders", label: "Orders Endpoint" },
         { name: "telegram_token_developer", label: "Endpoint Dntrade" },
-        { name: "catalog_data_retention", label: "Catalog Data Retention (days)", type: "number" },
-        { name: "stock_data_retention", label: "Stock Data Retention (hours)", type: "number" },
+        // { name: "catalog_data_retention", label: "Catalog Data Retention (days)", type: "number" },
+        // { name: "stock_data_retention", label: "Stock Data Retention (hours)", type: "number" },
         { name: "morion", label: "Morion Code" },
         { name: "tabletki", label: "Tabletki Code" },
         { name: "barcode", label: "Barcode" },
@@ -68,7 +68,9 @@ const DeveloperPanel = ({ authUser }) => {
     ];
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+        <div style={{
+            display: "flex", flexDirection: "column", paddingBottom: "30px", height: "100vh"
+        }}>
             {/* Fixed header with buttons */}
             <div
                 style={{
@@ -119,7 +121,7 @@ const DeveloperPanel = ({ authUser }) => {
 
             {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", justifyContent: "center" }}>
-                <div style={{ maxWidth: "600px", width: "100%" }}>
+                <div style={{ maxWidth: "600px", width: "100%", paddingBottom: "50px" }}>
                     {error && <p style={{ color: "red" }}>{error}</p>}
                     {currentSetting && (
                         <Form
@@ -175,10 +177,13 @@ const DeveloperPanel = ({ authUser }) => {
                                     padding: "10px 20px",
                                     fontSize: "16px",
                                     backgroundColor: "#007BFF",
-                                    color: "white",
                                     border: "none",
                                     borderRadius: "5px",
                                     cursor: "pointer",
+                                    backgroundColor: '#ffc107',
+                                    border: 'none',
+                                    borderRadius: '5px',
+                                    fontWeight: 'bold'
                                 }}
                             >
                                 Add
