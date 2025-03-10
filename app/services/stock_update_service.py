@@ -30,7 +30,7 @@ async def api_call(branch: str, endpoint_orders: str, login: str, password: str)
             async with session.get(url, headers=headers, auth=auth) as response:
                 if response.status == 200:
                     data = await response.json()
-                    logging.info(f"API Response for branch {branch}: {data}")
+                    # logging.info(f"API Response for branch {branch}: {data}")
                     return data
                 else:
                     logging.error(f"Error from API for branch {branch}: {response.status}")
@@ -87,7 +87,8 @@ async def update_stock(stock_data, enterprise_code):
                 api_response = await api_call(branch, endpoint_orders, login, password)
 
                 if api_response:
-                    logging.info(f"API Response для branch {branch}: {api_response}")
+                    pass
+                    # logging.info(f"API Response для branch {branch}: {api_response}")
                     #send_notification(f"API Response для branch {branch}: {api_response}", "проверка")
                 else:
                     logging.warning(f"Нет данных в ответе от API для branch {branch}")
@@ -98,14 +99,13 @@ async def update_stock(stock_data, enterprise_code):
                         code = record["code"]
                         qty = record["qty"]
 
-                        logging.info(f"Обработка товара {code} для branch {branch} с исходным количеством {qty}...")
+                        # logging.info(f"Обработка товара {code} для branch {branch} с исходным количеством {qty}...")
 
                         # Ищем товар в ответе API
                         updated_qty = qty  # Начинаем с исходного количества
                         found_in_api = False  # Флаг для проверки наличия товара в ответе API
 
                         for api_record in api_response:
-                            logging.info(f"Проверка товаров в API ответе для branch {branch}...")
                             for row in api_record.get("rows", []):  # Итерируемся по списку товаров внутри 'rows'
                                 goods_code = row.get("goodsCode")
                                 #logging.info(f"Проверка товара с кодом {goods_code} в ответе API для branch {branch}...")
@@ -113,7 +113,7 @@ async def update_stock(stock_data, enterprise_code):
                                 
                                 if str(goods_code) == str(code):  # Сравниваем товары по их кодам
                                     api_qty = float(row.get("qty", 0))
-                                    logging.info(f"Вычисление нового количества для товара {code} на основе данных API: {qty} - {api_qty}")
+                                    # logging.info(f"Вычисление нового количества для товара {code} на основе данных API: {qty} - {api_qty}")
                                     updated_qty = max(qty - api_qty, 0)  # Количество не может быть отрицательным
 
                                     # Логируем обновление

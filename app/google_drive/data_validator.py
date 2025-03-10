@@ -71,10 +71,8 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
                     
                     continue # Пропускаем этот товар, но продолжаем обработку файла
             except ValueError as e:
-                logging.error(f"Ошибка в строке: {row}. Детали: {e}")
-               
+                # logging.error(f"Ошибка в строке: {row}. Детали: {e}")
                 continue  # Пропускаем строку с ошибкой, но продолжаем обработку файла
-   
     if file_type != "stock" or single_store:
         return  # Проверка не нужна для catalog или если single_store=True
 
@@ -101,8 +99,8 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
     :param store_serial: Уникальный идентификатор филиала
     """
     try:
-        logging.info(f"Параметры перед проверкой: file_path={file_path}, file_type={file_type}, "
-                     f"single_store={single_store}, store_serial={store_serial}")
+        # logging.info(f"Параметры перед проверкой: file_path={file_path}, file_type={file_type}, "
+                    #  f"single_store={single_store}, store_serial={store_serial}")
 
         # Проверка наличия store_serial для single_store режима
         if single_store and not store_serial:
@@ -130,12 +128,12 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
         else:
             raise ValueError(f"Неизвестный формат файла: {file_path}")
 
-        success_message = f"Файл {file_path} успешно прошел проверку для предприятия {enterprise_code}."
-        logging.info(success_message)
+        # success_message = f"Файл {file_path} успешно прошел проверку для предприятия {enterprise_code}."
+        # logging.info(success_message)
         
 
         # Интеграция с data_converter
-        logging.info(f"Передача файла {file_path} в data_converter для обработки.")
+        # logging.info(f"Передача файла {file_path} в data_converter для обработки.")
         
         # Создаем сессию базы данных
         async with get_async_db() as db_session:
@@ -149,7 +147,7 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
                 db_session=db_session  # Передача сессии базы данных
             )
         
-        logging.info(f"Файл {file_path} успешно обработан data_converter для предприятия {enterprise_code}.")
+        # logging.info(f"Файл {file_path} успешно обработан data_converter для предприятия {enterprise_code}.")
         return True
 
     except Exception as e:
