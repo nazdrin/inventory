@@ -27,7 +27,8 @@ async def fetch_feed_url(enterprise_code):
 def download_xml(url):
     """Загрузка XML-файла с подменой User-Agent."""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Cache-Control": "no-cache"
     }
     
     response = requests.get(url, headers=headers)
@@ -57,6 +58,10 @@ def parse_xml(xml_string):
             "producer": offer.findtext("vendor", "N/A"),
             "barcode": barcode_param,
         }
+        
+        # Если name пустое, заменить его на "no_name"
+        if not offer_data["name"]:
+            offer_data["name"] = "no_name"
         offers.append(offer_data)
     
     return offers
