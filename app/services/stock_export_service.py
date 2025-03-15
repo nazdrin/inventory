@@ -93,9 +93,11 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
             password = enterprise_settings.tabletki_password
 
             await send_to_endpoint(endpoint, formatted_json, login, password, enterprise_code)
-
+            
             logging.info(f"Stock file for enterprise_code={enterprise_code} processed successfully.")
-            send_notification(f"✅ Сток успешно отправлен!", enterprise_code)
+
+            if developer_settings.message_orders:
+                send_notification(f"✅ Сток успешно отправлен!", enterprise_code)
 
 
         except Exception as e:

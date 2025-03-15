@@ -106,6 +106,7 @@ class DeveloperSettings(Base):
     endpoint_stock = Column(String, nullable=True)
     endpoint_orders = Column(String, nullable=True)
     telegram_token_developer = Column(String, nullable=True)
+    message_orders = Column(Boolean, nullable=True)
     # catalog_data_retention = Column(Integer, nullable=True)
     # stock_data_retention = Column(Integer, nullable=True)
     morion = Column(String, nullable=True)
