@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+
+
 # Схема для авторизации пользователя
 class LoginSchema(BaseModel):
     developer_login: str
@@ -13,7 +15,6 @@ class InventoryDataSchema(BaseModel):
     name: str
     producer: str
     vat: float
-
     morion: Optional[str] = None
     tabletki: Optional[str] = None
     barcode: Optional[str] = None
@@ -21,8 +22,6 @@ class InventoryDataSchema(BaseModel):
     badm: Optional[str] = None
     venta: Optional[str] = None
     enterprise_code: str
-
-    # branch_id: str
     updated_at: Optional[datetime] = None
 
     class Config:
@@ -76,6 +75,7 @@ class EnterpriseSettingsSchema(BaseModel):
     class Config:
         from_attributes = True  # Включено для использования from_orm
 
+
 # Схема таблицы mapping
 class MappingBranchSchema(BaseModel):
     enterprise_code: str
@@ -84,6 +84,7 @@ class MappingBranchSchema(BaseModel):
     id_telegram: Optional[List[str]]
     class Config:
         from_attributes = True  # Включено для использования from_orm
+
 
 # Схема для глобальных настроек системы
 class DeveloperSettingsSchema(BaseModel):
