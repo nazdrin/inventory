@@ -10,7 +10,8 @@ from datetime import datetime,timezone
 import pytz
 local_tz = pytz.timezone('Europe/Kiev')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# Получаем путь к временному каталогу из переменной окружения
+
+
 TEMP_FILE_PATH = os.getenv("TEMP_FILE_PATH", "./temp_logs")
 
 async def save_catalog_log(enterprise_code: str, formatted_json: dict):
@@ -28,10 +29,10 @@ async def save_catalog_log(enterprise_code: str, formatted_json: dict):
         with open(file_path, "w", encoding="utf-8") as file:
             json.dump(formatted_json, file, ensure_ascii=False, indent=4)
 
-        # logging.info(f"Stock JSON log saved for enterprise_code={enterprise_code} at {file_path}")
     except Exception as e:
         logging.error(f"Failed to save catalog JSON log for enterprise_code={enterprise_code}: {str(e)}")
         
+
 # Словарь для преобразования идентификаторов
 SUPPLIER_MAPPING = {
     "morion": 1,
@@ -62,6 +63,7 @@ async def transform_data(raw_data: list, developer_settings: DeveloperSettings,e
                 {"ID": str(SUPPLIER_MAPPING[key]), "Code": value}
                 for key, value in item.items() if key in SUPPLIER_MAPPING
             ]
+
             # Фильтруем SupplierCodes, чтобы удалить элементы с пустым ID, ID == 'None' или ID == '0'
             supplier_codes = [
                 supplier for supplier in supplier_codes 
@@ -80,6 +82,7 @@ async def transform_data(raw_data: list, developer_settings: DeveloperSettings,e
             "Suppliers": suppliers,
             "Offers": offers
         }
+
     except Exception as e:
         logging.error(f"Error transforming data: {str(e)}")
         send_notification(f"Ошибка трансформации данных каталога перед отправкой {str(e)} для предприятия {enterprise_code}",enterprise_code)
@@ -94,7 +97,6 @@ async def post_data_to_endpoint(endpoint: str, data: dict, login: str, password:
         async with aiohttp.ClientSession() as session:
             async with session.post(endpoint, json=data, headers=headers, auth=auth) as response:
                 response_text = await response.text()
-                # logging.info(f"Response from endpoint: {response.status} - {response_text}")
                 return response.status, response_text
     except Exception as e:
         logging.error(f"Error posting data to endpoint: {str(e)}")
@@ -127,23 +129,16 @@ async def export_catalog(enterprise_code: str, raw_data: list):
             transformed_data = await transform_data(raw_data, developer_settings,enterprise_code)
 
             # Вывод данных в формате JSON в консоль
-            #logging.info("Transformed Data (JSON):")
-            #catalog_log_file=json.dumps(transformed_data, ensure_ascii=False, indent=4)
             await save_catalog_log(enterprise_code, transformed_data)
             # Формируем URL эндпоинта
             endpoint = f"{developer_settings.endpoint_catalog}/Import/Ref/{enterprise_settings.branch_id}"
             logging.info(f"Prepared endpoint URL: {endpoint}")
 
-            
-
-
             # Отправка данных на реальный эндпоинт
-            response = await post_data_to_endpoint(endpoint,transformed_data, enterprise_settings.tabletki_login, enterprise_settings.tabletki_password,enterprise_code )
+            await post_data_to_endpoint(endpoint,transformed_data, enterprise_settings.tabletki_login, enterprise_settings.tabletki_password,enterprise_code )
             
-            #logging.info(f"Real response: {response}")
             if developer_settings.message_orders:
                 send_notification(f"🟡 Каталог успешно отправлен!", enterprise_code)
-
 
         except Exception as e:
             logging.error(f"Error exporting catalog for enterprise_code={enterprise_code}: {str(e)}")

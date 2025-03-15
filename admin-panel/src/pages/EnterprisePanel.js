@@ -45,10 +45,6 @@ const EnterprisePanel = () => {
     }, []);
 
 
-
-
-
-
     const handleSave = async (enterpriseData) => {
         try {
             if (isEditing) {
@@ -134,7 +130,6 @@ const EnterprisePanel = () => {
                 alignItems: "center",
                 borderBottom: "1px solid #ccc",
 
-                // display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px"
             }}>
                 <h1>Enterprise Settings</h1>
 
@@ -188,7 +183,12 @@ const EnterprisePanel = () => {
                         setIsEditing(!!enterprise);
                     }}
                     value={selectedEnterprise?.enterprise_code || ""}
-                    style={{ padding: "10px", width: "300px" }}
+                    style={{
+                        padding: "15px",  // Увеличенные отступы внутри
+                        width: "330px",    // Увеличенная ширина
+                        height: "50px",    // Увеличенная высота
+                        fontSize: "19px",   // Увеличенный размер шрифта
+                    }}
                 >
                     <option value="">-- Select an Enterprise --</option>
                     {enterprises.map((enterprise) => (
@@ -197,6 +197,7 @@ const EnterprisePanel = () => {
                         </option>
                     ))}
                 </select>
+
             </div>
             {!selectedEnterprise && (
                 <div style={{
@@ -219,7 +220,6 @@ const EnterprisePanel = () => {
                     </ul>
                 </div>
             )}
-
 
 
             {selectedEnterprise && (

@@ -10,17 +10,12 @@ from dotenv import load_dotenv
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import MappingBranch
-from app.database import get_async_db  # Импортируем get_async_db
+from app.database import get_async_db
+
 load_dotenv()
-# Настройка логирования
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# Словарь соответствий для получения enterprise_code и branch
-# mapping = {
-    # "BCE73E60-A5C9-4FB4-9186-B6F88FDF3BDA": ("253", "30467
-# }
-
 
 def save_to_json(data, enterprise_code, file_type):
     """Сохранение данных в JSON-файл в указанную временную директорию из .env."""

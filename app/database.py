@@ -1,26 +1,20 @@
 import os
-
-# from sqlalchemy import create_engine
-
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-
 from sqlalchemy.sql import text
-
 from .models import Base, DeveloperSettings, InventoryData, InventoryStock, ReservedItems, DataFormat, EnterpriseSettings, ClientNotifications, MappingBranch
 from contextlib import asynccontextmanager
 import logging
 
-# Читаем DATABASE_URL из переменных окружения
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Проверяем, что переменная окружения установлена
 if not DATABASE_URL:
     raise ValueError("Переменная окружения DATABASE_URL не установлена")
 
+
+
 # Создаем асинхронный движок для подключения к базе данных
-
-
 engine = create_async_engine(
     DATABASE_URL,
     pool_size=5,  # Уменьшаем количество одновременных соединений

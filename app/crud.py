@@ -1,10 +1,8 @@
 from sqlalchemy.orm import Session
 from app import schemas
-#from app.models import InventoryData, InventoryStock, ReservedItems, DataFormat
-#from app.developer_panel.old_models import DeveloperSettings, EnterpriseSettings
-#from app.models import DeveloperSettings, EnterpriseSettings
-# Функции для работы с InventoryData
 from app.database import InventoryData, InventoryStock, ReservedItems, DataFormat, DeveloperSettings, EnterpriseSettings
+
+
 def create_inventory_data(db: Session, data: schemas.InventoryDataSchema):
     db_data = InventoryData(**data.dict())
     db.add(db_data)
@@ -65,7 +63,6 @@ def update_enterprise_settings(db: Session, enterprise_code: str, updated_settin
     existing_settings = db.query(EnterpriseSettings).filter(
         EnterpriseSettings.enterprise_code == enterprise_code
     ).first()
-
     if not existing_settings:
         raise ValueError(f"Enterprise with code {enterprise_code} not found.")
 
