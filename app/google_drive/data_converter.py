@@ -12,7 +12,7 @@ load_dotenv()
 from app.services.notification_service import send_notification 
 xml_data = "<root><element>value</element></root>"
 parsed_data = xmltodict.parse(xml_data)
-# print(parsed_data)
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -68,6 +68,7 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
         elif file_path.endswith(".xml"):
             with open(file_path, "r", encoding="utf-8") as xml_file:
                 xml_data = xml_file.read()                                
+
                 # Парсинг XML в JSON-структуру
                 json_data = xmltodict.parse(xml_data)               
                 
@@ -86,10 +87,8 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
                 if file_type == "catalog":
                     if not isinstance(json_data, dict) or "catalog" not in json_data:
                         logging.warning(f"Некорректная структура XML файла {file_path}. Ожидалась структура с 'Catalog'.")
-                        #send_notification(f"Некорректная структура XML файла {file_path} для предприятия{enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
                         return None
                     data = json_data.get("catalog", {}).get("item", [])
-          
                 elif file_type == "stock":
                     # Получаем данные из 'stock' -> 'item'
                     data = json_data.get("stock", {}).get("item", [])                   
@@ -97,13 +96,11 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
                     # Приводим данные к списку, если они представлены как словарь (один элемент)
                     if isinstance(data, dict):
                         logging.warning("Данные из XML представлены в виде словаря, конвертация в список.")
-                        #send_notification(f"Данные из XML представлены в виде словаря, конвертация в список.для предприятия {enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
                         data = [data]
 
                     # Проверка на корректный формат данных
                     if not isinstance(data, list):
                         logging.error(f"Неожиданный тип данных для 'stock': {type(data)}")
-                        #send_notification(f"Данные из XML представлены в виде словаря, конвертация в список.для предприятия {enterprise_code}. Ожидалась структура с 'Catalog'.",enterprise_code)
                         raise ValueError("Неверный формат данных для 'stock'. Ожидался список или словарь.")
 
                     # Нормализация данных: ключи приводим к нижнему регистру
@@ -114,17 +111,12 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
                             continue
                         normalized_item = {k.lower(): v for k, v in item.items()}
                         normalized_data.append(normalized_item)
-
                     
-
                     # Возвращаем результат
                     return normalized_data
                 else:
                     logging.error(f"Неизвестный тип файла: {file_type}")
                     return None
-
-                
-
                 # Если данные отсутствуют, логируем предупреждение
                 if not data:
                     
@@ -159,6 +151,7 @@ async def convert_to_json(file_path: str, file_type: str,enterprise_code):
         logging.error(f"Ошибка конвертации файла {file_path} в JSON: {str(e)}")
         send_notification(f"Ошибка конвертации файла {file_path}в JSON: {str(e)} для предприятия {enterprise_code}",enterprise_code)
         raise
+
 def clean_record_keys_and_values(record):
     """
     Очищает ключи и значения записи от лишних пробелов.
@@ -206,10 +199,8 @@ async def transform_data_types(data, file_type,enterprise_code):
             
             # Проверка и фильтрация записей
             if file_type == "catalog" and not item.get("code"):
-                # logging.warning(f"Пропуск записи с пустым 'сode': {item}")
                 continue
             if file_type == "stock" and (not item.get("code") or not item.get("branch")):
-                # logging.warning(f"Пропуск записи с пустыми 'Branch' или 'Code': {item}")
                 continue
 
             transformed_item = {}
@@ -229,7 +220,7 @@ async def transform_data_types(data, file_type,enterprise_code):
             elif file_type == "stock":
                 transformed_item = {
                     "branch": str(item.get("branch", "")).strip(),
-                     "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),  
+                    "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),  
                     "price": float(item.get("price", 0)),
                     "qty": int(item.get("qty", 0)),
                     "price_reserve": float(item.get("pricereserve", 0))
@@ -252,12 +243,10 @@ async def process_data_converter(
             branch_id = await get_branch_id(enterprise_code, db_session)
 
         converted_data = await convert_to_json(file_path, file_type, enterprise_code)
-       
         if not converted_data:
             logging.warning(f"Пустые данные после конвертации файла {file_path}")
 
         converted_data = add_branch_information(converted_data, single_store, store_serial, branch_id, enterprise_code)
-       
         if not converted_data:
             logging.warning(f"Пустые данные после добавления branch информации для файла {file_path}")
 
@@ -266,8 +255,6 @@ async def process_data_converter(
         if not transformed_data:
             logging.warning(f"Пустые данные после преобразования типов для файла {file_path}")
 
-        # Используем временную директорию, совместимую с Windows и macOS
-        # temp_dir = tempfile.gettempdir()
         temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
         os.makedirs(temp_dir, exist_ok=True)
         json_file_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_data.json")
@@ -278,7 +265,7 @@ async def process_data_converter(
 
         # Передача enterprise_code в process_database_service
         await process_database_service(json_file_path, file_type, enterprise_code)
-        # logging.info(f"Данные успешно обработаны и переданы в Database_service.")
+        
     except Exception as e:
         error_message = f"Ошибка обработки файла {file_path} для предприятия {enterprise_code}: {str(e)}"
         logging.error(error_message)

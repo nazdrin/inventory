@@ -4,7 +4,6 @@ const API_URL = `${API_BASE_URL}/developer/settings`;
 const DATA_FORMATS_URL = `${API_BASE_URL}/data_formats`;
 
 
-
 // Fetch developer settings by login
 const getSetting = async (login) => {
     const response = await fetch(`${API_URL}/${login}`);
@@ -40,20 +39,6 @@ const getDataFormats = async () => {
     return response.json();
 };
 
-// Add a new data format
-// const addDataFormat = async (newFormat) => {
-//   const response = await fetch(DATA_FORMATS_URL, {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/json",
-//     },
-//     body: JSON.stringify({ format_name: newFormat }), // Обернули в объект с ключом format_name
-//   });
-//   if (!response.ok) {
-//     throw new Error("Failed to add data format.");
-//   }
-//   return response.json();
-// };
 const addDataFormat = async (newFormat) => {
     const data = typeof newFormat === "string" ? { format_name: newFormat } : newFormat;
     const response = await fetch(DATA_FORMATS_URL, {
@@ -68,7 +53,7 @@ const addDataFormat = async (newFormat) => {
     }
     return response.json();
 };
-// Export all functions
+
 export default {
     getSetting,
     updateSetting,

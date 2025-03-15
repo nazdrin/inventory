@@ -9,11 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.exc import OperationalError
 
-# Установка временной зоны Киев
 os.environ['TZ'] = 'UTC'
 KIEV_TZ = pytz.timezone("Europe/Kiev")
 
-# Импорт сервисов
 from app.dntrade_data_service.stock_fetch_convert import run_service
 from app.checkbox_data_service.checkbox_stock_conv import run_service as run_checkbox
 from app.rozetka_data_service.rozetka_stock_conv import run_service as run_rozetka
@@ -21,7 +19,7 @@ from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
-from app.services.auto_confirm import main as auto_confirm_main  # Импорт main() из auto_confirm.py
+from app.services.auto_confirm import main as auto_confirm_main
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -63,6 +61,7 @@ async def get_enterprises_for_stock(db: AsyncSession):
             ((enterprise.last_stock_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.stock_upload_frequency))
             if enterprise.last_stock_upload else now) <= now
         ]
+        
     except Exception as e:
         await notify_error(f"Ошибка при получении списка предприятий для обновления остатков: {str(e)}")
         return []

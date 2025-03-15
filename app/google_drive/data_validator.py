@@ -3,14 +3,12 @@ import os
 import openpyxl
 import xml.etree.ElementTree as ET
 import csv
-from app.google_drive.data_converter import process_data_converter  # Импорт data_converter
+from app.google_drive.data_converter import process_data_converter  
 from app.database import get_async_db
-from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
-
+from app.services.notification_service import send_notification  
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-NOTIFICATION_FILE = "notifications.txt"  # Файл для уведомлений
 def validate_consistency(data, file_type, single_store, store_serial,enterprise_code):
     """
     Проверяет согласованность данных для branch и store_serial.
@@ -44,7 +42,6 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
             if code and not producer:
                 message = f"Ошибка: Для кода '{code}' отсутствует производитель (producer)."
                 logging.warning(message)
-                #send_notification(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
 
             # Продолжаем проверку других строк
             continue
@@ -68,10 +65,9 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
                     message = f"Ошибка: PriceReserve ({price_reserve}) не может быть больше Price ({price})."
                     send_notification(f"Ошибка в строке {row} для предприятия-{enterprise_code}",message )
                     logging.warning(f"Найдено несоответствие: {message}")
-                    
                     continue # Пропускаем этот товар, но продолжаем обработку файла
+                    
             except ValueError as e:
-                # logging.error(f"Ошибка в строке: {row}. Детали: {e}")
                 continue  # Пропускаем строку с ошибкой, но продолжаем обработку файла
     if file_type != "stock" or single_store:
         return  # Проверка не нужна для catalog или если single_store=True
@@ -99,8 +95,6 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
     :param store_serial: Уникальный идентификатор филиала
     """
     try:
-        # logging.info(f"Параметры перед проверкой: file_path={file_path}, file_type={file_type}, "
-                    #  f"single_store={single_store}, store_serial={store_serial}")
 
         # Проверка наличия store_serial для single_store режима
         if single_store and not store_serial:
@@ -128,13 +122,6 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
         else:
             raise ValueError(f"Неизвестный формат файла: {file_path}")
 
-        # success_message = f"Файл {file_path} успешно прошел проверку для предприятия {enterprise_code}."
-        # logging.info(success_message)
-        
-
-        # Интеграция с data_converter
-        # logging.info(f"Передача файла {file_path} в data_converter для обработки.")
-        
         # Создаем сессию базы данных
         async with get_async_db() as db_session:
             logging.info(f"Тип и значение enterprise_code перед вызовом process_data_converter: {type(enterprise_code)} - {enterprise_code}")
@@ -147,7 +134,6 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
                 db_session=db_session  # Передача сессии базы данных
             )
         
-        # logging.info(f"Файл {file_path} успешно обработан data_converter для предприятия {enterprise_code}.")
         return True
 
     except Exception as e:
@@ -250,13 +236,11 @@ def validate_excel(file_path: str, file_type: str, single_store: bool, store_ser
         # Чтение заголовков из первой строки и приведение их к нижнему регистру
         headers = [str(cell.value).strip().lower() if cell.value is not None else "" for cell in sheet[1]]
         
-
         # Проверка отсутствующих полей
         missing_fields = [field for field in required_fields if field not in headers]
         if missing_fields:
             raise ValueError(f"Отсутствуют обязательные поля: {', '.join(missing_fields)}")
 
-        
 
         # Чтение данных с учетом заголовков
         data = []
@@ -363,6 +347,5 @@ def validate_csv(file_path: str, file_type: str, single_store: bool, store_seria
     except Exception as e:
         error_message = f"Ошибка валидации CSV файла {file_path}: {str(e)}для предприятия {enterprise_code}"
         logging.error(error_message)
-        send_notification(f"Внимание",error_message)
-        
+        send_notification(f"Внимание", error_message)
         raise  
