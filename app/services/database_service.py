@@ -4,12 +4,10 @@ from datetime import datetime
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import NoResultFound
-
 from app.models import InventoryData, InventoryStock, EnterpriseSettings
 from app.database import get_async_db
-# from app.services.cleanup_service import cleanup_old_data
 from app.services.catalog_export_service import export_catalog
-from app.services.stock_export_service import process_stock_file  # Импортируем экспорт стока
+from app.services.stock_export_service import process_stock_file
 from app.services.stock_update_service import update_stock
 from app.services.notification_service import send_notification
 
@@ -23,15 +21,13 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
     :param data_type: Тип данных ('catalog' или 'stock')
     :param enterprise_code: Код предприятия
     """
+
     logging.info(f"Начало обработки {data_type} для предприятия {enterprise_code}")
 
     async with get_async_db() as session:
-        # await cleanup_old_data(session)
-
         try:
             with open(file_path, "r", encoding="utf-8") as json_file:
                 raw_data = json.load(json_file)
-
             cleaned_data = clean_json_keys(raw_data)
 
             if data_type == "catalog":
@@ -52,7 +48,6 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
                     if enterprise_settings.stock_correction:
                         cleaned_data = await update_stock(cleaned_data, enterprise_code)
 
-                # Вызов экспорта стока перед сохранением в БД
                 try:
                     logging.info(f"Инициация экспорта стока для предприятия {enterprise_code}")
                     await process_stock_file(enterprise_code, raw_data)  # Экспорт стока
@@ -147,7 +142,6 @@ async def update_last_upload(session: AsyncSession, enterprise_code: str, data_t
     """
     try:
         current_time = datetime.utcnow()
-
         stmt = select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
         result = await session.execute(stmt)
         enterprise_settings = result.scalars().one_or_none()

@@ -58,8 +58,6 @@ const DeveloperPanel = ({ authUser }) => {
         { name: "endpoint_orders", label: "Orders Endpoint" },
         { name: "telegram_token_developer", label: "Endpoint Dntrade" },
         { name: "message_orders", label: "Статус отравки заказов", type: "checkbox" },
-        // { name: "catalog_data_retention", label: "Catalog Data Retention (days)", type: "number" },
-        // { name: "stock_data_retention", label: "Stock Data Retention (hours)", type: "number" },
         { name: "morion", label: "Morion Code" },
         { name: "tabletki", label: "Tabletki Code" },
         { name: "barcode", label: "Barcode" },

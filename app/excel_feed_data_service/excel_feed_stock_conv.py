@@ -37,10 +37,6 @@ def download_excel(url):
     else:
         raise Exception(f"Ошибка загрузки файла: {response.status_code}")
 
-import pandas as pd
-
-import pandas as pd
-
 def parse_excel(file_path):
     """Парсинг Excel и конвертация данных."""
     df = pd.read_excel(file_path, dtype=str, header=4)  # Начинаем с 6-й строки (индекс 5)
@@ -83,7 +79,6 @@ def parse_excel(file_path):
     print(df.head(10))
 
     return df.to_dict(orient="records")
-
 
 def save_to_json(data, enterprise_code, file_type):
     """Сохранение данных в JSON-файл."""
