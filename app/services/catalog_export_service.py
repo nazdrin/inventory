@@ -141,7 +141,8 @@ async def export_catalog(enterprise_code: str, raw_data: list):
             response = await post_data_to_endpoint(endpoint,transformed_data, enterprise_settings.tabletki_login, enterprise_settings.tabletki_password,enterprise_code )
             
             #logging.info(f"Real response: {response}")
-            send_notification(f"🟡 Каталог успешно отправлен!", enterprise_code)
+            if developer_settings.message_orders:
+                send_notification(f"🟡 Каталог успешно отправлен!", enterprise_code)
 
 
         except Exception as e:

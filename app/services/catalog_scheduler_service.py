@@ -108,7 +108,8 @@ async def schedule_catalog_tasks():
 
                 await asyncio.sleep(interval * 60)
     except Exception as main_error:
-        await notify_error(f"Критический сбой запуска расписания для каталога {str(main_error)}")
-
+        await notify_error(f"🔥 Критическая ошибка в планировщике: {str(main_error)}")
+    finally:
+        await notify_error("❌🟡 Сервис catalog_scheduler неожиданно остановлен.", "catalog_scheduler")
 if __name__ == "__main__":
     asyncio.run(schedule_catalog_tasks())
