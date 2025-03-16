@@ -6,22 +6,32 @@ import Form from "../components/Form";
 const { getDataFormats } = developerApi;
 
 const EnterprisePanel = () => {
+    const [filteredEnterprises, setFilteredEnterprises] = useState([]); // Отфильтрованные предприятия
     const [enterprises, setEnterprises] = useState([]);
     const [dataFormats, setDataFormats] = useState([]); // Список форматов данных
     const [selectedEnterprise, setSelectedEnterprise] = useState(null);
     const [originalCode, setOriginalCode] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
 
+
     useEffect(() => {
         const fetchEnterprises = async () => {
             try {
                 const data = await getEnterprises();
+
                 setEnterprises(data);
+
+                // Фильтруем, только если `data_format` есть и не "Blank"
+                const filtered = data.filter(ent => ent.data_format && ent.data_format !== "Blank");
+                setFilteredEnterprises(filtered);
             } catch (error) {
                 console.error("Error loading enterprises:", error);
             }
         };
 
+        fetchEnterprises();
+    }, []);
+    useEffect(() => {
         const fetchDataFormats = async () => {
             try {
                 const formats = await getDataFormats();
@@ -31,22 +41,26 @@ const EnterprisePanel = () => {
             }
         };
 
-        fetchEnterprises();
         fetchDataFormats();
     }, []);
 
+
     const handleSave = async (enterpriseData) => {
         try {
-            console.log("Saving enterprise:", enterpriseData);
             if (isEditing) {
-                console.log("Updating enterprise with PUT:", originalCode);
                 await updateEnterprise(originalCode, enterpriseData);
             } else {
-                console.log("Creating new enterprise with POST:", enterpriseData);
                 await createEnterprise(enterpriseData);
             }
+
+            // Загружаем заново данные о предприятиях
             const data = await getEnterprises();
             setEnterprises(data);
+
+            // Фильтруем предприятия, у которых data_format не "Blank"
+            const filtered = data.filter(ent => ent.data_format && ent.data_format !== "Blank");
+            setFilteredEnterprises(filtered); // ✅ Теперь список обновляется!
+
             setSelectedEnterprise(null);
             setOriginalCode(null);
             setIsEditing(false);
@@ -54,6 +68,8 @@ const EnterprisePanel = () => {
             console.error("Error saving enterprise:", error);
         }
     };
+
+
 
     const handleCancel = () => {
         setSelectedEnterprise(null);
@@ -103,8 +119,21 @@ const EnterprisePanel = () => {
 
     return (
         <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+            <div style={{
+                position: "sticky",
+                top: 0,
+                backgroundColor: "#f0f0f0",
+                zIndex: 10,
+                padding: "10px 20px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                borderBottom: "1px solid #ccc",
+
+            }}>
                 <h1>Enterprise Settings</h1>
+
+
                 {selectedEnterprise && (
                     <div>
                         <button
@@ -137,7 +166,10 @@ const EnterprisePanel = () => {
                     </div>
                 )}
             </div>
-            <div style={{ marginBottom: "20px" }}>
+            <div style={{
+                marginBottom: "10px", marginTop: "10px", marginLeft: "20px"
+
+            }}>
                 <label htmlFor="enterprise-select" style={{ marginRight: "10px" }}>
                     Select Enterprise:
                 </label>
@@ -151,7 +183,12 @@ const EnterprisePanel = () => {
                         setIsEditing(!!enterprise);
                     }}
                     value={selectedEnterprise?.enterprise_code || ""}
-                    style={{ padding: "10px", width: "300px" }}
+                    style={{
+                        padding: "15px",  // Увеличенные отступы внутри
+                        width: "330px",    // Увеличенная ширина
+                        height: "50px",    // Увеличенная высота
+                        fontSize: "19px",   // Увеличенный размер шрифта
+                    }}
                 >
                     <option value="">-- Select an Enterprise --</option>
                     {enterprises.map((enterprise) => (
@@ -160,7 +197,31 @@ const EnterprisePanel = () => {
                         </option>
                     ))}
                 </select>
+
             </div>
+            {!selectedEnterprise && (
+                <div style={{
+                    marginTop: "15px",
+                    marginLeft: "15px",
+                    padding: "10px",
+                    maxWidth: "400px"
+                }}>
+                    <h3 style={{ marginBottom: "10px", fontSize: "18px" }}>Enterprises with Data Format</h3>
+                    <ul style={{ listStyleType: "none", padding: 0 }}>
+                        {filteredEnterprises.map(ent => (
+                            <li key={ent.enterprise_code} style={{
+                                padding: "8px",
+                                borderBottom: "1px solid #ccc",
+                                fontSize: "16px"
+                            }}>
+                                <strong>{ent.enterprise_name}</strong> <span style={{ color: "#555" }}>({ent.enterprise_code})</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+
             {selectedEnterprise && (
                 <Form
                     fields={fields}
@@ -178,12 +239,14 @@ const EnterprisePanel = () => {
                         setOriginalCode(null);
                         setIsEditing(false);
                     }}
-                    style={{ padding: "10px 20px", marginTop: "20px", display: "block", margin: "0 auto" }}
+                    style={{ padding: "10px 20px", marginTop: "20px", border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: '#ffc107', display: "block", margin: "0 auto" }}
                 >
+
                     Add New
                 </button>
-            )}
-        </div>
+            )
+            }
+        </div >
     );
 };
 

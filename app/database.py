@@ -1,28 +1,27 @@
 import os
-
-# from sqlalchemy import create_engine
-
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql import text
 from .models import Base, DeveloperSettings, InventoryData, InventoryStock, ReservedItems, DataFormat, EnterpriseSettings, ClientNotifications, MappingBranch
 from contextlib import asynccontextmanager
 import logging
 
-# Читаем DATABASE_URL из переменных окружения
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Проверяем, что переменная окружения установлена
 if not DATABASE_URL:
     raise ValueError("Переменная окружения DATABASE_URL не установлена")
 
+
+
 # Создаем асинхронный движок для подключения к базе данных
-# engine = create_async_engine(DATABASE_URL, echo=True)
 engine = create_async_engine(
     DATABASE_URL,
-    pool_size=10,  # Устанавливаем размер пула соединений
-    max_overflow=5,  # Сколько дополнительных соединений можно открыть
-    pool_recycle=600,  # Обновление соединений каждые 10 минут
-    pool_pre_ping=True  # Проверка соединения перед запросом
+    pool_size=5,  # Уменьшаем количество одновременных соединений
+    max_overflow=2,  # Дополнительные соединения при нагрузке
+    pool_recycle=300,  # Закрываем соединение каждые 5 минут
+    pool_timeout=30,  # Ожидание свободного соединения – 30 сек
+    pool_pre_ping=True  # Проверяем соединение перед использованием
 )
 # Создаем SessionLocal для работы с асинхронными сессиями
 AsyncSessionLocal = sessionmaker(
@@ -38,15 +37,26 @@ async def create_tables():
 
 @asynccontextmanager
 async def get_async_db():
+    """Контекстный менеджер для управления асинхронной сессией."""
     async_session = AsyncSessionLocal()
     try:
-        logging.info("Попытка создания сессии базы данных")
-        yield async_session  # Передаем сессию в использование
-        await async_session.commit()  # Фиксируем транзакции после работы
+        logging.info("📡 Создание сессии базы данных")
+
+        # Проверяем соединение перед работой
+        try:
+            await async_session.execute(text("SELECT 1"))
+        except Exception:
+            logging.warning("🔴 Соединение с БД потеряно, пересоздаём сессию...")
+            await async_session.rollback()
+            yield async_session
+            return
+
+        yield async_session  # Позволяет использовать `async with get_async_db() as db:`
+        await async_session.commit()
     except Exception as e:
-        await async_session.rollback()  # Откатываем транзакцию при ошибке
-        logging.error(f"Ошибка при работе с базой данных: {e}")
-        raise  # Пробрасываем ошибку дальше
+        await async_session.rollback()  # Откат зависших транзакций
+        logging.error(f"🔥 Ошибка в сессии БД: {e}")
+        raise
     finally:
-        await async_session.close()  # Закрываем сессию явно
-        logging.info("Сессия базы данных закрыта")
+        await async_session.close()
+        logging.info("✅ Сессия базы данных закрыта")

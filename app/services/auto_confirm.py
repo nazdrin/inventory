@@ -54,7 +54,6 @@ async def fetch_orders(session: AsyncSession, branch, enterprise_code):
                     orders.extend(data)
                 else:
                     print(f"Ошибка при получении заказов для branch {branch}: {response.status}")
-    
     return orders
 
 # 2.5 Обработка заказов
@@ -64,10 +63,8 @@ async def process_orders(session: AsyncSession, orders):
     for order in orders:
         branch_id = order["branchID"]
         order_id = order["id"]
-
         items_status = []
         order_rows = []
-
         for item in order["rows"]:
             goods_code = item["goodsCode"]
             qty_requested = item["qty"]  # Теперь qty сохраняется
@@ -77,8 +74,8 @@ async def process_orders(session: AsyncSession, orders):
                     (InventoryStock.branch == branch_id) & (InventoryStock.code == goods_code)
                 ).order_by(InventoryStock.updated_at.desc())
             )
-            stock_entry = stock_result.scalars().first()
 
+            stock_entry = stock_result.scalars().first()
             if not stock_entry or stock_entry.qty == 0:
                 items_status.append("not_available")
                 order_rows.append({
@@ -119,7 +116,6 @@ async def process_orders(session: AsyncSession, orders):
             "branchID": branch_id,
             "rows": order_rows  # Теперь qty остается в заказе
         })
-
     return processed_orders
 
 async def send_order_results(session: AsyncSession, processed_orders, auth_header):

@@ -50,7 +50,6 @@ async def branch_handler(message: Message):
             await message.answer("❌ Помилка! Будь ласка, введіть коректний серійний номер.")
 
 async def notify_user(branch: str, codes: list):
-        
     async with get_async_db() as session:
         branch_entry = await session.get(MappingBranch, branch)
         

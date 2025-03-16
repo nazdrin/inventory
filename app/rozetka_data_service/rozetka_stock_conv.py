@@ -13,8 +13,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# XML_FEED_URL = "https://beauty-prof.com/price/rozetka.xml"
-
 logging.basicConfig(level=logging.INFO)
 async def fetch_feed_url(enterprise_code):
     """Получение URL фида из таблицы EnterpriseSettings по enterprise_code."""

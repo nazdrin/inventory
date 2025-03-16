@@ -1,32 +1,23 @@
+import os
+import json
 from fastapi import APIRouter, HTTPException, Depends,UploadFile, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app import crud, schemas, database
-from app.schemas import EnterpriseSettingsSchema
-from app.schemas import DeveloperSettingsSchema
-from app.schemas import DataFormatSchema
+from app.schemas import EnterpriseSettingsSchema, DeveloperSettingsSchema, DataFormatSchema, MappingBranchSchema
 from fastapi.encoders import jsonable_encoder
-from app.database import DeveloperSettings, EnterpriseSettings, DataFormat
+from app.database import DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
 from sqlalchemy.future import select
-from app.services.database_service import process_database_service
 from fastapi import APIRouter, HTTPException, Request
+from app.services.database_service import process_database_service
 from app.services.notification_service import send_notification
-import json
-import os
 from app.unipro_data_service.unipro_conv import unipro_convert
 import tempfile
 from dotenv import load_dotenv
+from typing import List
+
 
 # Загружаем переменные окружения
 load_dotenv()
-router = APIRouter()
-
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from app.database import MappingBranch
-from app.schemas import MappingBranchSchema
-from app.database import AsyncSessionLocal
-
 router = APIRouter()
 
 # Dependency для получения сессии БД
@@ -34,14 +25,15 @@ async def get_db():
     async with AsyncSessionLocal() as db:
         yield db
 
+    # ----------------------------
+    # Эндпоинт для создания записи в таблице mapping_branch.
+    # ----------------------------
+
 @router.post("/mapping_branch/")
 async def create_mapping_branch(
     mapping_data: MappingBranchSchema, 
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Эндпоинт для создания записи в таблице mapping_branch.
-    """
     # Проверяем, существует ли запись с таким branch
     existing_entry = await db.execute(select(MappingBranch).filter(MappingBranch.branch == mapping_data.branch))
     if existing_entry.scalars().first():
@@ -54,7 +46,6 @@ async def create_mapping_branch(
     await db.refresh(new_entry)
 
     return {"detail": "Mapping branch created successfully", "data": new_entry}
-
 
 @router.post("/developer_panel/unipro/data")
 async def receive_unipro_data(request: Request, body: dict):
@@ -97,9 +88,7 @@ async def login_user(credentials: schemas.LoginSchema, db: AsyncSession = Depend
         DeveloperSettings.developer_login == credentials.developer_login,
         DeveloperSettings.developer_password == credentials.developer_password,
     ))
-
     user = result.scalars().first()
-
     if not user:
         raise HTTPException(status_code=401, detail="Invalid login or password.")
 
@@ -108,12 +97,6 @@ async def login_user(credentials: schemas.LoginSchema, db: AsyncSession = Depend
 # ----------------------------
 # Эндпоинты для управления настройками разработчиков
 # ----------------------------
-@router.get("/developer/settings/")
-async def get_all_developer_settings(db: AsyncSession = Depends(get_db)):
-    """Получить глобальные настройки всех разработчиков."""
-    result = await db.execute(select(DeveloperSettings))
-    developers = result.scalars().all()
-    return [{"developer_login": dev.developer_login, "error_email_developer": dev.error_email_developer} for dev in developers]
 
 @router.get("/developer/settings/{developer_login}")
 async def get_developer_settings_by_login(developer_login: str, db: AsyncSession = Depends(get_db)):
@@ -140,14 +123,13 @@ async def update_developer_settings(
 
     for key, value in settings.dict().items():
         setattr(user, key, value)
-    
-    # Коммит изменений
     await db.commit()
     return user
 
 # ----------------------------
 # Эндпоинты для управления настройками предприятий
 # ----------------------------
+
 @router.get("/enterprise/settings/")
 async def get_all_enterprises(db: AsyncSession = Depends(get_db)):
     """
@@ -188,7 +170,6 @@ async def create_enterprise(settings: EnterpriseSettingsSchema, db: AsyncSession
     db.add(new_enterprise)
     await db.commit()
     await db.refresh(new_enterprise)
-    
     return new_enterprise
 
 @router.put("/enterprise/settings/{enterprise_code}")
@@ -211,7 +192,6 @@ async def update_enterprise_settings(
 
     await db.commit()
     await db.refresh(enterprise)
-
     return {"detail": "Enterprise settings updated successfully", "data": enterprise}
 
 # ----------------------------
@@ -228,7 +208,6 @@ async def add_data_format(data_format: schemas.DataFormatSchema, db: AsyncSessio
     
     if existing:
         raise HTTPException(status_code=400, detail="Data format already exists.")
-    
     new_format = DataFormat(format_name=data_format.format_name)
     db.add(new_format)
     await db.commit()
@@ -258,6 +237,7 @@ async def delete_data_format(format_id: int, db: AsyncSession = Depends(get_db))
     await db.delete(format_to_delete)
     await db.commit()
     return {"detail": "Data format deleted successfully"}
+
 @router.post("/catalog/")
 async def upload_catalog(file: UploadFile, enterprise_code: str, db: AsyncSession = Depends(get_db)):
     try:
@@ -291,5 +271,4 @@ async def upload_stock(file: UploadFile, enterprise_code: str, db: AsyncSession 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 

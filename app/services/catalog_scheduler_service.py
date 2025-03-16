@@ -73,7 +73,7 @@ async def get_enterprises_for_catalog(db: AsyncSession):
             enterprise for enterprise in enterprises
             if enterprise.catalog_upload_frequency and enterprise.catalog_upload_frequency > 0 and
             ((enterprise.last_catalog_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.catalog_upload_frequency))
-             if enterprise.last_catalog_upload else now) <= now
+            if enterprise.last_catalog_upload else now) <= now
         ]
     except Exception as e:
         await notify_error(f"Ошибка при обработке предприятий в планировщике каталога: {str(e)}")
@@ -108,7 +108,9 @@ async def schedule_catalog_tasks():
 
                 await asyncio.sleep(interval * 60)
     except Exception as main_error:
-        await notify_error(f"Критический сбой запуска расписания для каталога {str(main_error)}")
-
+        await notify_error(f"🔥 Критическая ошибка в планировщике: {str(main_error)}")
+    finally:
+        await notify_error("🔴 Сервис catalog_scheduler неожиданно остановлен.", "catalog_scheduler")
+        
 if __name__ == "__main__":
     asyncio.run(schedule_catalog_tasks())
