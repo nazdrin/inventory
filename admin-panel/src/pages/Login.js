@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
 import { API_BASE_URL } from "../config"; // Импортируем базовый URL из config.js
 
 const Login = ({ setAuthUser }) => {
@@ -13,31 +14,38 @@ const Login = ({ setAuthUser }) => {
         console.log("Отправка данных на сервер:", { developer_login: login, developer_password: password });
 
         try {
-            const response = await fetch(`${API_BASE_URL}/login/`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ developer_login: login, developer_password: password }),
+            const response = await axios.post(`${API_BASE_URL}/login/`, {
+                developer_login: login,
+                developer_password: password
             });
 
-            console.log("Ответ сервера:", response);
-            if (response.ok) {
-                const data = await response.json();
-                console.log("Успешный вход:", data);
-                setAuthUser(data);
-                navigate("/developer");
-            } else {
-                const errorData = await response.json();
-                console.error("Ошибка входа:", errorData);
-                setError(errorData.detail || "Неверный логин или пароль.");
-            }
+            console.log("Успешный вход:", response.data);
+
+            // Сохранение токена и логина в localStorage
+            localStorage.setItem("token", response.data.access_token);
+            localStorage.setItem("user_login", login); // 🔹 Теперь логин сохраняется!
+
+            // Устанавливаем пользователя в состояние
+            setAuthUser(response.data);
+
+            // Перенаправление после входа
+            navigate("/developer");
+
         } catch (err) {
             console.error("Ошибка запроса:", err);
-            setError("Произошла ошибка. Попробуйте позже.");
+
+            // Обрабатываем ошибки
+            if (err.response) {
+                if (err.response.status === 401) {
+                    setError("Неверный логин или пароль.");
+                } else {
+                    setError(err.response.data.detail || "Произошла ошибка. Попробуйте позже.");
+                }
+            } else {
+                setError("Не удалось подключиться к серверу.");
+            }
         }
     };
-
     return (
         <div style={{
             display: 'flex',
