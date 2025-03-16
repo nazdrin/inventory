@@ -31,3 +31,4 @@ alembic.ini
 temp/
 /temp
 product.json
+temp/*.json

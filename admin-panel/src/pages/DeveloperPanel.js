@@ -6,47 +6,85 @@ const DeveloperPanel = ({ authUser }) => {
     const [currentSetting, setCurrentSetting] = useState(null);
     const [editing, setEditing] = useState(false);
     const [error, setError] = useState(null);
-    const [dataFormats, setDataFormats] = useState([]); // Состояние для форматов данных
+    const [dataFormats, setDataFormats] = useState([]);
 
     useEffect(() => {
         const fetchSettings = async () => {
             try {
-                const data = await developerApi.getSetting(authUser.developer_login);
-                setCurrentSetting(data);
+                console.log(`📌 Запрашиваем настройки для: ${authUser.developer_login}`);
+                const data = await developerApi.getSetting();
+
+                // ✅ Заполняем поля по умолчанию, если они отсутствуют (соответствие схеме)
+                const defaultSettings = {
+                    developer_login: data.developer_login || "",
+                    developer_password: data.developer_password || "",
+                    endpoint_catalog: data.endpoint_catalog || "",
+                    endpoint_stock: data.endpoint_stock || "",
+                    endpoint_orders: data.endpoint_orders || "",
+                    telegram_token_developer: data.telegram_token_developer || "",
+                    message_orders: Boolean(data.message_orders),  // ✅ Приведение к bool
+                    morion: data.morion || "",
+                    tabletki: data.tabletki || "",
+                    barcode: data.barcode || "",
+                    optima: data.optima || "",
+                    badm: data.badm || "",
+                    venta: data.venta || "",
+                };
+
+                console.log("✅ Полученные настройки:", defaultSettings);
+                setCurrentSetting(defaultSettings);
             } catch (err) {
+                console.error("❌ Ошибка загрузки настроек:", err);
                 setError("Failed to load settings.");
             }
         };
 
         const fetchDataFormats = async () => {
             try {
+                console.log("📌 Запрашиваем форматы данных...");
                 const formats = await developerApi.getDataFormats();
+                console.log("✅ Получены форматы данных:", formats);
                 setDataFormats(formats);
             } catch (err) {
-                console.error("Failed to fetch data formats:", err);
+                console.error("❌ Ошибка загрузки форматов данных:", err);
             }
         };
 
         fetchSettings();
         fetchDataFormats();
-    }, [authUser]);
+    }, []);
+
+    useEffect(() => {
+        console.log("📌 Обновление currentSetting:", currentSetting);
+    }, [currentSetting]);
 
     const handleSave = async () => {
+        console.log("🔹 Перед сохранением, данные:", currentSetting);
+
+        if (!currentSetting || Object.keys(currentSetting).length === 0) {
+            console.error("❌ Ошибка: currentSetting пустой!");
+            setError("Невозможно сохранить пустые настройки.");
+            return;
+        }
+
         try {
-            await developerApi.updateSetting(authUser.developer_login, currentSetting);
+            await developerApi.updateSetting(currentSetting);
+            console.log("✅ Настройки успешно сохранены!");
             setEditing(false);
         } catch (err) {
+            console.error("❌ Ошибка при сохранении настроек:", err);
             setError("Failed to save the settings. Please check the input and try again.");
         }
     };
 
     const handleAddDataFormat = async (newFormat) => {
         try {
+            console.log("📌 Добавляем новый формат:", newFormat);
             await developerApi.addDataFormat(newFormat);
-            const formats = await developerApi.getDataFormats(); // Обновляем список форматов
+            const formats = await developerApi.getDataFormats();
             setDataFormats(formats);
         } catch (err) {
-            console.error("Failed to add data format:", err);
+            console.error("❌ Ошибка добавления формата:", err);
         }
     };
 
@@ -56,8 +94,8 @@ const DeveloperPanel = ({ authUser }) => {
         { name: "endpoint_catalog", label: "Catalog Endpoint" },
         { name: "endpoint_stock", label: "Stock Endpoint" },
         { name: "endpoint_orders", label: "Orders Endpoint" },
-        { name: "telegram_token_developer", label: "Endpoint Dntrade" },
-        { name: "message_orders", label: "Статус отравки заказов", type: "checkbox" },
+        { name: "telegram_token_developer", label: "Telegram Token" },
+        { name: "message_orders", label: "Статус отправки заказов", type: "checkbox" },
         { name: "morion", label: "Morion Code" },
         { name: "tabletki", label: "Tabletki Code" },
         { name: "barcode", label: "Barcode" },
@@ -70,7 +108,6 @@ const DeveloperPanel = ({ authUser }) => {
         <div style={{
             display: "flex", flexDirection: "column", paddingBottom: "30px", height: "100vh"
         }}>
-            {/* Fixed header with buttons */}
             <div
                 style={{
                     position: "sticky",
@@ -118,20 +155,15 @@ const DeveloperPanel = ({ authUser }) => {
                 </div>
             </div>
 
-            {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", justifyContent: "center" }}>
                 <div style={{ maxWidth: "600px", width: "100%", paddingBottom: "50px" }}>
                     {error && <p style={{ color: "red" }}>{error}</p>}
                     {currentSetting && (
                         <Form
-                            fields={developerFields.map((field) => ({
-                                ...field,
-                                style: { maxWidth: "550px", width: "100%" }, // Ограничиваем ширину полей
-                            }))}
-                            values={currentSetting}
+                            fields={developerFields}
+                            values={currentSetting || {}}
                             onChange={setCurrentSetting}
                             onSubmit={handleSave}
-                        // Убрали кнопки внутри формы
                         />
                     )}
                     <div>
@@ -144,7 +176,7 @@ const DeveloperPanel = ({ authUser }) => {
                         <form
                             onSubmit={(e) => {
                                 e.preventDefault();
-                                const newFormat = e.target.newFormat.value;
+                                const newFormat = e.target.newFormat.value.trim();
                                 if (newFormat) {
                                     handleAddDataFormat({ format_name: newFormat });
                                     e.target.reset();
@@ -152,41 +184,9 @@ const DeveloperPanel = ({ authUser }) => {
                             }}
                             style={{ display: "flex", alignItems: "center", marginTop: "20px" }}
                         >
-                            <label
-                                htmlFor="newFormat"
-                                style={{ marginRight: "10px", fontSize: "16px", fontWeight: "bold" }}
-                            >
-                                Add New Format:
-                            </label>
-                            <input
-                                id="newFormat"
-                                name="newFormat"
-                                type="text"
-                                placeholder="Enter format name"
-                                style={{
-                                    maxWidth: "500px",
-                                    padding: "10px",
-                                    marginRight: "10px",
-                                    fontSize: "16px",
-                                }}
-                            />
-                            <button
-                                type="submit"
-                                style={{
-                                    padding: "10px 20px",
-                                    fontSize: "16px",
-                                    backgroundColor: "#007BFF",
-                                    border: "none",
-                                    borderRadius: "5px",
-                                    cursor: "pointer",
-                                    backgroundColor: '#ffc107',
-                                    border: 'none',
-                                    borderRadius: '5px',
-                                    fontWeight: 'bold'
-                                }}
-                            >
-                                Add
-                            </button>
+                            <label htmlFor="newFormat">Add New Format:</label>
+                            <input id="newFormat" name="newFormat" type="text" />
+                            <button type="submit">Add</button>
                         </form>
                     </div>
                 </div>

@@ -1,62 +1,119 @@
+import axios from "axios";
 import { API_BASE_URL } from "../config"; // Импортируем базовый URL из config.js
 
 const API_URL = `${API_BASE_URL}/developer/settings`;
 const DATA_FORMATS_URL = `${API_BASE_URL}/data_formats`;
 
-
-// Fetch developer settings by login
-const getSetting = async (login) => {
-    const response = await fetch(`${API_URL}/${login}`);
-    if (!response.ok) {
-        throw new Error("Failed to fetch settings.");
+// 🔹 Функция для получения токена
+const getAuthToken = () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+        console.error("Ошибка: Токен отсутствует");
+        window.location.href = "/login";
+        return null;
     }
-    return response.json();
+    return token;
 };
 
-// Update developer settings by login
-const updateSetting = async (login, data) => {
-    const response = await fetch(`${API_URL}/${login}`, {
-        method: "PUT",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to update developer setting with login: ${login}.`);
-    }
-    return response.json();
+// 🔹 Конфиг для axios с заголовком Authorization
+const getAuthHeaders = () => {
+    const token = getAuthToken();
+    return token
+        ? {
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+            },
+        }
+        : {};
 };
 
-// Fetch list of data formats
+// 🔹 Получение настроек разработчика по логину
+const getSetting = async () => {
+    const login = localStorage.getItem("user_login"); // Берем логин из localStorage
+    if (!login) {
+        console.error("Ошибка: Логин пользователя не найден в localStorage");
+        window.location.href = "/login";
+        return null;
+    }
+
+    try {
+        console.log(`📌 Запрашиваем настройки для: ${login}`);
+        const response = await axios.get(`${API_URL}/${login}`, getAuthHeaders());
+        console.log("✅ Полученные настройки:", response.data);
+        return response.data;
+    } catch (error) {
+        console.error("❌ Ошибка получения настроек:", error);
+        throw error;
+    }
+};
+
+// 🔹 Обновление настроек разработчика
+const updateSetting = async (data) => {
+    const login = localStorage.getItem("user_login");
+    if (!login) {
+        console.error("Ошибка: Логин отсутствует");
+        window.location.href = "/login";
+        return;
+    }
+
+    if (!data || Object.keys(data).length === 0) {
+        console.error("🚨 Ошибка: Передаваемые данные пустые!", data);
+        return;
+    }
+
+    console.log("📡 Отправка данных на сервер:", JSON.stringify(data, null, 2));
+
+    try {
+        const response = await axios.put(`${API_URL}/${login}`, data, getAuthHeaders());
+        console.log("✅ Ответ сервера:", response.data);
+        return response.data;
+    } catch (error) {
+        console.error(`❌ Ошибка при обновлении настроек для ${login}:`, error);
+        throw error;
+    }
+};
+
+// 🔹 Получение списка всех форматов данных
 const getDataFormats = async () => {
-    const response = await fetch(DATA_FORMATS_URL, {
-        method: "GET",
-    });
-    if (!response.ok) {
-        throw new Error("Failed to fetch data formats.");
+    try {
+        console.log("📌 Запрашиваем форматы данных...");
+        const response = await axios.get(DATA_FORMATS_URL, getAuthHeaders());
+        console.log("✅ Получены форматы данных:", response.data);
+        return response.data;
+    } catch (error) {
+        console.error("❌ Ошибка загрузки форматов данных:", error);
+        throw error;
     }
-    return response.json();
 };
 
+// 🔹 Добавление нового формата данных
 const addDataFormat = async (newFormat) => {
     const data = typeof newFormat === "string" ? { format_name: newFormat } : newFormat;
-    const response = await fetch(DATA_FORMATS_URL, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data), // Теперь data всегда в правильном формате
-    });
-    if (!response.ok) {
-        throw new Error("Failed to add data format.");
+    try {
+        console.log("📌 Добавляем новый формат:", JSON.stringify(data, null, 2));
+        const response = await axios.post(DATA_FORMATS_URL, data, getAuthHeaders());
+        console.log("✅ Формат добавлен:", response.data);
+        return response.data;
+    } catch (error) {
+        console.error("❌ Ошибка добавления формата данных:", error);
+        throw error;
     }
-    return response.json();
 };
 
+// 🔹 Выход из системы (удаление токена и логина)
+const logout = () => {
+    console.warn("🚪 Выход из системы...");
+    localStorage.removeItem("token");
+    localStorage.removeItem("user_login");
+    window.location.href = "/login"; // Перенаправляем на страницу логина
+};
+
+// 🔹 Экспортируем API-функции
 export default {
     getSetting,
     updateSetting,
-    getDataFormats, // Добавляем функцию getDataFormats
-    addDataFormat,  // Добавляем функцию addDataFormat
+    getDataFormats,
+    addDataFormat,
+    logout
 };
