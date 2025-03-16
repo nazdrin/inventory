@@ -146,6 +146,3 @@ async def run_service(enterprise_code):
         return  # Ошибка сохранения JSON
 
     await process_database_service(json_file_path, file_type, enterprise_code)
-# if __name__ == "__main__":
-    # TEST_ENTERPRISE_CODE = "2"
-    # asyncio.run(run_service(TEST_ENTERPRISE_CODE))

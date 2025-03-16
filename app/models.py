@@ -25,7 +25,6 @@ class InventoryData(Base, TimestampMixin):
     name = Column(String, nullable=False)
     producer = Column(String, nullable=False)
     vat = Column(Float, nullable=False)
-
     morion = Column(String, nullable=True)
     tabletki = Column(String, nullable=True)
     barcode = Column(String, nullable=True)
@@ -33,9 +32,6 @@ class InventoryData(Base, TimestampMixin):
     badm = Column(String, nullable=True)
     venta = Column(String, nullable=True)
     enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
-
-    # branch_id = Column(String, nullable=False)
-
 
 # Таблица остатков
 class InventoryStock(Base, TimestampMixin):
@@ -46,30 +42,24 @@ class InventoryStock(Base, TimestampMixin):
     price = Column(Float, nullable=False)
     qty = Column(Integer, nullable=False)
     price_reserve = Column(Float, nullable=True)
-    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)  # Добавлено
-
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
 
 # Таблица забронированных товаров
 class ReservedItems(Base):
     __tablename__ = "reserved_items"
-
     branch = Column(String, primary_key=True)
     code = Column(String, primary_key=True)
     qty = Column(Integer, nullable=False)
 
-
 # Таблица форматов данных
 class DataFormat(Base):
     __tablename__ = "data_formats"
-
     id = Column(Integer, primary_key=True, index=True)
     format_name = Column(String, unique=True, nullable=False)
-
 
 # Таблица настроек предприятий
 class EnterpriseSettings(Base):
     __tablename__ = "enterprise_settings"
-
     enterprise_code = Column(String, primary_key=True)
     enterprise_name = Column(String, nullable=False)
     branch_id = Column(String, nullable=False)
@@ -88,26 +78,25 @@ class EnterpriseSettings(Base):
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
     stock_correction = Column(Boolean, default=False)
+
 # Сопоставление аптек 
 class MappingBranch(Base):
     __tablename__ = "mapping_branch"
     enterprise_code = Column(String, nullable=False)
     branch = Column(String, primary_key=True)
     store_id = Column(String, nullable=False)
-    # id_telegram = Column(Integer, nullable=True)
     id_telegram = Column(ARRAY(String), nullable=True)
+
 # Таблица глобальных настроек разработчика
 class DeveloperSettings(Base):
     __tablename__ = "developer_settings"
-
     developer_login = Column(String, primary_key=True)
     developer_password = Column(String, nullable=False)
     endpoint_catalog = Column(String, nullable=True)
     endpoint_stock = Column(String, nullable=True)
     endpoint_orders = Column(String, nullable=True)
     telegram_token_developer = Column(String, nullable=True)
-    catalog_data_retention = Column(Integer, nullable=True)
-    stock_data_retention = Column(Integer, nullable=True)
+    message_orders = Column(Boolean, nullable=True)
     morion = Column(String, nullable=True)
     tabletki = Column(String, nullable=True)
     barcode = Column(String, nullable=True)
@@ -118,7 +107,6 @@ class DeveloperSettings(Base):
 # Таблица уведомлений
 class ClientNotifications(Base, TimestampMixin):
     __tablename__ = "client_notifications"
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     enterprise_code = Column(String, nullable=False)
     message = Column(String, nullable=False)

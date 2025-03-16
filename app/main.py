@@ -8,6 +8,7 @@ from app.routes import router as developer_router
 # Инициализация FastAPI приложения
 app = FastAPI()
 app.include_router(developer_router)
+
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
@@ -17,47 +18,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Асинхронная инициализация таблиц
-# @app.on_event("startup")
-# async def startup():
-#     async with engine.begin() as conn:
-#         # Создаем все таблицы при старте приложения
-#         await conn.run_sync(Base.metadata.create_all)
-
 @app.on_event("startup")
 async def startup():
     await create_tables()
 
-
-# ? Dependency для работы с базой данных
-# def get_db():
-    # db = AsyncSessionLocal()
-    # try:
-        # yield db
-    # finally:
-        # db.close()
-
 # Подключение маршрутов
 app.include_router(developer_router, prefix="/developer_panel", tags=["Developer Panel"])
-
-
 
 # Приветственный эндпоинт
 @app.get("/")
 def root():
     return {"message": "Welcome to Inventory Service"}
-
-# !Авторизация
-# @app.post("/developer_panel/login/")
-# def login_user(credentials: LoginSchema, db: AsyncSession = Depends(get_db)):
-#     user = db.query(DeveloperSettings).filter(
-#         DeveloperSettings.developer_login == credentials.developer_login,
-#         DeveloperSettings.developer_password == credentials.developer_password,
-#     ).first()
-#     if not user:
-#         raise HTTPException(status_code=401, detail="Invalid login or password.")
-#     return {
-#         "developer_login": user.developer_login,
-#         "error_email_developer": user.error_email_developer,
-#         "token": "dummy_token",  # Временное значение, заменить при реализации авторизации
-#     }

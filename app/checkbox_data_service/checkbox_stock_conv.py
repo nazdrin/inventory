@@ -55,10 +55,11 @@ def transform_stock(products, branch):
     return [{
         "branch": branch,
         "code": product.get("id"),
-        "price": product.get("price"),
-        "qty": product.get("count"),
-        "price_reserve": product.get("price")
+        "price": product.get("price", 0) / 100,  # Деление цены на 100
+        "qty": product.get("count", 0) / 1000,  # Деление количества на 1000
+        "price_reserve": product.get("price", 0) / 100  # Аналогично price
     } for product in products]
+
 
 def save_to_json(data, enterprise_code, file_type):
     """Сохранение данных в JSON-файл."""
