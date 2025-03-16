@@ -1,13 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import Base, engine, AsyncSessionLocal, DeveloperSettings, create_tables
-from app.schemas import LoginSchema
 from app.routes import router as developer_router
+from app.database import create_tables
 
 # Инициализация FastAPI приложения
 app = FastAPI()
-app.include_router(developer_router)
 
 # Настройка CORS
 app.add_middleware(
@@ -22,10 +19,17 @@ app.add_middleware(
 async def startup():
     await create_tables()
 
-# Подключение маршрутов
-app.include_router(developer_router, prefix="/developer_panel", tags=["Developer Panel"])
+# ❌ Убираем prefix, потому что он уже задан в `routes.py`
+app.include_router(developer_router, tags=["Developer Panel"])
 
 # Приветственный эндпоинт
 @app.get("/")
 def root():
     return {"message": "Welcome to Inventory Service"}
+
+# Логирование всех маршрутов (для отладки)
+@app.on_event("startup")
+async def log_routes():
+    print("🔹 Зарегистрированные маршруты:")
+    for route in app.routes:
+        print(f"{route.path} - {route.methods}")
