@@ -45,23 +45,23 @@ def parse_xml(xml_string):
     offers = []
     
     for offer in root.findall(".//offer"):
-        barcode_param = ""
-        for param in offer.findall("param"):
-            if param.attrib.get("name", "").lower() == "barcode":
-                barcode_param = param.text.strip() if param.text else ""
-                break
-
+        code = offer.findtext("code")
+        name = offer.findtext("name")
+        barcode = offer.findtext("barcode", "")
+        producer = offer.findtext("brand", "N/A")
+        
+        # Пропускаем товары без кода или названия
+        if not code or not name:
+            continue
+        
         offer_data = {
-            "code": offer.attrib.get("id"),
-            "name": offer.findtext("name"),
+            "code": code,
+            "name": name.strip() if name else "no_name",
             "vat": DEFAULT_VAT,
-            "producer": offer.findtext("vendor", "N/A"),
-            "barcode": barcode_param,
+            "producer": producer.strip() if producer else "N/A",
+            "barcode": barcode.strip() if barcode else ""
         }
         
-        # Если name пустое, заменить его на "no_name"
-        if not offer_data["name"]:
-            offer_data["name"] = "no_name"
         offers.append(offer_data)
     
     return offers
