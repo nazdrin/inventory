@@ -34,6 +34,12 @@ def download_xml(url):
     else:
         raise Exception(f"Ошибка загрузки: {response.status_code}")
 
+import xml.etree.ElementTree as ET
+import os
+import tempfile
+import json
+import logging
+
 def parse_xml(xml_string, enterprise_code):
     """Разбор XML и извлечение данных о наличии и ценах."""
     root = ET.fromstring(xml_string)
@@ -42,13 +48,23 @@ def parse_xml(xml_string, enterprise_code):
     debug_file_path = os.path.join(temp_dir, f"{enterprise_code}_debug_stock_data.json")
     
     for offer in root.findall(".//offer"):
-        price = offer.findtext("price", "0")
-        stock_quantity = offer.findtext("quantity_in_stock", "0")
+        code = offer.findtext("code")
+        if not code:
+            continue  # Пропускаем товары без кода
+        
+        # Логика выбора цены
+        price = offer.findtext("newprice") or offer.findtext("price", "0")
+        price = float(price) if price else 0.0
+        
+        # Количество на складе
+        stock_quantity = offer.findtext("quantity", "0")
+        stock_quantity = int(stock_quantity) if stock_quantity.isdigit() else 0
+        
         item_data = {
-            "code": offer.attrib.get("id"),
-            "price": float(price),
-            "qty": int(stock_quantity),
-            "price_reserve": float(price),
+            "code": code,
+            "price": price,
+            "qty": stock_quantity,
+            "price_reserve": price,  # Используем ту же логику, что и для price
         }
         stock_data.append(item_data)
     
