@@ -15,6 +15,7 @@ KIEV_TZ = pytz.timezone("Europe/Kiev")
 from app.dntrade_data_service.stock_fetch_convert import run_service
 from app.checkbox_data_service.checkbox_stock_conv import run_service as run_checkbox
 from app.rozetka_data_service.rozetka_stock_conv import run_service as run_rozetka
+from app.dsn_data_service.dsn_stock_conv import run_service as run_dsn
 from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
@@ -31,6 +32,7 @@ PROCESSORS = {
     "GoogleDrive": extract_stock_from_google_drive,
     "Checkbox": run_checkbox,
     "Rozetka": run_rozetka,
+    "Dsn": run_dsn,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):

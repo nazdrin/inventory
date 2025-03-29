@@ -33,7 +33,6 @@ def download_xml(url):
         return response.text  # Возвращаем XML как строку
     else:
         raise Exception(f"Ошибка загрузки: {response.status_code}")
-
 import xml.etree.ElementTree as ET
 import os
 import tempfile
