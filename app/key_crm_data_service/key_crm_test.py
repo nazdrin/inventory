@@ -19,7 +19,8 @@ def fetch_all_stock(api_key):
     while True:
         params = {
             "limit": LIMIT,
-            "page": page
+            "page": page,
+            "filter[details]": "true"
         }
 
         response = requests.get(API_URL, headers=headers, params=params)

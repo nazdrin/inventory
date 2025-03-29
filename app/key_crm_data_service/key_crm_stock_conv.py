@@ -46,7 +46,8 @@ def fetch_all_stock(api_key):
     while True:
         params = {
             "limit": 15,
-            "page": page
+            "page": page,
+            "filter[details]": "true"
         }
 
         response = requests.get(API_URL, headers=headers, params=params)
@@ -161,10 +162,7 @@ async def run_service(enterprise_code):
         print("Не найдены соответствия branch → store_id.")
         return
 
-    # fallback branch по enterprise_code
-    # fallback_branch = branch_mapping.get(str(enterprise_code))
     fallback_branch = await fetch_branch_by_enterprise_code(enterprise_code)
-
 
     stock_data = fetch_all_stock(api_key)
     if not stock_data:
