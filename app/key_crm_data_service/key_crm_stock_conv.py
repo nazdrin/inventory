@@ -9,10 +9,13 @@ from app.models import MappingBranch
 from app.services.database_service import process_database_service
 from sqlalchemy.future import select
 from dotenv import load_dotenv
+
 load_dotenv()
 
 API_URL = "https://openapi.keycrm.app/v1/offers/stocks"
 DEFAULT_FILE_TYPE = "stock"
+
+logging.basicConfig(level=logging.INFO)
 
 
 def log_progress(page, count):
@@ -31,7 +34,7 @@ async def fetch_enterprise_settings(enterprise_code):
 async def fetch_branch_mapping():
     async with get_async_db() as session:
         result = await session.execute(select(MappingBranch))
-        return {str(row.store_id): str(row.branch) for row in result.scalars().all()}
+        return result.scalars().all()  # возвращаем список объектов
 
 
 def fetch_all_stock(api_key):
@@ -73,59 +76,58 @@ def fetch_all_stock(api_key):
     return all_items
 
 
-def transform_stock(data, branch_mapping, fallback_branch):
+def transform_stock(raw_input, branch_mapping: dict, enterprise_code: str) -> list:
+    """
+    Универсальный парсер остатков. Если нет соответствия (enterprise_code, store_id),
+    запись пропускается, в лог выводится предупреждение.
+    """
+    import logging
+
+    if isinstance(raw_input, dict) and "data" in raw_input:
+        data = raw_input["data"]
+    else:
+        data = raw_input
+
     result = []
+    unknown_stores_logged = set()
+
     for item in data:
         item_id = str(item.get("id"))
         price = item.get("price")
-        quantity = item.get("quantity", 0)
-        reserve = item.get("reserve", 0)
-        warehouses = item.get("warehouse")
+        warehouses = item.get("warehouse", [])
 
-        if warehouses:
-            for w in warehouses:
-                store_id = str(w.get("id"))
-                branch = branch_mapping.get(store_id)
-                if not branch:
-                    continue
+        for w in warehouses:
+            store_id = w.get("id")
+            key = (str(enterprise_code), str(store_id))
 
-                qty = w.get("quantity", 0) - w.get("reserve", 0)
-                result.append({
-                    "branch": branch,
-                    "code": item_id,
-                    "price": price,
-                    "qty": qty,
-                    "price_reserve": price
-                })
-        elif quantity is not None:
-            if fallback_branch:
-                qty = quantity - reserve
-                result.append({
-                    "branch": fallback_branch,
-                    "code": item_id,
-                    "price": price,
-                    "qty": qty,
-                    "price_reserve": price
-                })
-        else:
-            if fallback_branch:
-                result.append({
-                    "branch": fallback_branch,
-                    "code": item_id,
-                    "price": price,
-                    "qty": 0,
-                    "price_reserve": price
-                })
+            if key not in branch_mapping:
+                if key not in unknown_stores_logged:
+                    logging.warning(f"⚠️ Нет соответствия для enterprise_code={enterprise_code}, store_id={store_id} — склад будет пропущен.")
+                    unknown_stores_logged.add(key)
+                continue  # пропускаем warehouse
+
+            branch = branch_mapping[key]
+            quantity = w.get("quantity", 0)
+            reserve = w.get("reserve", 0)
+
+            try:
+                qty = int(quantity) - int(reserve)
+            except (TypeError, ValueError):
+                qty = 0
+
+            if qty < 0:
+                qty = 0
+
+            result.append({
+                "branch": branch,
+                "code": item_id,
+                "price": price,
+                "qty": qty,
+                "price_reserve": price
+            })
+
     return result
 
-
-async def fetch_branch_by_enterprise_code(enterprise_code):
-    async with get_async_db() as session:
-        result = await session.execute(
-            select(MappingBranch).where(MappingBranch.enterprise_code == enterprise_code)
-        )
-        record = result.scalars().first()
-        return str(record.branch) if record else None
 
 
 def save_to_json(data, enterprise_code, file_type):
@@ -146,7 +148,6 @@ def save_to_json(data, enterprise_code, file_type):
 
 
 async def run_service(enterprise_code):
-
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
     if not enterprise_settings:
         print("Не найдены настройки предприятия.")
@@ -157,19 +158,20 @@ async def run_service(enterprise_code):
         print("Не найден API ключ.")
         return
 
-    branch_mapping = await fetch_branch_mapping()
-    if not branch_mapping:
-        print("Не найдены соответствия branch → store_id.")
-        return
-
-    fallback_branch = await fetch_branch_by_enterprise_code(enterprise_code)
-
     stock_data = fetch_all_stock(api_key)
     if not stock_data:
         print("Данные по складам не получены.")
         return
 
-    transformed = transform_stock(stock_data, branch_mapping, fallback_branch)
+    # Загружаем mapping и строим словарь {(enterprise_code, store_id): branch}
+    mapping_rows = await fetch_branch_mapping()
+    branch_mapping = {
+        (str(row.enterprise_code), str(row.store_id)): str(row.branch)
+        for row in mapping_rows
+        if row.enterprise_code and row.store_id
+    }
+
+    transformed = transform_stock(stock_data, branch_mapping, enterprise_code)
     file_path = save_to_json(transformed, enterprise_code, DEFAULT_FILE_TYPE)
 
     if not file_path:
@@ -181,5 +183,4 @@ async def run_service(enterprise_code):
 
 if __name__ == "__main__":
     enterprise_code = "2"
-
     asyncio.run(run_service(enterprise_code))
