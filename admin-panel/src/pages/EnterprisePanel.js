@@ -91,6 +91,7 @@ const EnterprisePanel = () => {
             options: dataFormats.map((format) => ({ value: format.format_name, label: format.format_name })),
         },
         { name: "single_store", label: "Single Store (Єдиний магазин)", type: "checkbox" },
+        { name: "order_fetcher", label: "Order fetcher (Отримання замовлень)", type: "checkbox" },
         { name: "auto_confirm", label: "Автоматичне бронювання", type: "checkbox" },
         { name: "store_serial", label: "Store Serial (Серійний номер магазину)", type: "text" },
         {

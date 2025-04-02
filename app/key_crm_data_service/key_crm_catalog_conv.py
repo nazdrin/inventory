@@ -113,15 +113,15 @@ async def run_service(enterprise_code):
         print("Данные не получены.")
         return
 
-    # transformed_data = transform_products(all_products)
+    transformed_data = transform_products(all_products)
     file_type = "catalog"
-    # json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
+    json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
 
-    # if not json_file_path:
-        # print("Ошибка сохранения JSON-файла.")
-        # return
+    if not json_file_path:
+        print("Ошибка сохранения JSON-файла.")
+        return
 
-    # await process_database_service(json_file_path, file_type, enterprise_code)
+    await process_database_service(json_file_path, file_type, enterprise_code)
 
 
 if __name__ == "__main__":
