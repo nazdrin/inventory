@@ -15,12 +15,14 @@ KIEV_TZ = pytz.timezone("Europe/Kiev")
 from app.dntrade_data_service.stock_fetch_convert import run_service
 from app.checkbox_data_service.checkbox_stock_conv import run_service as run_checkbox
 from app.rozetka_data_service.rozetka_stock_conv import run_service as run_rozetka
+from app.key_crm_data_service.key_crm_stock_conv import run_service as run_key_crm
 from app.dsn_data_service.dsn_stock_conv import run_service as run_dsn
 from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 from app.services.auto_confirm import main as auto_confirm_main
+from app.services.order_fetcher import fetch_orders_for_enterprise 
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,6 +35,7 @@ PROCESSORS = {
     "Checkbox": run_checkbox,
     "Rozetka": run_rozetka,
     "Dsn": run_dsn,
+    "KeyCRM": run_key_crm
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
@@ -107,8 +110,31 @@ async def schedule_stock_tasks():
                 except Exception as e:
                     logging.error(f"❌ Ошибка в auto_confirm.py: {e}")
                     await notify_error(f"Ошибка в auto_confirm.py: {e}")
+                # 3. Получаем предприятия, где активен order_fetcher
+                logging.info("📥 Поиск предприятий с флагом order_fetcher=True...")
+                try:
+                    result = await db.execute(
+                        select(EnterpriseSettings.enterprise_code)
+                        .where(EnterpriseSettings.order_fetcher == True)
+                    )
+                    fetcher_enterprises = [row[0] for row in result.fetchall()]
 
-                # 3. Ждем 1 минуту перед следующим циклом
+                    if fetcher_enterprises:
+                        logging.info(f"🔄 Найдено {len(fetcher_enterprises)} предприятий для загрузки заказов")
+                        for enterprise_code in fetcher_enterprises:
+                            try:
+                                await fetch_orders_for_enterprise(db, enterprise_code)
+                                logging.info(f"✅ Заказы получены для {enterprise_code}")
+                            except Exception as fe:
+                                logging.error(f"❌ Ошибка при получении заказов для {enterprise_code}: {fe}")
+                                await notify_error(f"Ошибка получения заказов для {enterprise_code}: {fe}", enterprise_code)
+                    else:
+                        logging.info("📭 Предприятия с order_fetcher=True не найдены – заказов не будет загружено")
+                except Exception as ef:
+                    logging.error(f"❌ Ошибка запроса EnterpriseSettings.order_fetcher: {ef}")
+                    await notify_error(f"Ошибка получения списка предприятий для fetcher: {ef}")
+
+                # 4. Ждем 1 минуту перед следующим циклом
                 logging.info("⏳ Ожидание 1 минуты перед следующим циклом...")
                 await asyncio.sleep(interval * 60)
 
