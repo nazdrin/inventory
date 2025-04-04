@@ -6,6 +6,7 @@ from sqlalchemy.future import select
 from app.models import DeveloperSettings, EnterpriseSettings, MappingBranch
 from app.services.auto_confirm import process_orders
 from app.services.order_sender import send_orders_to_tabletki
+from app.services.order_sender import send_single_order_status_2
 
 async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: str):
     """
@@ -97,7 +98,14 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             # TODO: передача заказов продавцу
                                             print(f"🔧 [Заглушка] Передача заказа продавцу: {order.get('id')}, {branch}")
                                             # TODO: передача заказа на Tabletki.ua с изменением статуса
-                                            print(f"🔧 [Заглушка] Передача заказа на Tabletki.ua с новым статусом 2.0: {order.get('id')}, {branch}")
+                                            # Отправка на Tabletki.ua со статусом 2.0
+                                            order["statusID"] = 2.0
+                                            await send_single_order_status_2(
+                                                session=session,
+                                                order=order,
+                                                tabletki_login=enterprise.tabletki_login,
+                                                tabletki_password=enterprise.tabletki_password
+                                            )
                                         elif status in [2, 4]:
                                             # TODO: передача статуса продавцу
                                             print(f"🔧 [Заглушка] Передача статуса заказа продавцу: {order.get('id')}, {branch}")
