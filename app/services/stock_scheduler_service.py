@@ -21,7 +21,7 @@ from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
-from app.services.auto_confirm import main as auto_confirm_main
+#from app.services.auto_confirm import main as auto_confirm_main
 from app.services.order_fetcher import fetch_orders_for_enterprise 
 
 # Настройка логирования
@@ -103,13 +103,13 @@ async def schedule_stock_tasks():
                     await process_stock_for_enterprise(db, enterprise)
 
                 # 2. Вызываем авто-подтверждение заказов
-                logging.info("📦 Запуск auto_confirm.py...")
-                try:
-                    await auto_confirm_main()
-                    logging.info("✅ Авто-подтверждение заказов завершено")
-                except Exception as e:
-                    logging.error(f"❌ Ошибка в auto_confirm.py: {e}")
-                    await notify_error(f"Ошибка в auto_confirm.py: {e}")
+                #logging.info("📦 Запуск auto_confirm.py...")
+                #try:
+                    #await auto_confirm_main()
+                    #logging.info("✅ Авто-подтверждение заказов завершено")
+                #except Exception as e:
+                    #logging.error(f"❌ Ошибка в auto_confirm.py: {e}")
+                    #await notify_error(f"Ошибка в auto_confirm.py: {e}")
                 # 3. Получаем предприятия, где активен order_fetcher
                 logging.info("📥 Поиск предприятий с флагом order_fetcher=True...")
                 try:
