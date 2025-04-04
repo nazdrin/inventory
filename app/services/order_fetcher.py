@@ -8,10 +8,17 @@ from app.services.auto_confirm import process_orders
 from app.services.order_sender import send_orders_to_tabletki
 from app.services.order_sender import send_single_order_status_2
 from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
+from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
 
 ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
     # Добавишь сюда новые форматы позже
+}
+ORDER_STATUS_CHECKERS = {
+    "KeyCRM": check_statuses_key_crm,
+    # Примеры для будущих форматов:
+    # "Dntrade": check_statuses_dntrade,
+    # "Prom": check_statuses_prom,
 }
 
 async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: str):
@@ -118,7 +125,12 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             )
                                         elif status in [2, 4]:
                                             # TODO: передача статуса продавцу
-                                            print(f"🔧 [Заглушка] Передача статуса заказа продавцу: {order.get('id')}, {branch}")
+                                            # Отправка актуального статуса продавцу через соответствующий обработчик
+                                            status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
+                                            if status_checker:
+                                                await status_checker(order, enterprise_code, branch)
+                                            else:
+                                                print(f"⚠️ Нет обработчика для проверки статуса формата {enterprise.data_format}")
                                         all_orders.append(order)
                                     if status == 0:
                                         order_codes = list(set(order["code"] for order in data if "code" in order))
