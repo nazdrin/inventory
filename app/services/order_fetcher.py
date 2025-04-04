@@ -7,6 +7,12 @@ from app.models import DeveloperSettings, EnterpriseSettings, MappingBranch
 from app.services.auto_confirm import process_orders
 from app.services.order_sender import send_orders_to_tabletki
 from app.services.order_sender import send_single_order_status_2
+from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
+
+ORDER_SEND_PROCESSORS = {
+    "KeyCRM": send_order_to_key_crm,
+    # Добавишь сюда новые форматы позже
+}
 
 async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: str):
     """
@@ -96,8 +102,12 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                         print(json.dumps(order, indent=2, ensure_ascii=False))
                                         if status == 0:
                                             # TODO: передача заказов продавцу
-                                            print(f"🔧 [Заглушка] Передача заказа продавцу: {order.get('id')}, {branch}")
-                                            # TODO: передача заказа на Tabletki.ua с изменением статуса
+                                            processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
+                                            if processor:
+                                                await processor(order, enterprise_code, branch)
+                                            else:
+                                                print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")
+                                           
                                             # Отправка на Tabletki.ua со статусом 2.0
                                             order["statusID"] = 2.0
                                             await send_single_order_status_2(
