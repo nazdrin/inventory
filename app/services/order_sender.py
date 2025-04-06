@@ -10,7 +10,7 @@ from app.models import DeveloperSettings
 async def send_orders_to_tabletki(session: AsyncSession, orders: list, tabletki_login: str, tabletki_password: str):
     """
     Отправляет заказы в Tabletki.ua по API в зависимости от статуса заказа:
-    - статус 4: подтверждён (отправка в /api/orders),
+    - статус 4 или 6: подтверждён (отправка в /api/orders),
     - статус 7: отказ (отправка в /api/Orders/cancelledOrders).
     """
     dev_settings = await session.execute(select(DeveloperSettings.endpoint_orders))
@@ -41,7 +41,7 @@ async def send_orders_to_tabletki(session: AsyncSession, orders: list, tabletki_
                 async with http_session.post(url, json=cancel_data, headers=headers) as response:
                     print(f"📬 Ответ при отказе: {response.status}, {await response.text()}")
 
-            elif order["statusID"] == 4:
+            elif order["statusID"] in [4, 6]:
                 valid_rows = [item for item in order["rows"] if item.get("qtyShip", 0) > 0]
                 if not valid_rows:
                     print(f"⚠️ Пропущен заказ {order['id']} — нет строк с qtyShip > 0")
