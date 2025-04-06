@@ -10,6 +10,7 @@ STATUS_MAP = {
     2: 4,
     12: 6,
     15: 7
+    
 }
 
 ALIAS_REVERSE = {
@@ -40,7 +41,7 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
             async with http_session.get(url, headers=headers) as resp:
                 data = await resp.json()
                 seller_order = data.get("data", [])[0] if data.get("data") else None
-                logging.info(f"📦 Ответ продавця: {seller_order}")
+                logging.info(f"📦 Ответ продавца: {seller_order}")
 
                 if not seller_order:
                     logging.info("❗ Замовлення не знайдено у продавця.")
@@ -80,12 +81,29 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
 
                 tracking_code = seller_order.get("shipping", {}).get("tracking_code")
                 if tracking_code:
-                    delivery_name = seller_order.get("shipping", {}).get("shipping_service", "")
-                    delivery_alias = ALIAS_REVERSE.get(delivery_name, "")
+                    delivery_service_id = seller_order.get("shipping", {}).get("delivery_service_id")
+                    delivery_alias = ""
+                    if delivery_service_id:
+                        try:
+                            async with http_session.get(
+                                "https://openapi.keycrm.app/v1/order/delivery-service?limit=50&page=1&sort=id",
+                                headers=headers
+                            ) as delivery_resp:
+                                delivery_data = await delivery_resp.json()
+                                services = delivery_data.get("data", [])
+                                matched_service = next((s for s in services if s["id"] == delivery_service_id), None)
+                                if matched_service:
+                                    delivery_name = matched_service.get("name")
+                                    delivery_alias = ALIAS_REVERSE.get(delivery_name, "")
+                        except Exception as e:
+                            logging.warning(f"❌ Помилка при отриманні delivery_service: {e}")
+
                     phone_number = seller_order.get("shipping", {}).get("recipient_phone", order.get("customerPhone"))
 
                     await send_ttn(
+                        session=session,
                         id=order["id"],
+                        enterprise_code=enterprise_code,
                         ttn=tracking_code,
                         deliveryServiceAlias=delivery_alias,
                         phoneNumber=phone_number

@@ -96,7 +96,7 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                     print(f"🚨 Ошибка при запросе заказов для branch={branch}, status={status}: {str(e)}")
             else:
                 # ===== Вариант без авто-подтверждения =====
-                for status in [0, 2, 4]:
+                for status in [0, 2, 4, 4.1]:
                     url = f"{endpoint_orders}/api/Orders/{branch}/{status}"
                     try:
                         async with http_session.get(url, headers=headers) as response:
@@ -123,7 +123,7 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                                 tabletki_login=enterprise.tabletki_login,
                                                 tabletki_password=enterprise.tabletki_password
                                             )
-                                        elif status in [2, 4]:
+                                        elif status in [2, 4, 4.1]:
                                             # TODO: передача статуса продавцу
                                             # Отправка актуального статуса продавцу через соответствующий обработчик
                                             status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
