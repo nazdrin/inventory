@@ -114,7 +114,6 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                                 await processor(order, enterprise_code, branch)
                                             else:
                                                 print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")
-                                           
                                             # Отправка на Tabletki.ua со статусом 2.0
                                             order["statusID"] = 2.0
                                             await send_single_order_status_2(

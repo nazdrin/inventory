@@ -33,10 +33,11 @@ PROCESSORS = {
     "Dntrade": run_service,
     "Prom": run_prom,
     "GoogleDrive": extract_catalog_from_google_drive,
+    "JetVet": extract_catalog_from_google_drive,
     "Checkbox": run_checkbox,
     "Rozetka": run_rozetka,
     "Dsn": run_dsn,
-    "KeyCRM": run_key_crm
+    "KeyCRM": run_key_crm,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):

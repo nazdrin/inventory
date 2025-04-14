@@ -32,6 +32,7 @@ PROCESSORS = {
     "Dntrade": run_service,
     "Prom": run_prom,
     "GoogleDrive": extract_stock_from_google_drive,
+    "JetVet": extract_stock_from_google_drive,
     "Checkbox": run_checkbox,
     "Rozetka": run_rozetka,
     "Dsn": run_dsn,
