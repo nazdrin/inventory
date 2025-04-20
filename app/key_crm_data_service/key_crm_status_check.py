@@ -7,10 +7,9 @@ from app.services.order_sender import send_orders_to_tabletki
 from app.services.send_TTN import send_ttn
 
 STATUS_MAP = {
-    2: 4,
-    12: 6,
-    15: 7
-    
+    4: 4,
+    5: 6,
+    6: 7
 }
 
 ALIAS_REVERSE = {
@@ -47,15 +46,15 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
                     logging.info("❗ Замовлення не знайдено у продавця.")
                     return
 
-                seller_status_id = seller_order.get("status_id")
-                mapped_status = STATUS_MAP.get(seller_status_id, 1)
+                seller_status_group_id = seller_order.get("status_group_id")
+                mapped_status = STATUS_MAP.get(seller_status_group_id, 1)
 
                 logging.info(
-                    f"🔎 Сравнение статусов: статус продавца={seller_status_id}, наш статус={order['statusID']}, результат сопоставления={mapped_status}"
+                    f"🔎 Сравнение статусов: статус продавця (група)={seller_status_group_id}, наш статус={order['statusID']}, результат сопоставления={mapped_status}"
                 )
 
                 if mapped_status > order["statusID"]:
-                    logging.info(f"📌 Статус продавця: {seller_status_id}, Внутрішній статус до зміни: {order['statusID']}, після зміни: {mapped_status}")
+                    logging.info(f"📌 Статус продавця: {seller_status_group_id}, Внутрішній статус до зміни: {order['statusID']}, після зміни: {mapped_status}")
 
                     seller_products = seller_order.get("products", [])
                     for i, item in enumerate(order.get("rows", [])):
@@ -77,7 +76,7 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
                     await send_orders_to_tabletki(session, [order], enterprise.tabletki_login, enterprise.tabletki_password)
                     logging.info(f"✅ Оновлений статус до {mapped_status} та надіслано в Tabletki.ua")
                 else:
-                    logging.info(f"ℹ️ Статус продавця ({seller_status_id}) не вищий за наш ({order['statusID']}), оновлення не потрібно")
+                    logging.info(f"ℹ️ Статус продавця ({seller_status_group_id}) не вищий за наш ({order['statusID']}), оновлення не потрібно")
 
                 tracking_code = seller_order.get("shipping", {}).get("tracking_code")
                 if tracking_code:
