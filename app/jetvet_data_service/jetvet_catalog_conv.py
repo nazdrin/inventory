@@ -2,6 +2,7 @@ import csv
 import json
 import logging
 import os
+import shutil
 import tempfile
 from dotenv import load_dotenv
 from app.services.database_service import process_database_service
@@ -37,11 +38,22 @@ async def process_jetvet_catalog(
 ):
     """
     Обработка CSV-файла JetVet каталога и сохранение в JSON.
+    Также сохраняет исходный файл для отладки.
     """
     try:
         items = []
         encoding = detect_encoding(file_path)
         logging.info(f"Определена кодировка файла: {encoding}")
+
+        # Сохраняем входной файл
+        try:
+            temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+            os.makedirs(temp_dir, exist_ok=True)
+            saved_input_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_original.csv")
+            shutil.copy(file_path, saved_input_path)
+            logging.info(f"Исходный файл сохранён для отладки: {saved_input_path}")
+        except Exception as e:
+            logging.warning(f"Не удалось сохранить входной файл: {str(e)}")
 
         try:
             with open(file_path, mode="r", encoding=encoding, errors="replace") as csvfile:
@@ -78,8 +90,6 @@ async def process_jetvet_catalog(
             return
 
         # Сохранение в JSON и передача на обработку
-        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
-        os.makedirs(temp_dir, exist_ok=True)
         output_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_data.json")
 
         with open(output_path, "w", encoding="utf-8") as f:
