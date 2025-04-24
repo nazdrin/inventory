@@ -7,6 +7,7 @@ const MappingBranchPage = () => {
     const [selectedEnterprise, setSelectedEnterprise] = useState('');
     const [branch, setBranch] = useState('');
     const [storeId, setStoreId] = useState('');
+    const [googleFolderId, setGoogleFolderId] = useState('');
 
     useEffect(() => {
         async function fetchEnterprises() {
@@ -21,12 +22,13 @@ const MappingBranchPage = () => {
     }, []);
 
     const handleSave = async () => {
-        if (!branch || !storeId || !selectedEnterprise) return;
+        if (!branch || !storeId || !selectedEnterprise || !googleFolderId) return;
 
         const mappingData = {
             branch,
             store_id: storeId,
             enterprise_code: selectedEnterprise,
+            google_folder_id: googleFolderId,
             id_telegram: [],
         };
 
@@ -34,6 +36,7 @@ const MappingBranchPage = () => {
             await createMappingBranch(mappingData);
             setBranch('');
             setStoreId('');
+            setGoogleFolderId('');
             alert("Запись успешно добавлена!");
         } catch (error) {
             console.error('Error saving mapping branch:', error);
@@ -60,7 +63,6 @@ const MappingBranchPage = () => {
             }}>
                 <h2 style={{ marginBottom: '20px' }}>Mapping Branch Management</h2>
 
-                {/* Выбор предприятия */}
                 <label style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Select Enterprise:</label>
                 <select
                     onChange={(e) => setSelectedEnterprise(e.target.value)}
@@ -81,7 +83,6 @@ const MappingBranchPage = () => {
                     ))}
                 </select>
 
-                {/* Поля ввода */}
                 <label style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Branch:</label>
                 <input
                     type="text"
@@ -112,10 +113,24 @@ const MappingBranchPage = () => {
                     }}
                 />
 
-                {/* Кнопка Записать */}
+                <label style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Google Folder ID:</label>
+                <input
+                    type="text"
+                    placeholder="Google Folder ID"
+                    value={googleFolderId}
+                    onChange={(e) => setGoogleFolderId(e.target.value)}
+                    style={{
+                        width: '100%',
+                        padding: '10px',
+                        marginBottom: '15px',
+                        borderRadius: '5px',
+                        border: '1px solid #ccc'
+                    }}
+                />
+
                 <button
                     onClick={handleSave}
-                    disabled={!branch || !storeId}
+                    disabled={!branch || !storeId || !googleFolderId}
                     style={{
                         width: '100%',
                         padding: '10px',

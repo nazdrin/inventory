@@ -142,26 +142,14 @@ async def extract_stock_from_google_drive(enterprise_code: str):
             for file in stock_files:
                 file_path = await download_file(drive_service, file['id'], file['name'])
                 try:
-                    if enterprise["data_format"] == "GoogleDrive":
-                        await validate_data(
-                            enterprise_code=enterprise_code,
-                            file_path=file_path,
-                            file_type="stock",
-                            single_store=enterprise["single_store"],
-                            store_serial=enterprise["store_serial"],
-                        )
-                        logging.info(f"Stock file {file['name']} validated successfully for enterprise {enterprise_code}")
-                    elif enterprise["data_format"] == "JetVet":
-                        await process_jetvet_stock(
-                            enterprise_code=enterprise_code,
-                            file_path=file_path,
-                            file_type="stock",
-                            single_store=enterprise["single_store"],
-                            store_serial=enterprise["store_serial"],
-                        )
-                        logging.info(f"Stock file {file['name']} обработан JetVet-процессором для предприятия {enterprise_code}")
-                    else:
-                        raise ValueError(f"Неизвестный формат данных: {enterprise['data_format']}")
+                    await validate_data(
+                        enterprise_code=enterprise_code,
+                        file_path=file_path,
+                        file_type="stock",
+                        single_store=enterprise["single_store"],
+                        store_serial=enterprise["store_serial"],
+                    )
+                    logging.info(f"Stock file {file['name']} validated successfully for enterprise {enterprise_code}")
                 except Exception as e:
                     logging.error(f"Ошибка валидации для stock файла {file['name']} для предприятия {enterprise_code}: {str(e)}")
                     send_notification(f"Ошибка валидации для stock файла п{file['name']} для предприятия {enterprise_code}", "Разработчик")
@@ -222,26 +210,14 @@ async def extract_catalog_from_google_drive(enterprise_code: str):
             for file in catalog_files:
                 file_path = await download_file(drive_service, file['id'], file['name'])
                 try:
-                    if enterprise["data_format"] == "GoogleDrive":
-                        await validate_data(
-                            enterprise_code=enterprise_code,
-                            file_path=file_path,
-                            file_type="catalog",
-                            single_store=enterprise["single_store"],
-                            store_serial=enterprise["store_serial"],
-                        )
-                        logging.info(f"Catalog file {file['name']} validated successfully for enterprise {enterprise_code}")
-                    elif enterprise["data_format"] == "JetVet":
-                        await process_jetvet_catalog(
-                            enterprise_code=enterprise_code,
-                            file_path=file_path,
-                            file_type="catalog",
-                            single_store=enterprise["single_store"],
-                            store_serial=enterprise["store_serial"],
-                        )
-                        logging.info(f"Catalog file {file['name']} обработан JetVet-процессором для предприятия {enterprise_code}")
-                    else:
-                        raise ValueError(f"Неизвестный формат данных: {enterprise['data_format']}")
+                    await validate_data(
+                        enterprise_code=enterprise_code,
+                        file_path=file_path,
+                        file_type="catalog",
+                        single_store=enterprise["single_store"],
+                        store_serial=enterprise["store_serial"],
+                    )
+                    logging.info(f"Catalog file {file['name']} validated successfully for enterprise {enterprise_code}")
                 except Exception as e:
                     logging.error(f"Ошибка валидации для catalog файла {file['name']} для предприятия {enterprise_code}: {str(e)}")
                     send_notification(f"Ошибка валидации для catalog файла {file['name']} для предприятия {enterprise_code}", "Разработчик")
