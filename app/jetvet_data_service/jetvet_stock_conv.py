@@ -5,10 +5,8 @@ import os
 import tempfile
 from dotenv import load_dotenv
 from app.services.database_service import process_database_service
-from app.database import get_async_db, MappingBranch
 import chardet
 import pandas as pd
-from sqlalchemy.future import select
 
 load_dotenv()
 
@@ -25,20 +23,13 @@ def detect_encoding(file_path):
     logging.warning("Кодировка не определена, используется cp1251 по умолчанию")
     return "cp1251"
 
-async def fetch_branch_id(enterprise_code: str) -> str:
-    async with get_async_db() as session:
-        result = await session.execute(
-            select(MappingBranch.branch).where(MappingBranch.enterprise_code == enterprise_code)
-        )
-        branch = result.scalars().first()
-        return branch if branch else "unknown"
-
 async def process_jetvet_stock(
     enterprise_code: str,
     file_path: str,
     file_type: str,
     single_store: bool,
-    store_serial: str
+    store_serial: str,
+    branch: str
 ):
     """
     Обработка CSV-файла JetVet остатков и сохранение в JSON.
@@ -52,14 +43,13 @@ async def process_jetvet_stock(
 
         logging.info(f"Загружено строк из файла: {len(df)}")
 
-        branch_id = await fetch_branch_id(enterprise_code)
         items = []
 
         for _, row in df.iterrows():
             code = (row.get("code") or row.get("id", "")).strip()
             price = row.get("outprice", "0").replace(",", ".").strip()
             qty = row.get("stock", "0").replace(",", ".").strip()
-            
+
             try:
                 price_float = float(price)
                 qty_float = float(qty)
@@ -67,19 +57,13 @@ async def process_jetvet_stock(
             except ValueError:
                 logging.warning(f"Пропущена строка из-за ошибки преобразования: {row.to_dict()}")
                 continue
-            
-            if not code:
-                logging.warning(f"Пропущена строка без кода: {row.to_dict()}")
-                continue
-            
-
 
             if not code:
                 logging.warning(f"Пропущена строка без кода: {row.to_dict()}")
                 continue
 
             item = {
-                "branch": branch_id,
+                "branch": branch,
                 "code": code,
                 "price": price_float,
                 "qty": qty_int,

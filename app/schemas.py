@@ -82,6 +82,7 @@ class MappingBranchSchema(BaseModel):
     enterprise_code: str
     branch: str
     store_id: str
+    google_folder_id: str
     id_telegram: Optional[List[str]]
     class Config:
         from_attributes = True  # Включено для использования from_orm
