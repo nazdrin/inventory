@@ -10,6 +10,8 @@ from sqlalchemy.future import select
 from app.database import get_async_db, EnterpriseSettings, DeveloperSettings
 from app.google_drive.data_validator import validate_data
 from app.services.notification_service import send_notification  # Функция для отправки уведомлений
+from app.jetvet_data_service.jetvet_catalog_conv import process_jetvet_catalog
+from app.jetvet_data_service.jetvet_stock_conv import process_jetvet_stock
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -107,6 +109,7 @@ async def extract_stock_from_google_drive(enterprise_code: str):
                     EnterpriseSettings.single_store,
                     EnterpriseSettings.store_serial,
                     EnterpriseSettings.google_drive_folder_id_rest,
+                    EnterpriseSettings.data_format,  # добавлено
                 ).where(EnterpriseSettings.enterprise_code == enterprise_code)
             )
             enterprise = result.mappings().one_or_none()
@@ -174,6 +177,7 @@ async def extract_catalog_from_google_drive(enterprise_code: str):
                     EnterpriseSettings.single_store,
                     EnterpriseSettings.store_serial,
                     EnterpriseSettings.google_drive_folder_id_ref,
+                    EnterpriseSettings.data_format,  # добавлено
                 ).where(EnterpriseSettings.enterprise_code == enterprise_code)
             )
             enterprise = result.mappings().one_or_none()

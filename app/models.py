@@ -73,6 +73,7 @@ class EnterpriseSettings(Base):
     data_format = Column(String, nullable=True)
     discount_rate = Column(Float, nullable=True)
     single_store = Column(Boolean, nullable=True)
+    order_fetcher = Column(Boolean, nullable=True)
     auto_confirm = Column(Boolean, nullable=True)
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
@@ -85,6 +86,7 @@ class MappingBranch(Base):
     enterprise_code = Column(String, nullable=False)
     branch = Column(String, primary_key=True)
     store_id = Column(String, nullable=False)
+    google_folder_id = Column(String, nullable=True)
     id_telegram = Column(ARRAY(String), nullable=True)
 
 # Таблица глобальных настроек разработчика

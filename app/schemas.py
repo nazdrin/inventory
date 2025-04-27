@@ -60,6 +60,7 @@ class EnterpriseSettingsSchema(BaseModel):
     token: Optional[str] = None # Токен подключения к API предприятия
     data_format: Optional[str] = None  # Поставщик данных
     single_store: Optional[bool] = False
+    order_fetcher: Optional[bool] = False
     auto_confirm: Optional[bool] = False
     store_serial: Optional[str] = None  # Серийный номер магазина
     stock_upload_frequency: Optional[int] = None  # Частота загрузки остатков
@@ -81,6 +82,7 @@ class MappingBranchSchema(BaseModel):
     enterprise_code: str
     branch: str
     store_id: str
+    google_folder_id: str
     id_telegram: Optional[List[str]]
     class Config:
         from_attributes = True  # Включено для использования from_orm

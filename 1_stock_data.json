@@ -1,0 +1,16 @@
+[
+    {
+        "branch": "111",
+        "code": "9999",
+        "price": 100.0,
+        "qty": 2,
+        "price_reserve": 9.0
+    },
+    {
+        "branch": "111",
+        "code": "55555",
+        "price": 200.0,
+        "qty": 2,
+        "price_reserve": 20.0
+    }
+]
