@@ -86,6 +86,7 @@ class MappingBranch(Base):
     enterprise_code = Column(String, nullable=False)
     branch = Column(String, primary_key=True)
     store_id = Column(String, nullable=False)
+    google_folder_id = Column(String, nullable=True)
     id_telegram = Column(ARRAY(String), nullable=True)
 
 # Таблица глобальных настроек разработчика

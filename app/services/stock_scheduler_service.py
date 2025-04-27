@@ -17,8 +17,10 @@ from app.checkbox_data_service.checkbox_stock_conv import run_service as run_che
 from app.rozetka_data_service.rozetka_stock_conv import run_service as run_rozetka
 from app.key_crm_data_service.key_crm_stock_conv import run_service as run_key_crm
 from app.dsn_data_service.dsn_stock_conv import run_service as run_dsn
+from app.ftp_data_service.ftp_stock_conv import run_service as run_ftp
 from app.prom_data_service.prom_stock import run_prom
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
+from app.jetvet_data_service.jetvet_google_drive import extract_stock_from_google_drive as stock_jetvet
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 #from app.services.auto_confirm import main as auto_confirm_main
@@ -32,11 +34,12 @@ PROCESSORS = {
     "Dntrade": run_service,
     "Prom": run_prom,
     "GoogleDrive": extract_stock_from_google_drive,
-    "JetVet": extract_stock_from_google_drive,
+    "JetVet": stock_jetvet,
     "Checkbox": run_checkbox,
     "Rozetka": run_rozetka,
     "Dsn": run_dsn,
-    "KeyCRM": run_key_crm
+    "KeyCRM": run_key_crm,
+    "Ftp": run_ftp,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):

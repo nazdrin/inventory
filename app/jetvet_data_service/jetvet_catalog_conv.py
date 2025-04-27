@@ -33,8 +33,7 @@ async def process_jetvet_catalog(
     enterprise_code: str,
     file_path: str,
     file_type: str,
-    single_store: bool,
-    store_serial: str
+    
 ):
     """
     Обработка CSV-файла JetVet каталога и сохранение в JSON.

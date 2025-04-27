@@ -5,7 +5,7 @@ from ftplib import FTP
 # Конфигурация FTP
 FTP_HOST = "164.92.213.254"
 FTP_USER = "seller"
-FTP_PASS = "your-password"
+FTP_PASS = "12341234"
 FTP_DIR = "/upload"  # Папка с файлами на FTP
 LOCAL_DIR = os.getcwd()  # Директория, откуда запускается скрипт
 
