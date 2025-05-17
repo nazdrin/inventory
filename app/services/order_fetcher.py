@@ -73,7 +73,13 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                 for order in data:
                                     print("📦 Заказ:")
                                     print(json.dumps(order, indent=2, ensure_ascii=False))
-
+                                    
+                                    # Отправка заказа продавцу (добавлено)
+                                    processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
+                                    if processor:
+                                        await processor(order, enterprise_code, branch)
+                                    else:
+                                        print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")                                   
                                 order_codes = list(set(order["code"] for order in data if "code" in order))
                                 if order_codes:
                                     from app.services.telegram_bot import notify_user
