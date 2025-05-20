@@ -7,6 +7,7 @@ import tempfile
 from dotenv import load_dotenv
 from app.services.database_service import process_database_service
 import chardet
+import re
 
 load_dotenv()
 DEFAULT_VAT = 20
@@ -65,7 +66,8 @@ async def process_jetvet_catalog(
 
                     code = row.get("id") or row.get("code")
                     name = row.get("name", "").strip()
-                    barcode = row.get("barcode", "").strip()
+                    raw_barcode = row.get("barcode", "").strip()
+                    barcode = re.sub(r"[^\d]", "", raw_barcode)
 
                     if not code or not name:
                         logging.warning(f"Пропущена строка: code={code}, name={name}, raw={row}")
