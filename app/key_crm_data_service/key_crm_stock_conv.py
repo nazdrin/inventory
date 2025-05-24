@@ -146,6 +146,21 @@ def save_to_json(data, enterprise_code, file_type):
         logging.error(f"Ошибка сохранения файла: {e}")
         return None
 
+def save_raw_input(data, enterprise_code):
+    try:
+        raw_dir = os.path.join(os.getcwd(), "input_raw", str(enterprise_code))
+        os.makedirs(raw_dir, exist_ok=True)
+        file_path = os.path.join(raw_dir, "raw_stock.json")
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
+        logging.info(f"Исходные данные сохранены в файл: {file_path}")
+        return file_path
+    except IOError as e:
+        logging.error(f"Ошибка сохранения исходного файла: {e}")
+        return None
+
 
 async def run_service(enterprise_code):
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
@@ -159,6 +174,13 @@ async def run_service(enterprise_code):
         return
 
     stock_data = fetch_all_stock(api_key)
+    if not stock_data:
+        print("Данные по складам не получены.")
+        return
+
+# Сохраняем исходные данные
+    save_raw_input(stock_data, enterprise_code)
+
     if not stock_data:
         print("Данные по складам не получены.")
         return
