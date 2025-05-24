@@ -1,0 +1,226 @@
+[
+    {
+        "id": 1,
+        "sku": "111",
+        "price": 200,
+        "quantity": 97,
+        "purchased_price": 19.86,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 17,
+                "reserve": 0
+            },
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 79,
+                "reserve": 0
+            },
+            {
+                "id": 4,
+                "name": "магазин 3",
+                "quantity": 1,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 2,
+        "sku": "222",
+        "price": 300,
+        "quantity": 65,
+        "purchased_price": 42.15,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 18,
+                "reserve": 0
+            },
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 46,
+                "reserve": 0
+            },
+            {
+                "id": 4,
+                "name": "магазин 3",
+                "quantity": 1,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 3,
+        "sku": "09",
+        "price": 30,
+        "quantity": 165,
+        "purchased_price": 1.47,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 3,
+                "name": "Магазин_2",
+                "quantity": 3,
+                "reserve": 0
+            },
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 157,
+                "reserve": 0
+            },
+            {
+                "id": 4,
+                "name": "магазин 3",
+                "quantity": 1,
+                "reserve": 0
+            },
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 4,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 4,
+        "sku": null,
+        "price": 23,
+        "quantity": 122,
+        "purchased_price": 2.04,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 3,
+                "name": "Магазин_2",
+                "quantity": 3,
+                "reserve": 0
+            },
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 112,
+                "reserve": 0
+            },
+            {
+                "id": 4,
+                "name": "магазин 3",
+                "quantity": 1,
+                "reserve": 0
+            },
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 6,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 5,
+        "sku": null,
+        "price": 12,
+        "quantity": 121,
+        "purchased_price": 19.2,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 3,
+                "name": "Магазин_2",
+                "quantity": 3,
+                "reserve": 0
+            },
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 112,
+                "reserve": 0
+            },
+            {
+                "id": 4,
+                "name": "магазин 3",
+                "quantity": 1,
+                "reserve": 0
+            },
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 5,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 6,
+        "sku": null,
+        "price": 23,
+        "quantity": 235,
+        "purchased_price": 7,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 223,
+                "reserve": 0
+            },
+            {
+                "id": 4,
+                "name": "магазин 3",
+                "quantity": 1,
+                "reserve": 0
+            },
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 11,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 7,
+        "sku": "3333",
+        "price": 244,
+        "quantity": 130,
+        "purchased_price": 17.27,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 30,
+                "reserve": 0
+            },
+            {
+                "id": 2,
+                "name": "Магазин_1",
+                "quantity": 100,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 8,
+        "sku": null,
+        "price": 244,
+        "quantity": 100,
+        "purchased_price": 10,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 1,
+                "name": "Default",
+                "quantity": 100,
+                "reserve": 0
+            }
+        ]
+    }
+]

@@ -52,13 +52,17 @@ def fetch_stock(api_key, offset=0, limit=LIMIT):
 
 def transform_stock(products, branch):
     """Трансформация данных стока в целевой формат."""
+    def safe_div(value, divisor):
+        return (value or 0) / divisor
+
     return [{
         "branch": branch,
         "code": product.get("id"),
-        "price": product.get("price", 0) / 100,  # Деление цены на 100
-        "qty": product.get("count", 0) / 1000,  # Деление количества на 1000
-        "price_reserve": product.get("price", 0) / 100  # Аналогично price
+        "price": safe_div(product.get("price"), 100),
+        "qty": safe_div(product.get("count"), 1000),
+        "price_reserve": safe_div(product.get("price"), 100)
     } for product in products]
+
 
 
 def save_to_json(data, enterprise_code, file_type):
