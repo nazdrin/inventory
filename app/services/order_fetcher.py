@@ -62,44 +62,51 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
         for branch in branches:
             if auto_confirm_flag:
                 # ===== Вариант с авто-подтверждением =====
-                status = 2
-                url = f"{endpoint_orders}/api/Orders/{branch}/{status}"
-                try:
-                    async with http_session.get(url, headers=headers) as response:
-                        print(f"🌐 Запрос заказов: {url}")
-                        if response.status == 200:
-                            data = await response.json()
-                            if isinstance(data, list):
-                                for order in data:
-                                    print("📦 Заказ:")
-                                    print(json.dumps(order, indent=2, ensure_ascii=False))
-                                    
-                                    # Отправка заказа продавцу (добавлено)
-                                    processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
-                                    if processor:
-                                        await processor(order, enterprise_code, branch)
-                                    else:
-                                        print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")                                   
-                                order_codes = list(set(order["code"] for order in data if "code" in order))
-                                if order_codes:
-                                    from app.services.telegram_bot import notify_user
-                                    await notify_user(branch, order_codes)
+                for status in [0, 2, 4, 4.1]:
+                    url = f"{endpoint_orders}/api/Orders/{branch}/{status}"
+                    try:
+                        async with http_session.get(url, headers=headers) as response:
+                            print(f"🌐 Запрос заказов: {url}")
+                            if response.status == 200:
+                                data = await response.json()
+                                if isinstance(data, list):
+                                    for order in data:
+                                        print("📦 Заказ:")
+                                        print(json.dumps(order, indent=2, ensure_ascii=False))
 
-                                # 👉 ОБРАБОТКА
-                                processed_orders = await process_orders(session, data)
-                                print(f"🔁 Обработано {len(processed_orders)} заказов")
+                                        if status in [0, 2]:
+                                            processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
+                                            if processor:
+                                                await processor(order, enterprise_code, branch)
+                                            else:
+                                                print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")
 
-                                # 👉 ОТПРАВКА
-                                await send_orders_to_tabletki(
-                                    session,
-                                    processed_orders,
-                                    tabletki_login=enterprise.tabletki_login,
-                                    tabletki_password=enterprise.tabletki_password
-                                )
-                        else:
-                            print(f"❌ Ошибка при запросе заказов: {response.status} для branch={branch}")
-                except Exception as e:
-                    print(f"🚨 Ошибка при запросе заказов для branch={branch}, status={status}: {str(e)}")
+                                        if status in [2, 4, 4.1]:
+                                            status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
+                                            if status_checker:
+                                                await status_checker(order, enterprise_code, branch)
+                                            else:
+                                                print(f"⚠️ Нет обработчика для проверки статуса формата {enterprise.data_format}")
+
+                                    if status in [0, 2]:
+                                        processed_orders = await process_orders(session, data)
+                                        print(f"🔁 Обработано {len(processed_orders)} заказов")
+                                        await send_orders_to_tabletki(
+                                            session,
+                                            processed_orders,
+                                            tabletki_login=enterprise.tabletki_login,
+                                            tabletki_password=enterprise.tabletki_password
+                                        )
+
+                                    if status == 0:
+                                        order_codes = list(set(order["code"] for order in data if "code" in order))
+                                        if order_codes:
+                                            from app.services.telegram_bot import notify_user
+                                            await notify_user(branch, order_codes)
+                            else:
+                                print(f"❌ Ошибка при запросе заказов: {response.status} для branch={branch}")
+                    except Exception as e:
+                        print(f"🚨 Ошибка при запросе заказов для branch={branch}, status={status}: {str(e)}")
             else:
                 # ===== Вариант без авто-подтверждения =====
                 for status in [0, 2, 4, 4.1]:
