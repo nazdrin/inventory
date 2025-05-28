@@ -1,7 +1,32 @@
+import requests
 import aiohttp
 import datetime
 from sqlalchemy.future import select
 from app.database import get_async_db, EnterpriseSettings
+
+
+def fetch_skus_by_product_ids(api_key, product_ids):
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    sku_map = {}
+    chunk_size = 50
+    for i in range(0, len(product_ids), chunk_size):
+        chunk = product_ids[i:i + chunk_size]
+        filter_param = ",".join(map(str, chunk))
+        params = {
+            "limit": 100,
+            "page": 1,
+            "filter[product_id]": filter_param
+        }
+        response = requests.get("https://openapi.keycrm.app/v1/products", headers=headers, params=params)
+        if response.status_code != 200:
+            continue
+        data = response.json().get("data", [])
+        for product in data:
+            sku_map[str(product.get("id"))] = product.get("sku")
+    return sku_map
 
 async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
     print(f"📦 [KeyCRM] Передача нового замовлення {order.get('id')} для {enterprise_code}, філія {branch}")
@@ -75,8 +100,10 @@ async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
             } if order.get("deliveryData") else {}
 
             # 5. Секция products
+            product_ids = [row["goodsCode"] for row in order["rows"]]
+            sku_map = fetch_skus_by_product_ids(token, product_ids)
             products = [{
-                "sku": row["goodsCode"],
+                "sku": sku_map.get(str(row["goodsCode"]), ""),
                 "price": row["price"],
                 "purchased_price": row["price"],
                 "discount_percent": 0,
