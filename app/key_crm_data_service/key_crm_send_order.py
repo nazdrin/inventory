@@ -18,14 +18,20 @@ def fetch_skus_by_product_ids(api_key, product_ids):
         params = {
             "limit": 100,
             "page": 1,
+            "include": "product",
+            "sort": "id",
             "filter[product_id]": filter_param
         }
-        response = requests.get("https://openapi.keycrm.app/v1/products", headers=headers, params=params)
+        print(f"🔍 Запрос SKUs: {params}")
+        response = requests.get("https://openapi.keycrm.app/v1/offers", headers=headers, params=params)
+        print(f"📤 URL запроса: {response.url}")
+        print(f"📩 Ответ от KeyCRM (status_code={response.status_code}): {response.text}")
         if response.status_code != 200:
             continue
         data = response.json().get("data", [])
-        for product in data:
-            sku_map[str(product.get("id"))] = product.get("sku")
+        print(f"📩 Ответ от KeyCRM (status_code={response.status_code}): {response.text}")
+        for offer in data:
+            sku_map[str(offer.get("product_id"))] = offer.get("sku")
     return sku_map
 
 async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
