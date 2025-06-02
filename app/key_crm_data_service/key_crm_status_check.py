@@ -7,6 +7,8 @@ from app.services.order_sender import send_orders_to_tabletki
 from app.services.send_TTN import send_ttn
 
 STATUS_MAP = {
+    2: 4,
+    3: 4,
     4: 4,
     5: 6,
     6: 7

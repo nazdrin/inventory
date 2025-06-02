@@ -2,20 +2,17 @@ import sys
 import requests
 import json
 import asyncio
-import os
-import logging
-from app.database import get_async_db, EnterpriseSettings
-from app.models import MappingBranch
+from app.database import get_async_db, EnterpriseSettings, MappingBranch
 from app.services.database_service import process_database_service
 from sqlalchemy.future import select
+import tempfile
+import os
+import logging
 from dotenv import load_dotenv
-
 load_dotenv()
 
-API_URL = "https://openapi.keycrm.app/v1/offers/stocks"
-DEFAULT_FILE_TYPE = "stock"
-
-logging.basicConfig(level=logging.INFO)
+API_URL = "https://openapi.keycrm.app/v1/products"
+REQUEST_LIMIT_PER_MINUTE = 60
 
 
 def log_progress(page, count):
@@ -31,26 +28,30 @@ async def fetch_enterprise_settings(enterprise_code):
         return result.scalars().first()
 
 
-async def fetch_branch_mapping():
-    async with get_async_db() as session:
-        result = await session.execute(select(MappingBranch))
-        return result.scalars().all()  # возвращаем список объектов
+async def fetch_branch_id(enterprise_code): 
+    """Получение branch из таблицы MappingBranch.""" 
+    async with get_async_db() as session: 
+        result = await session.execute( 
+            select(MappingBranch.branch).where(MappingBranch.enterprise_code == enterprise_code) 
+        ) 
+        mapping = result.scalars().first() 
+        return mapping if mapping else "unknown"
 
 
-def fetch_all_stock(api_key):
+
+def fetch_all_products(api_key):
     headers = {
         "accept": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
 
-    all_items = []
+    all_products = []
     page = 1
 
     while True:
         params = {
             "limit": 15,
-            "page": page,
-            "filter[details]": "true"
+            "page": page
         }
 
         response = requests.get(API_URL, headers=headers, params=params)
@@ -60,127 +61,85 @@ def fetch_all_stock(api_key):
             break
 
         json_data = response.json()
-        items = json_data.get("data", [])
-        if not items:
+        products = json_data.get("data", [])
+        if not products:
             break
 
-        all_items.extend(items)
-        log_progress(page, len(items))
+        all_products.extend(products)
+        log_progress(page, len(products))
 
         if not json_data.get("next_page_url"):
             break
 
         page += 1
+        asyncio.sleep(1)  # контроль лимита API
 
-    print(f"\nВсего получено: {len(all_items)} записей")
-    return all_items
-
-
-def transform_stock(raw_input, branch_mapping: dict, enterprise_code: str) -> list:
-    """
-    Универсальный парсер остатков. Если нет соответствия (enterprise_code, store_id),
-    запись пропускается, в лог выводится предупреждение.
-    """
-    import logging
-
-    if isinstance(raw_input, dict) and "data" in raw_input:
-        data = raw_input["data"]
-    else:
-        data = raw_input
-
-    result = []
-    unknown_stores_logged = set()
-
-    for item in data:
-        item_id = str(item.get("id"))
-        price = item.get("price")
-        warehouses = item.get("warehouse", [])
-
-        for w in warehouses:
-            store_id = w.get("id")
-            key = (str(enterprise_code), str(store_id))
-
-            if key not in branch_mapping:
-                if key not in unknown_stores_logged:
-                    logging.warning(f"⚠️ Нет соответствия для enterprise_code={enterprise_code}, store_id={store_id} — склад будет пропущен.")
-                    unknown_stores_logged.add(key)
-                continue  # пропускаем warehouse
-
-            branch = branch_mapping[key]
-            quantity = w.get("quantity", 0)
-            reserve = w.get("reserve", 0)
-
-            try:
-                qty = int(quantity) - int(reserve)
-            except (TypeError, ValueError):
-                qty = 0
-
-            if qty < 0:
-                qty = 0
-
-            result.append({
-                "branch": branch,
-                "code": item_id,
-                "price": price,
-                "qty": qty,
-                "price_reserve": price
-            })
-
-    return result
+    print(f"\nВсего получено: {len(all_products)} записей")
+    return all_products
 
 
+def transform_stock_data(products, branch_id):
+    transformed = []
+    for item in products:
+        quantity = item.get("quantity", 0)
+        if quantity <= 0:
+            continue
 
-def save_to_json(data, enterprise_code, file_type):
+        transformed.append({
+            "branch": branch_id,
+            "code": str(item.get("id")),
+            "price": float(item.get("max_price", 0)),
+            "qty": int(quantity),
+            "price_reserve": float(item.get("max_price", 0)),
+        })
+    return transformed
+
+
+def save_to_tempfile(data):
     try:
-        temp_dir = os.getenv("TEMP_FILE_PATH", os.path.join(os.getcwd(), "temp"))
-        dir_path = os.path.join(temp_dir, str(enterprise_code))
-        os.makedirs(dir_path, exist_ok=True)
-        file_path = os.path.join(dir_path, f"{file_type}.json")
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-
-        logging.info(f"JSON сохранен в файл: {file_path}")
-        return file_path
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".json", mode='w', encoding='utf-8') as temp_file:
+            json.dump(data, temp_file, ensure_ascii=False, indent=4)
+            return temp_file.name
     except IOError as e:
-        logging.error(f"Ошибка сохранения файла: {e}")
+        logging.error(f"Ошибка при сохранении временного файла: {e}")
         return None
 
 
 async def run_service(enterprise_code):
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
     if not enterprise_settings:
-        print("Не найдены настройки предприятия.")
+        print("Настройки предприятия не найдены.")
         return
 
     api_key = enterprise_settings.token
     if not api_key:
-        print("Не найден API ключ.")
+        print("API ключ не найден.")
         return
 
-    stock_data = fetch_all_stock(api_key)
-    if not stock_data:
-        print("Данные по складам не получены.")
+    try:
+        branch_id = await fetch_branch_id(enterprise_code)
+    except ValueError as e:
+        print(str(e))
         return
 
-    # Загружаем mapping и строим словарь {(enterprise_code, store_id): branch}
-    mapping_rows = await fetch_branch_mapping()
-    branch_mapping = {
-        (str(row.enterprise_code), str(row.store_id)): str(row.branch)
-        for row in mapping_rows
-        if row.enterprise_code and row.store_id
-    }
-
-    transformed = transform_stock(stock_data, branch_mapping, enterprise_code)
-    file_path = save_to_json(transformed, enterprise_code, DEFAULT_FILE_TYPE)
-
-    if not file_path:
-        print("Не удалось сохранить файл.")
+    all_products = fetch_all_products(api_key)
+    if not all_products:
+        print("Данные не получены.")
         return
 
-    await process_database_service(file_path, DEFAULT_FILE_TYPE, enterprise_code)
+    transformed_data = transform_stock_data(all_products, branch_id)
+    if not transformed_data:
+        print("Нет данных для сохранения после фильтрации.")
+        return
+
+    json_file_path = save_to_tempfile(transformed_data)
+    if not json_file_path:
+        print("Ошибка сохранения JSON-файла.")
+        return
+
+    await process_database_service(json_file_path, "stock", enterprise_code)
 
 
 if __name__ == "__main__":
-    enterprise_code = "2"
+    enterprise_code = "272"
     asyncio.run(run_service(enterprise_code))
