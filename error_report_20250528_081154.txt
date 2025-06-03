@@ -1,0 +1,1 @@
+2025-05-28 08:11:54.688864 - Enterprise Code: 272 - Error: HTTPSConnectionPool(host='openapi.keycrm.app', port=443): Max retries exceeded with url: /v1/products?limit=15&page=1 (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x0000014FF5C60620>: Failed to resolve 'openapi.keycrm.app' ([Errno 11001] getaddrinfo failed)"))

@@ -19,14 +19,14 @@
         "id": 304,
         "sku": "050300001",
         "price": 20,
-        "quantity": 2081,
+        "quantity": 1331,
         "purchased_price": 3.02,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 2081,
+                "quantity": 1331,
                 "reserve": 0
             }
         ]
@@ -227,14 +227,14 @@
         "id": 345,
         "sku": "060100001",
         "price": 250,
-        "quantity": 13,
+        "quantity": 18,
         "purchased_price": 92.5,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 13,
+                "quantity": 18,
                 "reserve": 0
             }
         ]
@@ -243,15 +243,15 @@
         "id": 346,
         "sku": "060100002",
         "price": 4000,
-        "quantity": 2,
+        "quantity": 1,
         "purchased_price": 1850,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 2,
-                "reserve": 0
+                "quantity": 1,
+                "reserve": 1
             }
         ]
     },
@@ -451,14 +451,14 @@
         "id": 396,
         "sku": "070400004",
         "price": 85,
-        "quantity": 129,
+        "quantity": 120,
         "purchased_price": 50.55,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 129,
+                "quantity": 120,
                 "reserve": 0
             }
         ]
@@ -483,14 +483,14 @@
         "id": 398,
         "sku": "070400006",
         "price": 80,
-        "quantity": 107,
+        "quantity": 104,
         "purchased_price": 39.07,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 107,
+                "quantity": 104,
                 "reserve": 0
             }
         ]
@@ -515,14 +515,14 @@
         "id": 400,
         "sku": "070400008",
         "price": 80,
-        "quantity": 111,
+        "quantity": 107,
         "purchased_price": 38.33,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 111,
+                "quantity": 107,
                 "reserve": 0
             }
         ]
@@ -531,14 +531,14 @@
         "id": 401,
         "sku": "070200001",
         "price": 110,
-        "quantity": 95,
+        "quantity": 74,
         "purchased_price": 62.46,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 95,
+                "quantity": 74,
                 "reserve": 0
             }
         ]
@@ -547,14 +547,14 @@
         "id": 402,
         "sku": "070200002",
         "price": 110,
-        "quantity": 35,
-        "purchased_price": 61.82,
+        "quantity": 70,
+        "purchased_price": 61.77,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 35,
+                "quantity": 70,
                 "reserve": 0
             }
         ]
@@ -563,14 +563,14 @@
         "id": 403,
         "sku": "070200003",
         "price": 110,
-        "quantity": 14,
-        "purchased_price": 61.89,
+        "quantity": 99,
+        "purchased_price": 61.77,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 14,
+                "quantity": 99,
                 "reserve": 0
             }
         ]
@@ -611,14 +611,14 @@
         "id": 426,
         "sku": "090200002",
         "price": 360,
-        "quantity": 0,
+        "quantity": 4,
         "purchased_price": 165,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 0,
+                "quantity": 4,
                 "reserve": 0
             }
         ]
@@ -835,14 +835,14 @@
         "id": 474,
         "sku": "070200004",
         "price": 110,
-        "quantity": 2,
-        "purchased_price": 65.57,
+        "quantity": 96,
+        "purchased_price": 65.01,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 2,
+                "quantity": 96,
                 "reserve": 0
             }
         ]
@@ -867,14 +867,14 @@
         "id": 514,
         "sku": "070400010",
         "price": 85,
-        "quantity": 84,
+        "quantity": 79,
         "purchased_price": 50,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 84,
+                "quantity": 79,
                 "reserve": 0
             }
         ]
@@ -1088,14 +1088,14 @@
         "id": 610,
         "sku": "art19",
         "price": 0,
-        "quantity": 0,
+        "quantity": 150,
         "purchased_price": 165,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 0,
+                "quantity": 150,
                 "reserve": 0
             }
         ]
@@ -1215,14 +1215,14 @@
         "id": 627,
         "sku": "art4",
         "price": 50,
-        "quantity": 1235,
+        "quantity": 1181,
         "purchased_price": 15.85,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1235,
+                "quantity": 1181,
                 "reserve": 0
             }
         ]
@@ -1231,14 +1231,14 @@
         "id": 631,
         "sku": "art1",
         "price": 1500,
-        "quantity": 199,
+        "quantity": 198,
         "purchased_price": 146.71,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 199,
+                "quantity": 198,
                 "reserve": 0
             }
         ]
@@ -1263,14 +1263,14 @@
         "id": 641,
         "sku": "060100004",
         "price": 4000,
-        "quantity": 6,
+        "quantity": 3,
         "purchased_price": 1871.75,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 6,
+                "quantity": 3,
                 "reserve": 0
             }
         ]
@@ -1279,14 +1279,14 @@
         "id": 642,
         "sku": "060100003",
         "price": 250,
-        "quantity": 22,
+        "quantity": 26,
         "purchased_price": 108.29,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 22,
+                "quantity": 26,
                 "reserve": 0
             }
         ]
@@ -1359,14 +1359,14 @@
         "id": 654,
         "sku": "150000216",
         "price": 260,
-        "quantity": 0,
-        "purchased_price": 129.5,
+        "quantity": 4,
+        "purchased_price": 125,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 0,
+                "quantity": 4,
                 "reserve": 0
             }
         ]
@@ -1439,14 +1439,14 @@
         "id": 663,
         "sku": "789451",
         "price": 110,
-        "quantity": 52,
-        "purchased_price": 62.53,
+        "quantity": 90,
+        "purchased_price": 62.06,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 52,
+                "quantity": 90,
                 "reserve": 0
             }
         ]
@@ -1873,13 +1873,13 @@
         "price": 525,
         "quantity": 12,
         "purchased_price": 134.46,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 12,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -1937,13 +1937,13 @@
         "price": 850,
         "quantity": 41,
         "purchased_price": 235.44,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 41,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -1999,14 +1999,14 @@
         "id": 855,
         "sku": "150000083",
         "price": 1450,
-        "quantity": 1,
-        "purchased_price": 855.33,
+        "quantity": 6,
+        "purchased_price": 888,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 6,
                 "reserve": 0
             }
         ]
@@ -2031,14 +2031,14 @@
         "id": 857,
         "sku": "150000085",
         "price": 440,
-        "quantity": 1,
-        "purchased_price": 141.03,
+        "quantity": 6,
+        "purchased_price": 132,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 6,
                 "reserve": 0
             }
         ]
@@ -2047,14 +2047,14 @@
         "id": 858,
         "sku": "150000086",
         "price": 2250,
-        "quantity": 3,
-        "purchased_price": 1306.67,
+        "quantity": 7,
+        "purchased_price": 1337.14,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 3,
+                "quantity": 7,
                 "reserve": 0
             }
         ]
@@ -2177,13 +2177,13 @@
         "price": 2100,
         "quantity": 19,
         "purchased_price": 441,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 19,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -2191,14 +2191,14 @@
         "id": 876,
         "sku": "150000105",
         "price": 850,
-        "quantity": 7,
+        "quantity": 5,
         "purchased_price": 242.78,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 7,
+                "quantity": 5,
                 "reserve": 0
             }
         ]
@@ -2223,15 +2223,15 @@
         "id": 878,
         "sku": "150000107",
         "price": 850,
-        "quantity": 79,
+        "quantity": 59,
         "purchased_price": 235,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 79,
-                "reserve": 0
+                "quantity": 59,
+                "reserve": 1
             }
         ]
     },
@@ -2247,6 +2247,38 @@
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 41,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 880,
+        "sku": "150000109",
+        "price": 850,
+        "quantity": 0,
+        "purchased_price": 300,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 2,
+                "name": "Склад-офис",
+                "quantity": 0,
+                "reserve": 0
+            }
+        ]
+    },
+    {
+        "id": 883,
+        "sku": "150000112",
+        "price": 850,
+        "quantity": 0,
+        "purchased_price": 300,
+        "reserve": 0,
+        "warehouse": [
+            {
+                "id": 2,
+                "name": "Склад-офис",
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -2511,14 +2543,14 @@
         "id": 916,
         "sku": "150000145",
         "price": 350,
-        "quantity": 24,
+        "quantity": 23,
         "purchased_price": 175,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 24,
+                "quantity": 23,
                 "reserve": 0
             }
         ]
@@ -2559,14 +2591,14 @@
         "id": 925,
         "sku": "150000154",
         "price": 1550,
-        "quantity": 2,
-        "purchased_price": 707.86,
+        "quantity": 8,
+        "purchased_price": 698.21,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 2,
+                "quantity": 8,
                 "reserve": 0
             }
         ]
@@ -3007,14 +3039,14 @@
         "id": 976,
         "sku": "150000243",
         "price": 60,
-        "quantity": 4,
+        "quantity": 1,
         "purchased_price": 20,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 4,
+                "quantity": 1,
                 "reserve": 0
             }
         ]
@@ -3119,14 +3151,14 @@
         "id": 987,
         "sku": "150000256",
         "price": 250,
-        "quantity": 19,
+        "quantity": 17,
         "purchased_price": 87,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 19,
+                "quantity": 17,
                 "reserve": 0
             }
         ]
@@ -3135,14 +3167,14 @@
         "id": 991,
         "sku": "150000260",
         "price": 1600,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 490,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -3217,13 +3249,13 @@
         "price": 80,
         "quantity": 60,
         "purchased_price": 17.7,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 60,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -3233,13 +3265,13 @@
         "price": 80,
         "quantity": 29,
         "purchased_price": 17.7,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 29,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -3247,14 +3279,14 @@
         "id": 1003,
         "sku": "150000272",
         "price": 80,
-        "quantity": 30,
+        "quantity": 27,
         "purchased_price": 17.77,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 30,
+                "quantity": 27,
                 "reserve": 0
             }
         ]
@@ -3455,15 +3487,15 @@
         "id": 1036,
         "sku": "150000306",
         "price": 850,
-        "quantity": 3,
+        "quantity": 2,
         "purchased_price": 530,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 3,
-                "reserve": 0
+                "quantity": 2,
+                "reserve": 1
             }
         ]
     },
@@ -3599,14 +3631,14 @@
         "id": 1048,
         "sku": "150000318",
         "price": 220,
-        "quantity": 0,
+        "quantity": 6,
         "purchased_price": 110,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 0,
+                "quantity": 6,
                 "reserve": 0
             }
         ]
@@ -3615,14 +3647,14 @@
         "id": 1049,
         "sku": "150000319",
         "price": 444,
-        "quantity": 5,
-        "purchased_price": 239.5,
+        "quantity": 9,
+        "purchased_price": 243.83,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 5,
+                "quantity": 9,
                 "reserve": 0
             }
         ]
@@ -3631,14 +3663,14 @@
         "id": 1050,
         "sku": "150000320",
         "price": 345,
-        "quantity": 5,
+        "quantity": 10,
         "purchased_price": 169,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 5,
+                "quantity": 10,
                 "reserve": 0
             }
         ]
@@ -3791,14 +3823,14 @@
         "id": 1074,
         "sku": "150000345",
         "price": 4000,
-        "quantity": 7,
+        "quantity": 1,
         "purchased_price": 1856.81,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 7,
+                "quantity": 1,
                 "reserve": 0
             }
         ]
@@ -3807,14 +3839,14 @@
         "id": 1075,
         "sku": "150000346",
         "price": 250,
-        "quantity": 18,
+        "quantity": 25,
         "purchased_price": 110,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 18,
+                "quantity": 25,
                 "reserve": 0
             }
         ]
@@ -3919,14 +3951,14 @@
         "id": 1088,
         "sku": "150000358",
         "price": 1150,
-        "quantity": 0,
-        "purchased_price": 512.44,
+        "quantity": 6,
+        "purchased_price": 495,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 0,
+                "quantity": 6,
                 "reserve": 0
             }
         ]
@@ -4024,14 +4056,14 @@
         "id": 1097,
         "sku": "150000366",
         "price": 150,
-        "quantity": 100,
+        "quantity": 97,
         "purchased_price": 67.88,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 100,
+                "quantity": 97,
                 "reserve": 0
             }
         ]
@@ -5516,14 +5548,14 @@
         "id": 1269,
         "sku": "150000535",
         "price": 380,
-        "quantity": 4,
+        "quantity": 0,
         "purchased_price": 105,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 4,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -5532,14 +5564,14 @@
         "id": 1271,
         "sku": "150000537",
         "price": 2500,
-        "quantity": 19,
+        "quantity": 18,
         "purchased_price": 591.21,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 19,
+                "quantity": 18,
                 "reserve": 0
             }
         ]
@@ -5756,14 +5788,14 @@
         "id": 1293,
         "sku": "150000560",
         "price": 190,
-        "quantity": 22,
+        "quantity": 18,
         "purchased_price": 43.78,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 22,
+                "quantity": 18,
                 "reserve": 0
             }
         ]
@@ -5820,15 +5852,15 @@
         "id": 1298,
         "sku": "150000565",
         "price": 3000,
-        "quantity": 50,
+        "quantity": 33,
         "purchased_price": 560.18,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 50,
-                "reserve": 0
+                "quantity": 33,
+                "reserve": 1
             }
         ]
     },
@@ -5916,14 +5948,14 @@
         "id": 1315,
         "sku": "150000582",
         "price": 420,
-        "quantity": 0,
+        "quantity": 10,
         "purchased_price": 8.23,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 0,
+                "quantity": 10,
                 "reserve": 0
             }
         ]
@@ -6268,14 +6300,14 @@
         "id": 1363,
         "sku": "150000630",
         "price": 2700,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 680,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -6316,15 +6348,15 @@
         "id": 1366,
         "sku": "150000633",
         "price": 2600,
-        "quantity": 20,
+        "quantity": 19,
         "purchased_price": 513.85,
-        "reserve": 1,
+        "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 20,
-                "reserve": 1
+                "quantity": 19,
+                "reserve": 0
             }
         ]
     },
@@ -6492,14 +6524,14 @@
         "id": 1379,
         "sku": "150000649",
         "price": 150,
-        "quantity": 17,
+        "quantity": 42,
         "purchased_price": 25,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 17,
+                "quantity": 42,
                 "reserve": 0
             }
         ]
@@ -6508,15 +6540,15 @@
         "id": 1381,
         "sku": "150000651",
         "price": 330,
-        "quantity": 13,
-        "purchased_price": 150.03,
-        "reserve": 0,
+        "quantity": 1091,
+        "purchased_price": 120.24,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 13,
-                "reserve": 0
+                "quantity": 1091,
+                "reserve": 1
             }
         ]
     },
@@ -6541,14 +6573,14 @@
         "sku": "150000653",
         "price": 2900,
         "quantity": 0,
-        "purchased_price": 680,
-        "reserve": 1,
+        "purchased_price": 1250,
+        "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 0,
-                "reserve": 1
+                "reserve": 0
             }
         ]
     },
@@ -6556,14 +6588,14 @@
         "id": 1384,
         "sku": "150000654",
         "price": 210,
-        "quantity": 348,
+        "quantity": 345,
         "purchased_price": 66.24,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 348,
+                "quantity": 345,
                 "reserve": 0
             }
         ]
@@ -6606,13 +6638,13 @@
         "price": 210,
         "quantity": 47,
         "purchased_price": 110.66,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 47,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -6796,15 +6828,15 @@
         "id": 1401,
         "sku": "150000673",
         "price": 400,
-        "quantity": 60,
+        "quantity": 54,
         "purchased_price": 125.85,
-        "reserve": 3,
+        "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 60,
-                "reserve": 3
+                "quantity": 54,
+                "reserve": 0
             }
         ]
     },
@@ -6981,14 +7013,14 @@
         "id": 1414,
         "sku": "150000686",
         "price": 2900,
-        "quantity": 3,
+        "quantity": 0,
         "purchased_price": 520.94,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 3,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -6997,14 +7029,14 @@
         "id": 1415,
         "sku": "150000687",
         "price": 2900,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 531.65,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7013,14 +7045,14 @@
         "id": 1416,
         "sku": "150000688",
         "price": 2900,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 535,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7029,14 +7061,14 @@
         "id": 1417,
         "sku": "150000689",
         "price": 2900,
-        "quantity": 2,
+        "quantity": 0,
         "purchased_price": 524.75,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 2,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7045,14 +7077,14 @@
         "id": 1418,
         "sku": "150000690",
         "price": 2900,
-        "quantity": 6,
+        "quantity": 11,
         "purchased_price": 235.92,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 6,
+                "quantity": 11,
                 "reserve": 0
             }
         ]
@@ -7061,15 +7093,15 @@
         "id": 1419,
         "sku": "150000691",
         "price": 350,
-        "quantity": 89,
+        "quantity": 81,
         "purchased_price": 53.55,
-        "reserve": 3,
+        "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 89,
-                "reserve": 3
+                "quantity": 81,
+                "reserve": 0
             }
         ]
     },
@@ -7077,14 +7109,14 @@
         "id": 1420,
         "sku": "150000692",
         "price": 350,
-        "quantity": 58,
+        "quantity": 54,
         "purchased_price": 53.46,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 58,
+                "quantity": 54,
                 "reserve": 0
             }
         ]
@@ -7093,15 +7125,15 @@
         "id": 1421,
         "sku": "150000693",
         "price": 350,
-        "quantity": 86,
+        "quantity": 81,
         "purchased_price": 53.58,
-        "reserve": 1,
+        "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 86,
-                "reserve": 1
+                "quantity": 81,
+                "reserve": 0
             }
         ]
     },
@@ -7109,15 +7141,15 @@
         "id": 1422,
         "sku": "150000694",
         "price": 350,
-        "quantity": 89,
+        "quantity": 81,
         "purchased_price": 53.51,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 89,
-                "reserve": 0
+                "quantity": 81,
+                "reserve": 1
             }
         ]
     },
@@ -7189,15 +7221,15 @@
         "id": 1430,
         "sku": "150000703",
         "price": 2000,
-        "quantity": 51,
+        "quantity": 40,
         "purchased_price": 519.61,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 51,
-                "reserve": 0
+                "quantity": 40,
+                "reserve": 1
             }
         ]
     },
@@ -7333,14 +7365,14 @@
         "id": 1450,
         "sku": "150000779",
         "price": 2900,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 516.74,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7349,14 +7381,14 @@
         "id": 1451,
         "sku": "150000780",
         "price": 2900,
-        "quantity": 6,
+        "quantity": 2,
         "purchased_price": 532.04,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 6,
+                "quantity": 2,
                 "reserve": 0
             }
         ]
@@ -7413,14 +7445,14 @@
         "id": 1455,
         "sku": "150000783",
         "price": 3200,
-        "quantity": 8,
+        "quantity": 3,
         "purchased_price": 800,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 8,
+                "quantity": 3,
                 "reserve": 0
             }
         ]
@@ -7605,15 +7637,15 @@
         "id": 1467,
         "sku": "150000810",
         "price": 119,
-        "quantity": 412,
+        "quantity": 364,
         "purchased_price": 60,
-        "reserve": 0,
+        "reserve": 3,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 412,
-                "reserve": 0
+                "quantity": 364,
+                "reserve": 3
             }
         ]
     },
@@ -7686,7 +7718,7 @@
         "sku": "150000819",
         "price": 199,
         "quantity": 0,
-        "purchased_price": 105,
+        "purchased_price": 120,
         "reserve": 0,
         "warehouse": [
             {
@@ -7782,7 +7814,7 @@
         "sku": "150000816",
         "price": 69,
         "quantity": 0,
-        "purchased_price": 31,
+        "purchased_price": 35,
         "reserve": 0,
         "warehouse": [
             {
@@ -7829,14 +7861,14 @@
         "id": 1481,
         "sku": "150000827",
         "price": 129,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 70,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7845,14 +7877,14 @@
         "id": 1482,
         "sku": "150000826",
         "price": 129,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 70,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7861,14 +7893,14 @@
         "id": 1483,
         "sku": "150000825",
         "price": 129,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 70,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -7877,14 +7909,14 @@
         "id": 1484,
         "sku": "150000824",
         "price": 129,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 70,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -8213,14 +8245,14 @@
         "id": 1505,
         "sku": "150000847",
         "price": 2000,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 700,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -8311,13 +8343,13 @@
         "price": 2000,
         "quantity": 1,
         "purchased_price": 0,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 1,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -8373,14 +8405,14 @@
         "id": 1515,
         "sku": "150000857",
         "price": 650,
-        "quantity": 71,
+        "quantity": 68,
         "purchased_price": 128,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 71,
+                "quantity": 68,
                 "reserve": 0
             }
         ]
@@ -8389,14 +8421,14 @@
         "id": 1516,
         "sku": "150000858",
         "price": 150,
-        "quantity": 10,
+        "quantity": 25,
         "purchased_price": 25,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 10,
+                "quantity": 25,
                 "reserve": 0
             }
         ]
@@ -8405,14 +8437,14 @@
         "id": 1517,
         "sku": "150000859",
         "price": 150,
-        "quantity": 9,
+        "quantity": 8,
         "purchased_price": 25,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 9,
+                "quantity": 8,
                 "reserve": 0
             }
         ]
@@ -8549,14 +8581,14 @@
         "id": 1527,
         "sku": "150000869",
         "price": 600,
-        "quantity": 9,
+        "quantity": 8,
         "purchased_price": 300,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 9,
+                "quantity": 8,
                 "reserve": 0
             }
         ]
@@ -8581,14 +8613,14 @@
         "id": 1530,
         "sku": "150000871",
         "price": 2700,
-        "quantity": 10,
+        "quantity": 9,
         "purchased_price": 900,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 10,
+                "quantity": 9,
                 "reserve": 0
             }
         ]
@@ -8677,15 +8709,15 @@
         "id": 1536,
         "sku": "150000877",
         "price": 350,
-        "quantity": 117,
+        "quantity": 109,
         "purchased_price": 44.08,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 117,
-                "reserve": 0
+                "quantity": 109,
+                "reserve": 1
             }
         ]
     },
@@ -8725,14 +8757,14 @@
         "id": 1539,
         "sku": "150000882",
         "price": 4000,
-        "quantity": 5,
+        "quantity": 3,
         "purchased_price": 1269,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 5,
+                "quantity": 3,
                 "reserve": 0
             }
         ]
@@ -8759,13 +8791,13 @@
         "price": 2700,
         "quantity": 1,
         "purchased_price": 680,
-        "reserve": 1,
+        "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 1,
-                "reserve": 1
+                "reserve": 0
             }
         ]
     },
@@ -8976,14 +9008,14 @@
         "id": 1556,
         "sku": "150000894",
         "price": 800,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 333,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -8992,14 +9024,14 @@
         "id": 1557,
         "sku": "150000893",
         "price": 800,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 333,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -9009,7 +9041,7 @@
         "sku": "150000896",
         "price": 800,
         "quantity": 1,
-        "purchased_price": 0,
+        "purchased_price": 333,
         "reserve": 0,
         "warehouse": [
             {
@@ -9042,13 +9074,13 @@
         "price": 800,
         "quantity": 2,
         "purchased_price": 0,
-        "reserve": 0,
+        "reserve": 2,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 2,
-                "reserve": 0
+                "reserve": 2
             }
         ]
     },
@@ -9058,13 +9090,13 @@
         "price": 900,
         "quantity": 0,
         "purchased_price": 0,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 0,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -9090,13 +9122,13 @@
         "price": 900,
         "quantity": 0,
         "purchased_price": 0,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 0,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
@@ -9264,14 +9296,14 @@
         "id": 1574,
         "sku": "150000914",
         "price": 4000,
-        "quantity": 1,
-        "purchased_price": 0,
+        "quantity": 0,
+        "purchased_price": 1312.5,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -9344,14 +9376,14 @@
         "id": 1579,
         "sku": "150000919",
         "price": 4200,
-        "quantity": 2,
+        "quantity": 1,
         "purchased_price": 619.05,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 2,
+                "quantity": 1,
                 "reserve": 0
             }
         ]
@@ -9376,14 +9408,14 @@
         "id": 1581,
         "sku": "150000921",
         "price": 4200,
-        "quantity": 4,
+        "quantity": 2,
         "purchased_price": 619.05,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 4,
+                "quantity": 2,
                 "reserve": 0
             }
         ]
@@ -9392,14 +9424,14 @@
         "id": 1582,
         "sku": "150000922",
         "price": 4200,
-        "quantity": 1,
+        "quantity": 0,
         "purchased_price": 619.05,
         "reserve": 0,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
-                "quantity": 1,
+                "quantity": 0,
                 "reserve": 0
             }
         ]
@@ -9506,13 +9538,13 @@
         "price": 1300,
         "quantity": 7,
         "purchased_price": 303.59,
-        "reserve": 0,
+        "reserve": 1,
         "warehouse": [
             {
                 "id": 2,
                 "name": "Склад-офис",
                 "quantity": 7,
-                "reserve": 0
+                "reserve": 1
             }
         ]
     },
