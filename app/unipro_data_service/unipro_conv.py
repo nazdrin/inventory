@@ -86,9 +86,9 @@ def convert_stock(data, branch):
         {
             "branch": branch,
             "code": item["guid"],
-            "price": item.get("p1", 0),
+            "price": item.get("p2") if item.get("p2") and item.get("p2") > 0 else item.get("p1", 0),
             "qty": max(item.get("qtty", 0), 0),  # Если qtty < 0, устанавливаем 0
-            "price_reserve": item.get("p1", 0)
+            "price_reserve": item.get("p2") if item.get("p2") and item.get("p2") > 0 else item.get("p1", 0)
         }
         for item in goods
     ]
