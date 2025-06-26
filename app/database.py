@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 import os
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -5,7 +7,6 @@ from sqlalchemy.sql import text
 from .models import Base, DeveloperSettings, InventoryData, InventoryStock, ReservedItems, DataFormat, EnterpriseSettings, ClientNotifications, MappingBranch
 from contextlib import asynccontextmanager
 import logging
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Проверяем, что переменная окружения установлена

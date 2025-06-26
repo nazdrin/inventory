@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, Request, Security
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select

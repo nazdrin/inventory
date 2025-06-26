@@ -77,7 +77,7 @@ async def download_file(drive_service, file_id, file_name):
         raise
 
 
-async def extract_catalog_from_google_drive(enterprise_code: str):
+async def extract_catalog_from_google_drive(enterprise_code: str, file_type):
     async with get_async_db() as db:
         try:
             result = await db.execute(
@@ -115,7 +115,7 @@ async def extract_catalog_from_google_drive(enterprise_code: str):
             send_notification(f"Ошибка каталога JetVet {enterprise_code}: {str(e)}", "Разработчик")
 
 
-async def extract_stock_from_google_drive(enterprise_code: str):
+async def extract_stock_from_google_drive(enterprise_code: str, file_type):
     async with get_async_db() as db:
         try:
             enterprise_result = await db.execute(
