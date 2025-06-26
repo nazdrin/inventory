@@ -1,0 +1,1 @@
+2025-06-26 07:30:50.927964 - Enterprise Code: 311 - Error: HTTPSConnectionPool(host='crm.h-profit.com', port=443): Max retries exceeded with url: /bremote-csv/get_xml_products?uid=6411&mid=7891 (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x000001B92E5B35D0>: Failed to resolve 'crm.h-profit.com' ([Errno 11001] getaddrinfo failed)"))
