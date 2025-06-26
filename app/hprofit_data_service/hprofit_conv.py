@@ -58,13 +58,12 @@ def download_feed(url: str) -> str:
         raise Exception(f"Ошибка загрузки: {response.status_code}")
     return response.text
 
-
 def transform_catalog(data: list) -> list:
     return [
         {
             "code": item.get("productId"),
             "name": item.get("productName"),
-            "producer": item.get("brand"),
+            "producer": "N/A",  # всегда N/A
             "barcode": item.get("barcode"),
             "vat": 20.0
         }
