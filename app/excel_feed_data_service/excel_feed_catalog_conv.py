@@ -81,7 +81,7 @@ def save_to_json(data, enterprise_code, file_type):
     logging.info(f"JSON записан в файл: {json_file_path}")
     return json_file_path
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     """Основной процесс загрузки и обработки Excel-фида."""
     try:
         excel_path = download_excel(FEED_URL)

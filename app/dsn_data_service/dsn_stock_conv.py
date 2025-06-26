@@ -101,7 +101,7 @@ def save_to_json(data, enterprise_code, file_type):
         return None
 
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     feed_url = await fetch_feed_url(enterprise_code)
     if not feed_url:
         logging.error(f"Не найден URL фида для enterprise_code: {enterprise_code}")

@@ -19,6 +19,8 @@ from app.key_crm_data_service.key_crm_stock_conv import run_service as run_key_c
 from app.dsn_data_service.dsn_stock_conv import run_service as run_dsn
 from app.ftp_data_service.ftp_stock_conv import run_service as run_ftp
 from app.prom_data_service.prom_stock import run_prom
+from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
+
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.jetvet_data_service.jetvet_google_drive import extract_stock_from_google_drive as stock_jetvet
 from app.database import get_async_db, EnterpriseSettings
@@ -40,6 +42,7 @@ PROCESSORS = {
     "Dsn": run_dsn,
     "KeyCRM": run_key_crm,
     "Ftp": run_ftp,
+    "HProfit": run_hprofit,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
@@ -79,7 +82,7 @@ async def process_stock_for_enterprise(db: AsyncSession, enterprise: EnterpriseS
     try:
         processor = PROCESSORS.get(enterprise.data_format)
         if processor:
-            await processor(enterprise.enterprise_code)
+            await processor(enterprise.enterprise_code, "stock")
             logging.info(f"Обработаны остатки для предприятия {enterprise.enterprise_code} ({enterprise.data_format}).")
         elif enterprise.data_format in ["Unipro", "Blank"]:
             logging.info(f"Пропуск обработки остатков для предприятия {enterprise.enterprise_code} ({enterprise.data_format}).")
