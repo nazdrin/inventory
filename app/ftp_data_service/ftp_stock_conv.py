@@ -127,7 +127,7 @@ def delete_old_files(ftp):
 # -------------------------------
 # Основная функция запуска
 # -------------------------------
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     ftp = connect_ftp()
     latest_file = get_latest_json_file(ftp)
 

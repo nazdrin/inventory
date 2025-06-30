@@ -1,7 +1,12 @@
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import router as developer_router
 from app.database import create_tables
+from fastapi.middleware.cors import CORSMiddleware
 
 # Инициализация FastAPI приложения
 app = FastAPI()
