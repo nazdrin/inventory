@@ -99,7 +99,7 @@ def save_to_json(data, enterprise_code, file_type):
         logging.error(f"Ошибка при сохранении JSON-файла: {e}")
         return None
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     """Основной сервис выполнения задачи."""
     developer_settings = await fetch_developer_settings()
     if not developer_settings:

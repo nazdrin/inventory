@@ -105,7 +105,7 @@ def save_to_tempfile(data):
         return None
 
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
     if not enterprise_settings:
         print("Настройки предприятия не найдены.")

@@ -90,7 +90,7 @@ async def fetch_enterprise_settings(enterprise_code):
         )
         return result.scalars().first()
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     """Основной процесс загрузки и обработки XML-фида."""
     feed_url = await fetch_feed_url(enterprise_code)
     if not feed_url:

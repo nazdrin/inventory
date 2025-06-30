@@ -104,7 +104,7 @@ def save_to_json(data, enterprise_code, file_type):
         logging.error(f"Ошибка при сохранении JSON-файла: {e}")
         return None
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     """Основной процесс загрузки и обработки XML-фида."""
     feed_url = await fetch_feed_url(enterprise_code)
     if not feed_url:
