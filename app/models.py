@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Foreig
 from sqlalchemy.orm import declarative_mixin, declarative_base
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from sqlalchemy import PrimaryKeyConstraint
 
 Base = declarative_base()
 
@@ -21,7 +22,7 @@ class TimestampMixin:
 class InventoryData(Base, TimestampMixin):
     __tablename__ = "inventory_data"
 
-    code = Column(String, primary_key=True)
+    code = Column(String, nullable=False)
     name = Column(String, nullable=False)
     producer = Column(String, nullable=False)
     vat = Column(Float, nullable=False)
@@ -32,6 +33,11 @@ class InventoryData(Base, TimestampMixin):
     badm = Column(String, nullable=True)
     venta = Column(String, nullable=True)
     enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("code", "enterprise_code"),
+    )
+
 
 # Таблица остатков
 class InventoryStock(Base, TimestampMixin):
