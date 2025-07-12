@@ -94,7 +94,7 @@ async def download_file(drive_service, file_id, file_name):
         send_notification(f"Ошибка при скачивании файла {file_name}: {str(e)}", "Разработчик")
         raise
 
-async def extract_stock_from_google_drive(enterprise_code: str):
+async def extract_stock_from_google_drive(enterprise_code: str, file_type):
     """
     Обрабатывает файлы остатков из Google Drive для указанного предприятия.
     """
@@ -162,7 +162,7 @@ async def extract_stock_from_google_drive(enterprise_code: str):
             logging.error(f"Ошибка при обработке остатков для предприятия с кодом {enterprise_code}: {str(e)}")
             send_notification(f"Ошибка при обработке остатков Google Drive для предприятия с кодом {enterprise_code}: {str(e)}", "Разработчик")
 
-async def extract_catalog_from_google_drive(enterprise_code: str):
+async def extract_catalog_from_google_drive(enterprise_code: str, file_type):
     """
     Обрабатывает файлы каталога из Google Drive для указанного предприятия.
     """

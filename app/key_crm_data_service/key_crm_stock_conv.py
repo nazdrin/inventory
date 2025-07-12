@@ -77,6 +77,21 @@ def fetch_all_products(api_key):
     print(f"\nВсего получено: {len(all_products)} записей")
     return all_products
 
+def save_raw_input(data, enterprise_code):
+    try:
+        raw_dir = os.path.join(os.getcwd(), "input_raw", str(enterprise_code))
+        os.makedirs(raw_dir, exist_ok=True)
+        file_path = os.path.join(raw_dir, "raw_stock.json")
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
+        logging.info(f"Исходные данные сохранены в файл: {file_path}")
+        return file_path
+    except IOError as e:
+        logging.error(f"Ошибка при сохранении исходного файла: {e}")
+        return None
+
 
 def transform_stock_data(products, branch_id):
     transformed = []
@@ -105,7 +120,7 @@ def save_to_tempfile(data):
         return None
 
 
-async def run_service(enterprise_code):
+async def run_service(enterprise_code, file_type):
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
     if not enterprise_settings:
         print("Настройки предприятия не найдены.")
@@ -126,6 +141,9 @@ async def run_service(enterprise_code):
     if not all_products:
         print("Данные не получены.")
         return
+
+    # ✅ Сохраняем входящий файл до фильтрации
+    save_raw_input(all_products, enterprise_code)
 
     transformed_data = transform_stock_data(all_products, branch_id)
     if not transformed_data:

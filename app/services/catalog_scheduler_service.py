@@ -18,6 +18,7 @@ KIEV_TZ = pytz.timezone("Europe/Kiev")
 from app.dntrade_data_service.fetch_convert import run_service
 from app.checkbox_data_service.checkbox_catalog_conv import run_service as run_checkbox
 from app.rozetka_data_service.rozetka_catalog_conv import run_service as run_rozetka
+from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
 from app.dsn_data_service.dsn_catalog_conv import run_service as run_dsn
 from app.prom_data_service.prom_catalog import run_prom
 from app.ftp_data_service.ftp_catalog_conv import run_service as run_ftp
@@ -41,7 +42,8 @@ PROCESSORS = {
     "Dsn": run_dsn,
     "KeyCRM": run_key_crm,
     "Ftp": run_ftp,
-}
+    "HProfit": run_hprofit,
+};
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
     logging.error(message)
@@ -92,7 +94,7 @@ async def process_catalog_for_enterprise(db: AsyncSession, enterprise: Enterpris
     try:
         processor = PROCESSORS.get(enterprise.data_format)
         if processor:
-            await processor(enterprise.enterprise_code)
+            await processor(enterprise.enterprise_code, "catalog")
             logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
         elif enterprise.data_format in ["Unipro", "Blank"]:
             logging.info(f"Skipping processing for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
