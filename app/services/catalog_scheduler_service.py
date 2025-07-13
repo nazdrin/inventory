@@ -19,6 +19,7 @@ from app.dntrade_data_service.fetch_convert import run_service
 from app.checkbox_data_service.checkbox_catalog_conv import run_service as run_checkbox
 from app.rozetka_data_service.rozetka_catalog_conv import run_service as run_rozetka
 from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
+from app.ftp_tabletki_data_service.ftp_tabletki_conv import run_service as run_ftp_tabletki
 from app.dsn_data_service.dsn_catalog_conv import run_service as run_dsn
 from app.prom_data_service.prom_catalog import run_prom
 from app.ftp_data_service.ftp_catalog_conv import run_service as run_ftp
@@ -43,6 +44,7 @@ PROCESSORS = {
     "KeyCRM": run_key_crm,
     "Ftp": run_ftp,
     "HProfit": run_hprofit,
+    "FtpTabletki": run_ftp_tabletki,
 };
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
