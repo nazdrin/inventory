@@ -8,6 +8,7 @@ from app.database import get_async_db, MappingBranch, EnterpriseSettings, Invent
 from sqlalchemy import select
 import logging
 import json
+from app.services.database_service import process_database_service
 
 TEMP_DIR = "/opt/test_project/uploads"
 FTP_UPLOADS_DIR = Path("/var/ftp/tabletki-uploads")
@@ -133,6 +134,16 @@ def save_to_json(data: list, enterprise_code: str, file_type: str) -> Path:
     return out_path
 
 
+async def send_catalog_data(file_path: Path, enterprise_code: str):
+    await process_database_service(file_path, "catalog", enterprise_code)
+    logging.info(f"📤 Каталог отправлен: {file_path}")
+
+
+async def send_stock_data(file_path: Path, enterprise_code: str):
+    await process_database_service(file_path, "stock", enterprise_code)
+    logging.info(f"📤 Остатки отправлены: {file_path}")
+
+
 async def run_service(enterprise_code: str, file_type: str):
     async with get_async_db() as session:
         result = await session.execute(
@@ -158,13 +169,16 @@ async def run_service(enterprise_code: str, file_type: str):
                 logging.warning(f"❌ Каталог {zip_file.name} не прошёл валидацию")
                 continue
             data = transform_catalog(offers)
+            save_path = save_to_json(data, enterprise_code, file_type)
+            await send_catalog_data(save_path, enterprise_code)
 
         elif file_type == "stock":
             data = transform_stock(offers, branch)
+            save_path = save_to_json(data, enterprise_code, file_type)
+            await send_stock_data(save_path, enterprise_code)
 
         else:
             logging.error(f"❌ Неизвестный тип: {file_type}")
             continue
 
-        save_path = save_to_json(data, enterprise_code, file_type)
-        logging.info(f"✅ Данные подготовлены: {save_path}")
+        logging.info(f"✅ Данные подготовлены и отправлены: {save_path}")
