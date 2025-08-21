@@ -28,7 +28,7 @@ async def send_orders_to_tabletki(session: AsyncSession, orders: list, tabletki_
                 url = f"{endpoint_orders}/api/Orders/cancelledOrders"
                 cancel_data = [{
                     "id": order["id"],
-                    "id_CancelReason": 2,
+                    "id_CancelReason": 1,
                     "rows": [
                         {
                             "goodsCode": item["goodsCode"],
