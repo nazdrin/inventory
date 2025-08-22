@@ -19,6 +19,7 @@ from app.key_crm_data_service.key_crm_stock_conv import run_service as run_key_c
 from app.dsn_data_service.dsn_stock_conv import run_service as run_dsn
 from app.ftp_data_service.ftp_stock_conv import run_service as run_ftp
 from app.prom_data_service.prom_stock import run_prom
+from app.torgsoft_google_data_service.torgsoft_google_drive import run_torgsoft_google
 from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
 from app.ftp_tabletki_data_service.ftp_tabletki_conv import run_service as run_ftp_tabletki
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
@@ -44,6 +45,7 @@ PROCESSORS = {
     "Ftp": run_ftp,
     "HProfit": run_hprofit,
     "FtpTabletki": run_ftp_tabletki,
+    "TorgsoftGoogle": run_torgsoft_google,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
