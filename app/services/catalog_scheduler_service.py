@@ -24,6 +24,7 @@ from app.dsn_data_service.dsn_catalog_conv import run_service as run_dsn
 from app.prom_data_service.prom_catalog import run_prom
 from app.torgsoft_google_data_service.torgsoft_google_drive import run_torgsoft_google
 from app.torgsoft_google_multi_data_service.torgsoft_multi_google_drive import run_torgsoft_google as run_torgsoft_multi
+from app.vetmanager_data_service.vetmanager_converter import run_servicee as run_vetmanager
 from app.ftp_data_service.ftp_catalog_conv import run_service as run_ftp
 from app.key_crm_data_service.key_crm_catalog_conv import run_service as run_key_crm
 from app.google_drive.google_drive_service import extract_catalog_from_google_drive
@@ -49,6 +50,8 @@ PROCESSORS = {
     "FtpTabletki": run_ftp_tabletki,
     "TorgsoftGoogle": run_torgsoft_google,
     "TorgsoftGoogleMulti": run_torgsoft_multi,
+    "Vetmanager": run_vetmanager,
+
 };
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
