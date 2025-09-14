@@ -32,4 +32,3 @@ temp/
 /temp
 product.json
 temp/*.json
-credentials.json
