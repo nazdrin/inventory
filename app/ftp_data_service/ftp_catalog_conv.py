@@ -63,7 +63,7 @@ def convert_file_from_string(json_content, enterprise_code):
             "code": str(item.get("Id", "")),
             "name": item.get("Name", ""),
             "vat": DEFAULT_VAT,
-            "producer": "N/A",
+            "producer": "",
             "barcode": item.get("Barcode", "")
         }
         result.append(converted)
