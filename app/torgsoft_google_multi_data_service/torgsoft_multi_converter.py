@@ -283,58 +283,90 @@ async def process_torgsoft_catalog(
 
 
 
+from sqlalchemy.future import select
+from app.database import get_async_db, MappingBranch
+
+def _norm_store_id(s: str) -> str:
+    s = (s or "").strip().lower()
+    # унифицируем дефисы и пробелы
+    s = s.replace("—", "-").replace("–", "-")
+    s = " ".join(s.split())           # сжать кратные пробелы
+    s = s.replace(" - ", "-").replace(" -", "-").replace("- ", "-")
+    return s
+
+async def _build_branch_map(enterprise_code: str) -> dict[str, str]:
+    """Читаем все сопоставления склад->branch для данного enterprise_code и кэшируем."""
+    async with get_async_db() as session:
+        result = await session.execute(
+            select(MappingBranch.store_id, MappingBranch.branch)
+            .where(MappingBranch.enterprise_code == enterprise_code)
+        )
+        mapping = {}
+        for store_id, branch in result.all():
+            key = _norm_store_id(str(store_id))
+            if key:
+                mapping[key] = str(branch)
+        return mapping
+
 async def process_torgsoft_stock(
     enterprise_code: str,
     file_path: str,
     file_type: str = "stock",
 ) -> None:
     """
-    Конвертация стока из файла формата «Стан.xlsx».
-    Теперь поддерживается несколько складов.
-    Branch берется из таблицы MappingBranch по enterprise_code + store_id (колонка "Склад").
+    Сток из «Стан.xlsx/18.xlsx» с несколькими складами.
+    branch подбирается по enterprise_code + store_id (колонка «Склад»).
     """
     df = _read_table(file_path)
     df = _map_columns(df)
 
-    # Проверяем обязательные поля
-    missing = []
-    for req in ["code", "qty", "склад"]:
-        if req not in df.columns:
-            missing.append(req)
-    if missing:
-        raise ValueError(f"В стоке отсутствуют обязательные колонки: {', '.join(missing)}")
+    # Обязательные поля
+    required = ["code", "qty", "склад"]
+    miss = [c for c in required if c not in df.columns]
+    if miss:
+        raise ValueError(f"В стоке отсутствуют обязательные колонки: {', '.join(miss)}")
 
-    converted: List[Dict[str, Any]] = []
+    # Кэш соответствий склад->branch
+    store_to_branch = await _build_branch_map(enterprise_code)
+
+    converted = []
+    skipped_rows = 0
 
     for _, row in df.iterrows():
         item_code = _coerce_str(row.get("code"))
-        if not item_code:
+        store_id_raw = _coerce_str(row.get("склад"))
+
+        # 1) Пропуск пустых/служебных строк и «вторых шапок»
+        if not item_code or not store_id_raw:
+            skipped_rows += 1
+            continue
+        if item_code.lower() == "код фото" or store_id_raw.lower() == "склад":
+            skipped_rows += 1
             continue
 
         qty = _coerce_int_nonneg(row.get("qty"))
         price = _coerce_float(row.get("price"))
         price_reserve = _coerce_float(row.get("price_reserve"))
 
-        store_id = _coerce_str(row.get("склад"))
-        if not store_id:
-            logging.warning(f"Пропущена строка без склада (code={item_code})")
-            continue
+        key = _norm_store_id(store_id_raw)
+        branch = store_to_branch.get(key)
 
-        branch = await fetch_branch(enterprise_code, store_id)
+        if not branch:
+            # Доп. попытка: иногда в файле могут быть «30421» — прямые коды склада
+            branch = store_to_branch.get(_norm_store_id(str(int(float(store_id_raw)))) if store_id_raw.replace(".", "", 1).isdigit() else "")
+        if not branch:
+            raise ValueError(f"❌ Branch не найден для enterprise_code={enterprise_code}, store_id={store_id_raw}")
 
-        converted.append(
-            {
-                "branch": branch,
-                "code": item_code,
-                "price": price,
-                "price_reserve": price_reserve,
-                "qty": qty,
-            }
-        )
+        converted.append({
+            "branch": branch,
+            "code": item_code,
+            "price": price,
+            "price_reserve": price_reserve,
+            "qty": qty,
+        })
 
     logging.info(
-        "Сток сконвертирован: %s позиций (enterprise=%s, уникальные склады учтены)",
-        len(converted),
-        enterprise_code,
+        "Сток сконвертирован: %s позиций (enterprise=%s). Пропущено строк: %s",
+        len(converted), enterprise_code, skipped_rows
     )
     await _send_downstream(converted, data_type="stock", enterprise_code=enterprise_code)
