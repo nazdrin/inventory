@@ -72,7 +72,7 @@ UA_TO_STD_MAP = {
     # "№ з/п": "code",
 }
 
-DEFAULT_PRODUCER = "N/A"
+DEFAULT_PRODUCER = ""
 DEFAULT_VAT = 20.0
 
 

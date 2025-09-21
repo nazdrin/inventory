@@ -55,7 +55,7 @@ def parse_excel(file_path):
     df = df[list(required_columns)].rename(columns={"code": "code", "name": "name", "barcode": "barcode"})
     # Добавляем недостающие колонки
     df["vat"] = DEFAULT_VAT
-    df["producer"] = "N/A"
+    df["producer"] = ""
     
     # Удаляем дубли по 'code'
     df = df.drop_duplicates(subset=["code"], keep=False)

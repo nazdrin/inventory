@@ -77,7 +77,7 @@ async def process_jetvet_catalog(
                         "code": code,
                         "name": name,
                         "vat": DEFAULT_VAT,
-                        "producer": "N/A",
+                        "producer": "",
                         "barcode": barcode
                     }
                     items.append(item)

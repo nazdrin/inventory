@@ -63,7 +63,7 @@ def transform_catalog(data: list) -> list:
         {
             "code": item.get("productId"),
             "name": item.get("productName"),
-            "producer": "N/A",  # всегда N/A
+            "producer": "",  
             "barcode": item.get("barcode"),
             "vat": 20.0
         }
