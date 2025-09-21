@@ -26,6 +26,7 @@ from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
 from app.ftp_tabletki_data_service.ftp_tabletki_conv import run_service as run_ftp_tabletki
 from app.google_drive.google_drive_service import extract_stock_from_google_drive
 from app.jetvet_data_service.jetvet_google_drive import extract_stock_from_google_drive as stock_jetvet
+from app.ftp_zoomagazin_data_service.ftp_zoomagazin_conv import run_service as run_ftp_zoomagazin
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 #from app.services.auto_confirm import main as auto_confirm_main
@@ -50,6 +51,7 @@ PROCESSORS = {
     "TorgsoftGoogle": run_torgsoft_google,
     "TorgsoftGoogleMulti": run_torgsoft_multi,
     "Vetmanager": run_vetmanager,
+    "FtpZoomagazin": run_ftp_zoomagazin,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
