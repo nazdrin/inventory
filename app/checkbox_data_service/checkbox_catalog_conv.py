@@ -64,7 +64,7 @@ def transform_products(products):
             "code": product.get("id"),
             "name": product.get("name"),
             "vat": DEFAULT_VAT,
-            "producer": "N/A",
+            "producer": "",
             "barcode": product.get("barcode")
         })
     return transformed

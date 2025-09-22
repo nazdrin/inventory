@@ -32,3 +32,7 @@ temp/
 /temp
 product.json
 temp/*.json
+input_raw/272/raw_catalog.json
+input_raw/272/raw_stock.json
+# raw inputs
+input_raw/**

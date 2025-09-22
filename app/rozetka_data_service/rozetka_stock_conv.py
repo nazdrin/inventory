@@ -39,6 +39,12 @@ import tempfile
 import json
 import logging
 
+import xml.etree.ElementTree as ET
+import os
+import tempfile
+import json
+import logging
+
 def parse_xml(xml_string, enterprise_code):
     """Разбор XML и извлечение данных о наличии и ценах."""
     root = ET.fromstring(xml_string)

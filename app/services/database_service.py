@@ -50,7 +50,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
 
                 try:
                     logging.info(f"Инициация экспорта стока для предприятия {enterprise_code}")
-                    await process_stock_file(enterprise_code, raw_data)  # Экспорт стока
+                    await process_stock_file(enterprise_code, cleaned_data)  # Экспорт стока
                     logging.info(f"Сток успешно экспортирован для предприятия {enterprise_code}")
                 except Exception as export_error:
                     logging.error(f"Ошибка экспорта стока для {enterprise_code}: {export_error}")

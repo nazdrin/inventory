@@ -71,7 +71,7 @@ def convert_catalog(data, enterprise_code):
             "code": item["guid"],
             "name": item["namefull"],
             "vat": 20.0,
-            "producer": item.get("dopprop1") or "n/a",
+            "producer": item.get("dopprop1") or "",
             "barcode": item.get("barcode", ""),
             # "branch_id": enterprise_code
         }
