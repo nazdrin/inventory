@@ -58,7 +58,7 @@ def parse_xml(xml_string):
             "code": code,
             "name": name.strip() if name else "no_name",
             "vat": DEFAULT_VAT,
-            "producer": producer.strip() if producer else "N/A",
+            "producer": producer.strip() if producer else "",
             "barcode": barcode.strip() if barcode else ""
         }
         

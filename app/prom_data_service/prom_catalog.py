@@ -47,7 +47,7 @@ def transform_products(products, branch_id):
             "code": str(product.get("id")),  # Преобразуем id в строку
             "name": product.get("name"),
             "vat": 20,  # Статичное значение
-            "producer": "N/A",  # Статичное значение
+            "producer": "",  # Статичное значение
             "morion": "",  # Поле пока пустое
             "tabletki": "",
             "barcode": "",

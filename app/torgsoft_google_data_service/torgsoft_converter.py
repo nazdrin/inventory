@@ -54,7 +54,7 @@ UA_TO_STD_MAP = {
     # "№ з/п": "code",
 }
 
-DEFAULT_PRODUCER = "N/A"
+DEFAULT_PRODUCER = ""
 DEFAULT_VAT = 20.0
 
 
@@ -228,7 +228,7 @@ async def process_torgsoft_catalog(
       code = «№»
       name = «Назва товару»
       barcode = «Штрих-код»
-      producer = 'N/A'
+      producer = ''
       vat = 20
     (Цены/количество в каталоге можно игнорировать — это часть стока)
     """
