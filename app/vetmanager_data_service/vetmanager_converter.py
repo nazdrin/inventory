@@ -27,11 +27,12 @@ from app.models import MappingBranch
 from app.services.database_service import process_database_service
 
 # ===== НАСТРОЙКИ =====
-TARGET_STORE_ID = 12                # склад, по которому считаем qty
+TARGET_STORE_ID = 10                # склад, по которому считаем qty
 MAX_GOODS_FOR_STOCK = None          # None/0 → обработать ВСЕ отфильтрованные товары
 X_REST_TIME_ZONE = "Europe/Kiev"    # важно: на вашем инстансе 'Europe/Kyiv' даёт 500
 LOG_PROGRESS_EVERY = 200            # шаг прогресс-логов при сканировании остатков
-
+# добавьте рядом с настройками/константами модуля
+PREFERRED_CLINIC_ID = "2"
 # ===== ЛОГИ (только консоль) =====
 def _ts() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -159,14 +160,27 @@ def discover_clinics(domain: str, api_key: str, logger: logging.Logger, user_id:
 
 
 def discover_single_clinic(domain: str, api_key: str, logger: logging.Logger) -> Tuple[str, str]:
-    """Возвращает (user_id, первая clinic_id). Если клиник >1 — логируем и берём первую."""
+    """
+    Жёстко используем clinic_id = PREFERRED_CLINIC_ID (по умолчанию "2").
+    Проверяем, что пользователю эта клиника доступна.
+    Возвращаем (user_id, clinic_id).
+    """
     uid = discover_user_id(domain, api_key, logger)
-    clinics = discover_clinics(domain, api_key, logger, uid)
-    if len(clinics) == 0:
-        raise ValueError("No clinics available for user")
-    if len(clinics) > 1:
-        logger.warning(f"Multiple clinics detected {clinics}; using FIRST: {clinics[0]}")
-    return uid, clinics[0]
+    clinics = discover_clinics(domain, api_key, logger, uid)  # список строковых id
+    if PREFERRED_CLINIC_ID in clinics:
+        logger.info(f"Using FIXED clinic_id={PREFERRED_CLINIC_ID} (allowed={clinics})")
+        return uid, PREFERRED_CLINIC_ID
+
+    # если нужной клиники нет среди доступных — падаем с понятным сообщением
+    logger.error(
+        f"Requested fixed clinic_id={PREFERRED_CLINIC_ID} is not allowed for user_id={uid}. "
+        f"Allowed clinics: {clinics}"
+    )
+    raise ValueError(
+        f"clinic_id={PREFERRED_CLINIC_ID} is not available for this API key/user. "
+        f"Allowed clinics: {clinics}"
+    )
+
 
 # ===== ЦЕНА ИЗ КАТАЛОГА =====
 def select_gsp_and_price_from_catalog(good: Dict[str, Any], clinic_id: str) -> Tuple[Optional[str], float]:

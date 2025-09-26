@@ -29,6 +29,7 @@ from app.ftp_data_service.ftp_catalog_conv import run_service as run_ftp
 from app.key_crm_data_service.key_crm_catalog_conv import run_service as run_key_crm
 from app.google_drive.google_drive_service import extract_catalog_from_google_drive
 from app.jetvet_data_service.jetvet_google_drive import extract_catalog_from_google_drive as catalog_jetvet
+from app.saledrive_data_service.saledrive_conv import run_service as run_saledrive
 from app.ftp_zoomagazin_data_service.ftp_zoomagazin_conv import run_service as run_ftp_zoomagazin
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
@@ -53,7 +54,7 @@ PROCESSORS = {
     "TorgsoftGoogleMulti": run_torgsoft_multi,
     "Vetmanager": run_vetmanager,
     "FtpZoomagazin": run_ftp_zoomagazin,
-
+    "Saledrive": run_saledrive,
 };
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
