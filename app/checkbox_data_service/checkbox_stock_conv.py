@@ -14,6 +14,49 @@ load_dotenv()
 
 LIMIT = 1000  # Лимит количества записей за один запрос
 API_URL = "https://api.checkbox.ua/api/v1/goods"
+# === NEW: получение api_key по login,password из EnterpriseSettings.token ===
+AUTH_URL = os.getenv("CHECKBOX_AUTH_URL", "https://api.checkbox.in.ua/api/v1/cashier/signin")
+
+def _parse_login_password(raw: str):
+    """
+    Ожидаем строку вида 'login,password'. Вернём (login, password).
+    """
+    if not raw or "," not in raw:
+        raise ValueError("В EnterpriseSettings.token ожидается строка 'login,password'.")
+    login, password = [p.strip() for p in raw.split(",", 1)]
+    if not login or not password:
+        raise ValueError("Пустые login/password в EnterpriseSettings.token.")
+    return login, password
+
+def _signin_get_api_key(login: str, password: str) -> str:
+    """
+    Делаем авторизацию в Checkbox и возвращаем access_token как api_key.
+    """
+    headers = {"accept": "application/json", "Content-Type": "application/json"}
+    payload = {"login": login, "password": password}
+    resp = requests.post(AUTH_URL, headers=headers, json=payload, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Checkbox signin error: {resp.status_code} {resp.text[:200]}")
+    data = resp.json()
+    token = data.get("access_token")
+    if not token:
+        raise RuntimeError("Ответ авторизации без 'access_token'.")
+    return token
+
+async def resolve_api_key(enterprise_code: str) -> str:
+    """
+    Берём из БД EnterpriseSettings.token (там 'login,password'),
+    логинимся в Checkbox и возвращаем api_key (access_token).
+    """
+    enterprise_settings = await fetch_enterprise_settings(enterprise_code)
+    if not enterprise_settings:
+        raise ValueError(f"EnterpriseSettings не найден для enterprise_code={enterprise_code}")
+
+    raw = enterprise_settings.token or ""
+    login, password = _parse_login_password(raw)
+    return _signin_get_api_key(login, password)
+# === /NEW ===
+
 
 def log_progress(offset, count):
     sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
@@ -85,9 +128,11 @@ async def run_service(enterprise_code, file_type):
     if not enterprise_settings:
         return
     
-    api_key = enterprise_settings.token
+    # NEW: получаем api_key через логин/пароль
+    api_key = await resolve_api_key(enterprise_code)
     if not api_key:
         return
+
     
     branch = await fetch_branch_by_enterprise(enterprise_code)
     if not branch:
