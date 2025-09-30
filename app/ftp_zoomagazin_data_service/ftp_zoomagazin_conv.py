@@ -64,23 +64,29 @@ def _ensure_remote_dir(ftp: FTP, abs_path: str) -> None:
                 raise
 
 def _list_json_files_with_mtime(ftp, path):
+    ftp.encoding = 'latin1'  # 💡 Обход кодировки
     try:
-        ftp.encoding = "latin1"  # 💡 или 'cp1251' если нужно
-        names = [n for n in ftp.nlst() if n.lower().endswith(".json")]
-        files_with_mtime = []
-        for name in names:
+        names = ftp.nlst(path)
+    except UnicodeDecodeError as e:
+        logging.warning(f"❗️ UnicodeDecodeError: {e}")
+        names = ftp.nlst()  # Без пути — fallback
+    except Exception as e:
+        logging.error(f"Ошибка получения списка файлов: {e}")
+        return []
+
+    # Примитивная фильтрация .json
+    json_files = []
+    for name in names:
+        if name.lower().endswith(".json"):
             try:
                 mdtm = ftp.sendcmd(f"MDTM {name}")
                 dt_str = mdtm.replace("213 ", "")
                 mtime = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
-                files_with_mtime.append((name, mtime))
+                json_files.append((name, mtime))
             except Exception:
                 continue
-        return sorted(files_with_mtime, key=lambda x: x[1], reverse=True)
-    except Exception as e:
-        logging.info(f"Ошибка при получении списка файлов: {e}")
 
-        return []
+    return sorted(json_files, key=lambda x: x[1], reverse=True)
 
 
 def _download_to_string(ftp: FTP, cwd_abs: str, filename: str) -> str:
