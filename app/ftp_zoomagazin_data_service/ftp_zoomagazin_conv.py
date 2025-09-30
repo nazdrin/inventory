@@ -106,22 +106,29 @@ def _download_to_string(ftp, path, filename):
 
 from io import BytesIO
 
+
 def _move_into(ftp, src_dir_abs, filename, dst_dir_abs):
-    src_path = _join_ftp(src_dir_abs, filename)
-    dst_path = _join_ftp(dst_dir_abs, filename)
+    # Убираем возможный префикс и суффикс
+    name = filename
 
-    try:
-        buf = BytesIO()
-        ftp.retrbinary(f'RETR {src_path}', buf.write)
-        buf.seek(0)
+    # Удаляем 'catalog-' в начале, если есть
+    if name.lower().startswith("catalog-"):
+        name = name[8:]
 
-        ftp.storbinary(f'STOR {dst_path}', buf)
-        ftp.delete(src_path)
+    # Удаляем '.json' в конце, если есть
+    if name.lower().endswith(".json"):
+        name = name[:-5]
 
-        return True
-    except Exception as e:
-        logging.warning(f"❌ Не удалось переместить файл вручную: {e}")
-        return False
+    # Сформировать новое имя
+    dst_name = f"catalog-{name}.json"
+
+    ftp.rename(
+        _join_ftp(src_dir_abs, filename),
+        _join_ftp(dst_dir_abs, dst_name)
+    )
+
+    return dst_name
+
 
 
 def _cleanup_incoming(ftp: FTP, cwd_abs: str, keep_latest: int, max_age_days: int):
