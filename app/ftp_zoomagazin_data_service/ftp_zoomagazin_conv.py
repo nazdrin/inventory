@@ -89,12 +89,20 @@ def _list_json_files_with_mtime(ftp, path):
     return sorted(json_files, key=lambda x: x[1], reverse=True)
 
 
-def _download_to_string(ftp: FTP, cwd_abs: str, filename: str) -> str:
-    ftp.cwd(cwd_abs)
+def _download_to_string(ftp, path, filename):
+    from io import BytesIO
     buf = BytesIO()
+
+    # Скачиваем бинарно
     ftp.retrbinary(f"RETR {filename}", buf.write)
     buf.seek(0)
-    return buf.read().decode("utf-8")
+
+    # Пробуем прочитать как Windows-1251 (чаще всего используется в таких случаях)
+    try:
+        return buf.read().decode("utf-8")
+    except UnicodeDecodeError:
+        return buf.read().decode("windows-1251")  # Или "latin1" — можно протестировать
+
 
 def _move_into(ftp: FTP, src_dir_abs: str, filename: str, dst_dir_abs: str) -> str:
     """Переместить файл из src_dir в dst_dir, добавить timestamp к имени."""
