@@ -104,14 +104,25 @@ def _download_to_string(ftp, path, filename):
         return buf.read().decode("windows-1251")  # Или "latin1" — можно протестировать
 
 
-def _move_into(ftp: FTP, src_dir_abs: str, filename: str, dst_dir_abs: str) -> str:
-    """Переместить файл из src_dir в dst_dir, добавить timestamp к имени."""
-    _ensure_remote_dir(ftp, dst_dir_abs)
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    base, ext = os.path.splitext(filename)
-    dst_name = f"{base}__{ts}{ext}"
-    ftp.rename(_join_ftp(src_dir_abs, filename), _join_ftp(dst_dir_abs, dst_name))
-    return _join_ftp(dst_dir_abs, dst_name)
+from io import BytesIO
+
+def _move_into(ftp, src_dir_abs, filename, dst_dir_abs):
+    src_path = _join_ftp(src_dir_abs, filename)
+    dst_path = _join_ftp(dst_dir_abs, filename)
+
+    try:
+        buf = BytesIO()
+        ftp.retrbinary(f'RETR {src_path}', buf.write)
+        buf.seek(0)
+
+        ftp.storbinary(f'STOR {dst_path}', buf)
+        ftp.delete(src_path)
+
+        return True
+    except Exception as e:
+        logging.warning(f"❌ Не удалось переместить файл вручную: {e}")
+        return False
+
 
 def _cleanup_incoming(ftp: FTP, cwd_abs: str, keep_latest: int, max_age_days: int):
     now = datetime.now()
