@@ -63,26 +63,25 @@ def _ensure_remote_dir(ftp: FTP, abs_path: str) -> None:
             if not str(e).startswith("550"):
                 raise
 
-def _list_json_files_with_mtime(ftp: FTP, cwd_abs: str):
-    """Список (name, mtime) по .json в заданной директории."""
-    ftp.cwd(cwd_abs)
-    files = []
+def _list_json_files_with_mtime(ftp, path):
     try:
-        for name, facts in ftp.mlsd():
-            if facts.get("type") == "file" and name.lower().endswith(".json"):
-                m = facts.get("modify")
-                mt = datetime.strptime(m, "%Y%m%d%H%M%S") if m else datetime.min
-                files.append((name, mt))
-    except Exception:
+        ftp.encoding = "latin1"  # 💡 или 'cp1251' если нужно
         names = [n for n in ftp.nlst() if n.lower().endswith(".json")]
-        for n in names:
+        files_with_mtime = []
+        for name in names:
             try:
-                mdtm = ftp.sendcmd(f"MDTM {n}")[4:].strip()
-                mt = datetime.strptime(mdtm, "%Y%m%d%H%M%S")
+                mdtm = ftp.sendcmd(f"MDTM {name}")
+                dt_str = mdtm.replace("213 ", "")
+                mtime = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+                files_with_mtime.append((name, mtime))
             except Exception:
-                mt = datetime.min
-            files.append((n, mt))
-    return files
+                continue
+        return sorted(files_with_mtime, key=lambda x: x[1], reverse=True)
+    except Exception as e:
+        logging.info(f"Ошибка при получении списка файлов: {e}")
+
+        return []
+
 
 def _download_to_string(ftp: FTP, cwd_abs: str, filename: str) -> str:
     ftp.cwd(cwd_abs)
