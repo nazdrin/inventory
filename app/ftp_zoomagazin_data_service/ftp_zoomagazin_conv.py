@@ -1,285 +1,309 @@
+# app/ftp_zoomagazin_data_service/ftp_zoomagazin_conv.py
+# -*- coding: utf-8 -*-
+
 import os
-import json
-import asyncio
 import logging
-from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime
 from ftplib import FTP, error_perm
+from io import BytesIO
 
-from dotenv import load_dotenv
-from sqlalchemy.future import select
-from app.database import get_async_db
-from app.models import MappingBranch
-from app.services.database_service import process_database_service
-
-# =========================
-# Внутренние константы (по запросу — не в .env)
-# =========================
-ENTERPRISE_CODE = "2"           # код предприятия для маппинга ветки
-FILE_TYPE = "both"              # 'catalog' | 'stock' | 'both'
-DEFAULT_VAT = 20.0              # НДС для каталога
-KEEP_LATEST = 3                 # сколько последних файлов оставлять во входящей папке
-MAX_AGE_DAYS = 7                # удалять старше N дней
-TEMP_DIR = "./temp"             # куда сохраняем временные JSON перед отправкой
+try:
+    import chardet
+except Exception:  # chardet может быть не установлен
+    chardet = None
 
 # =========================
-# Подключение к FTP — берём из .env только доступ и папки
+# НАСТРОЙКИ (можно вынести в .env)
 # =========================
-load_dotenv()
+FTP_HOST = os.getenv("ZOOMAGAZIN_FTP_HOST", "164.92.213.254")
+FTP_PORT = int(os.getenv("ZOOMAGAZIN_FTP_PORT", "21"))
+FTP_USER = os.getenv("ZOOMAGAZIN_FTP_USER", "anonymous")
+FTP_PASS = os.getenv("ZOOMAGAZIN_FTP_PASS", "")
 
-FTP_HOST = os.getenv("FTP_HOST", "127.0.0.1")
-FTP_PORT = int(os.getenv("FTP_PORT", "21"))
-FTP_USER = os.getenv("FTP_USER", "zoomagazin")
-FTP_PASS = os.getenv("FTP_PASS", "")
+# Основная входящая директория. Скрипт попробует и альтернативу, если первая недоступна.
+INCOMING_DIR_CANDIDATES = [
+    os.getenv("ZOOMAGAZIN_INCOMING_DIR", "/tabletki-uploads"),
+    "/upload",
+]
 
-# ВАЖНО: FTP_DIR — корень клиента (если настроен local_root на upload, то здесь '/')
-FTP_DIR = os.getenv("FTP_DIR", "/")
-# Подпапки внутри корня (без начального '/')
-FTP_ARCHIVE_DIR = os.getenv("FTP_ARCHIVE_DIR", "archive").lstrip("/")
-FTP_FAILED_DIR = os.getenv("FTP_FAILED_DIR", "failed").lstrip("/")
+# Тип файла: "catalog" или "stock" — сюда придёт из планировщика
+DEFAULT_FILE_TYPE = "catalog"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+# Логгер
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 # =========================
-# Утилиты для путей и FTP
+# УТИЛИТЫ
 # =========================
 def _join_ftp(*parts: str) -> str:
-    """Аккуратно склеивает части пути для FTP (нормализуем слэши)."""
-    cleaned = [p.strip("/") for p in parts if p and p != "/"]
-    return "/" + "/".join(cleaned) if cleaned else "/"
-
-def _ensure_remote_dir(ftp: FTP, abs_path: str) -> None:
-    """Рекурсивно создаёт абсолютную директорию на FTP, если её нет."""
-    if not abs_path.startswith("/"):
-        raise ValueError("Ожидался абсолютный путь")
-    segs = [s for s in abs_path.strip("/").split("/") if s]
-    cur = "/"
-    for s in segs:
-        cur = _join_ftp(cur, s)
-        try:
-            ftp.mkd(cur)
-        except error_perm as e:
-            if not str(e).startswith("550"):
-                raise
-
-def _list_json_files_with_mtime(ftp, path):
-    ftp.encoding = 'latin1'  # 💡 Обход кодировки
-    try:
-        names = ftp.nlst(path)
-    except UnicodeDecodeError as e:
-        logging.warning(f"❗️ UnicodeDecodeError: {e}")
-        names = ftp.nlst()  # Без пути — fallback
-    except Exception as e:
-        logging.error(f"Ошибка получения списка файлов: {e}")
-        return []
-
-    # Примитивная фильтрация .json
-    json_files = []
-    for name in names:
-        if name.lower().endswith(".json"):
-            try:
-                mdtm = ftp.sendcmd(f"MDTM {name}")
-                dt_str = mdtm.replace("213 ", "")
-                mtime = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
-                json_files.append((name, mtime))
-            except Exception:
-                continue
-
-    return sorted(json_files, key=lambda x: x[1], reverse=True)
-
-
-def _download_to_string(ftp, path, filename):
-    from io import BytesIO
-    buf = BytesIO()
-
-    # Скачиваем бинарно
-    ftp.retrbinary(f"RETR {filename}", buf.write)
-    buf.seek(0)
-
-    # Пробуем прочитать как Windows-1251 (чаще всего используется в таких случаях)
-    try:
-        return buf.read().decode("utf-8")
-    except UnicodeDecodeError:
-        return buf.read().decode("windows-1251")  # Или "latin1" — можно протестировать
-
-
-from io import BytesIO
-
-
-def _move_into(ftp, src_dir_abs, filename, dst_dir_abs):
-    # Убираем возможный префикс и суффикс
-    name = filename
-
-    # Удаляем 'catalog-' в начале, если есть
-    if name.lower().startswith("catalog-"):
-        name = name[8:]
-
-    # Удаляем '.json' в конце, если есть
-    if name.lower().endswith(".json"):
-        name = name[:-5]
-
-    # Сформировать новое имя
-    dst_name = f"catalog-{name}.json"
-
-    ftp.rename(
-        _join_ftp(src_dir_abs, filename),
-        _join_ftp(dst_dir_abs, dst_name)
-    )
-
-    return dst_name
-
-
-
-def _cleanup_incoming(ftp: FTP, cwd_abs: str, keep_latest: int, max_age_days: int):
-    now = datetime.now()
-    files = _list_json_files_with_mtime(ftp, cwd_abs)
-    if not files:
-        return
-    files.sort(key=lambda x: x[1], reverse=True)
-    latest = set(name for name, _ in files[:max(0, keep_latest)])
-    for name, mt in files:
-        if name in latest:
+    """Безопасно соединяет компонент пути для FTP (без двойных слэш)."""
+    cleaned = []
+    for p in parts:
+        if not p:
             continue
-        if (now - mt).days >= max_age_days:
-            try:
-                ftp.delete(_join_ftp(cwd_abs, name))
-                logging.info(f"🧹 Удалён старый файл: {name}")
-            except Exception as e:
-                logging.warning(f"Не удалось удалить {name}: {e}")
+        cleaned.append(str(p).strip("/"))
+    if not cleaned:
+        return "/"
+    return "/" + "/".join(cleaned)
 
 
-# =========================
-# Доступ к БД
-# =========================
-async def fetch_branch_by_enterprise_code(enterprise_code: str) -> str:
-    async with get_async_db() as session:
-        result = await session.execute(
-            select(MappingBranch.branch).where(MappingBranch.enterprise_code == enterprise_code)
-        )
-        branch = result.scalars().first()
-        if not branch:
-            raise ValueError(f"Branch не найден для enterprise_code={enterprise_code}")
-        return str(branch)
+def _safe_cwd(ftp: FTP, path: str) -> bool:
+    """Проверяет возможность зайти в каталог."""
+    try:
+        ftp.cwd(path)
+        return True
+    except Exception:
+        return False
 
 
-# =========================
-# Трансформации
-# =========================
-def _normalize_input(json_str: str) -> list[dict]:
-    data = json.loads(json_str)
-    if isinstance(data, dict):
-        return [data]
-    if isinstance(data, list):
-        return data
-    raise ValueError("Ожидался JSON-объект или массив объектов")
-
-def transform_catalog(items: list[dict]) -> list[dict]:
-    return [{
-        "code": str(it.get("Id", "")),
-        "name": str(it.get("Name", "") or ""),
-        "producer": "",
-        "barcode": str(it.get("Barcode", "") or ""),
-        "vat": DEFAULT_VAT,
-    } for it in items]
-
-def transform_stock(items: list[dict], branch: str) -> list[dict]:
-    out = []
-    for it in items:
-        price = max(float(it.get("MaxPrice", 0.0) or 0.0), 0.0)
-        qty = max(float(it.get("TotalStock", 0.0) or 0.0), 0.0)
-        out.append({
-            "branch": branch,
-            "code": str(it.get("Id", "")),
-            "price": price,
-            "qty": qty,
-            "price_reserve": price
-        })
-    return out
-
-def save_to_json(data, enterprise_code: str, file_type: str) -> str:
-    out_dir = os.path.join(TEMP_DIR, str(enterprise_code))
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"{file_type}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    logging.info(f"✅ Сохранено: {path}")
-    return path
-
-async def send_catalog_data(path: str, enterprise_code: str):
-    await process_database_service(path, "catalog", enterprise_code)
-
-async def send_stock_data(path: str, enterprise_code: str):
-    await process_database_service(path, "stock", enterprise_code)
-
-
-# =========================
-# Основной сценарий
-# =========================
-async def run_service(enterprise_code: str, file_type: str):
-    # Абсолютные пути на FTP
-    incoming_abs = FTP_DIR if FTP_DIR.startswith("/") else _join_ftp("/", FTP_DIR)
-    archive_abs = _join_ftp(incoming_abs, FTP_ARCHIVE_DIR) if not FTP_ARCHIVE_DIR.startswith("/") else FTP_ARCHIVE_DIR
-    failed_abs = _join_ftp(incoming_abs, FTP_FAILED_DIR) if not FTP_FAILED_DIR.startswith("/") else FTP_FAILED_DIR
-
+def _connect() -> FTP:
+    """Устанавливает FTP-сессию. Для имён файлов — кодировка latin1 (без ошибок)."""
     ftp = FTP()
+    ftp.encoding = "latin1"  # критично для «битых» имён
     ftp.connect(FTP_HOST, FTP_PORT, timeout=30)
     ftp.login(FTP_USER, FTP_PASS)
-    ftp.encoding = "utf-8"
+    return ftp
 
-    # Убеждаемся, что папки есть
-    for d in (incoming_abs, archive_abs, failed_abs):
-        _ensure_remote_dir(ftp, d)
 
-    latest_name = None
+def _mdtm_or_none(ftp: FTP, name: str):
+    """Читает MDTM (время модификации на сервере), либо None, если не поддерживается."""
     try:
+        resp = ftp.sendcmd(f"MDTM {name}")
+        # Ответ вид: "213 YYYYMMDDHHMMSS"
+        if resp.startswith("213 "):
+            dt = datetime.strptime(resp[4:].strip(), "%Y%m%d%H%M%S")
+            return dt
+    except Exception:
+        pass
+    return None
+
+
+def _list_json_files_with_mtime(ftp: FTP, incoming_abs: str):
+    """
+    Возвращает список [(name, mtime)], где name — как вернул сервер (latin1),
+    mtime — datetime или None. Сортирует по mtime (свежие сверху).
+    """
+    # обязательно перейти в папку
+    if not _safe_cwd(ftp, incoming_abs):
+        raise RuntimeError(f"Не удалось открыть входящую папку: {incoming_abs}")
+
+    try:
+        names = ftp.nlst()
+    except error_perm as e:
+        # Пустая папка может дать "550 No files found"
+        if "No files found" in str(e):
+            names = []
+        else:
+            raise
+
+    json_names = [n for n in names if n.lower().endswith(".json")]
+    files = []
+    for n in json_names:
+        mtime = _mdtm_or_none(ftp, n)
+        files.append((n, mtime))
+
+    # Сортировка: сперва с mtime (по убыванию), затем по имени
+    files.sort(key=lambda t: (t[1] or datetime.min), reverse=True)
+    return files
+
+
+def _decode_bytes(raw: bytes) -> str:
+    """Декодирует содержимое JSON с безопасными фоллбэками."""
+    # 1) чистый UTF-8
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    # 2) UTF-8 с BOM
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    # 3) cp1251
+    try:
+        return raw.decode("cp1251")
+    except UnicodeDecodeError:
+        pass
+    # 4) latin1 как «последняя соломинка»
+    try:
+        return raw.decode("latin1")
+    except UnicodeDecodeError:
+        pass
+    # 5) chardet (если есть)
+    if chardet:
+        enc = chardet.detect(raw).get("encoding") or "utf-8"
+        try:
+            return raw.decode(enc, errors="replace")
+        except Exception:
+            return raw.decode("latin1", errors="replace")
+    # финальный фоллбэк
+    return raw.decode("latin1", errors="replace")
+
+
+def _download_to_string(ftp: FTP, directory: str, filename: str) -> str:
+    """Скачивает файл бинарно и возвращает строку с авто-декодированием."""
+    # cwd делаем каждый раз явно — иначе RETR с кириллицей работает нестабильно
+    if not _safe_cwd(ftp, directory):
+        raise RuntimeError(f"Не удалось перейти в {directory}")
+
+    buf = BytesIO()
+    ftp.retrbinary(f"RETR {filename}", buf.write)
+    raw = buf.getvalue()
+    return _decode_bytes(raw)
+
+
+def _normalize_dst_name(file_type: str, filename: str) -> str:
+    """
+    Приводит имя к виду: 'catalog-<basename>.json' или 'stock-<basename>.json'
+    без двойных префиксов/суффиксов.
+    """
+    base, ext = os.path.splitext(filename)  # ext может быть '.json' уже
+    # убрать повторы префикса
+    low = base.lower()
+    if low.startswith("catalog-"):
+        base = base[8:]
+    if low.startswith("stock-"):
+        base = base[6:]
+    # собрать обратно
+    prefix = "catalog" if file_type == "catalog" else "stock"
+    return f"{prefix}-{base}.json"
+
+
+def _delete_all_except(ftp: FTP, directory: str, keep_name: str):
+    """
+    Удаляет в папке все .json файлы, кроме keep_name.
+    Ошибки по каждому файлу логируем, но процесс не прерываем.
+    """
+    if not _safe_cwd(ftp, directory):
+        logger.warning("Не удалось зайти в директорию для очистки: %s", directory)
+        return
+
+    try:
+        names = ftp.nlst()
+    except Exception as e:
+        logger.warning("Не удалось прочитать список для очистки: %s", e)
+        return
+
+    for n in names:
+        if n == keep_name:
+            continue
+        if not n.lower().endswith(".json"):
+            continue
+        try:
+            ftp.delete(n)
+            logger.info("🗑 Удалён файл: %s", _join_ftp(directory, n))
+        except Exception as e:
+            logger.warning("Не удалось удалить %s: %s", n, e)
+
+
+# =========================
+# ВАШИ ВНУТРЕННИЕ ХУКИ ОТПРАВКИ
+# =========================
+# В проекте эти функции уже есть, просто импортируем
+from app.services.database_service import process_database_service  # noqa: E402
+
+
+async def send_catalog_data(file_path: str, enterprise_code: int):
+    await process_database_service(file_path, "catalog", enterprise_code)
+
+
+async def send_stock_data(file_path: str, enterprise_code: int):
+    await process_database_service(file_path, "stock", enterprise_code)
+
+
+# =========================
+# ОСНОВНОЙ ЗАПУСК ДЛЯ ОДНОГО ПРЕДПРИЯТИЯ
+# =========================
+def run_service(enterprise_code: int, file_type: str = DEFAULT_FILE_TYPE) -> bool:
+    """
+    Основной сценарий:
+      1) соединяемся с FTP и находим рабочую входящую папку;
+      2) ищем список .json, берём самый новый;
+      3) скачиваем его, декодируем, пишем во временный файл;
+      4) отправляем дальше (catalog/stock);
+      5) удаляем ВСЕ остальные .json файлы в папке, последний (обработанный) оставляем;
+    Возвращает True/False — выполнено без критических ошибок.
+    """
+    ftp = None
+    try:
+        ftp = _connect()
+
+        # найти рабочую входящую папку
+        incoming_abs = None
+        for cand in INCOMING_DIR_CANDIDATES:
+            if _safe_cwd(ftp, cand):
+                incoming_abs = cand
+                break
+        if not incoming_abs:
+            raise RuntimeError("Не найдена входящая папка среди кандидатов: " + ", ".join(INCOMING_DIR_CANDIDATES))
+
         files = _list_json_files_with_mtime(ftp, incoming_abs)
         if not files:
-            logging.info("Нет JSON-файлов во входящей папке.")
-            return
+            logger.info("Нет JSON-файлов во входящей папке.")
+            return True
 
-        files.sort(key=lambda x: x[1], reverse=True)
         latest_name, latest_mtime = files[0]
-        logging.info(f"Обработка файла: {latest_name} (mtime={latest_mtime})")
+        logger.info("Обработка файла: %s (mtime=%s)", _join_ftp(incoming_abs, latest_name), latest_mtime or "—")
 
-        raw = _download_to_string(ftp, incoming_abs, latest_name)
-        items = _normalize_input(raw)
+        # скачать и декодировать содержимое
+        text = _download_to_string(ftp, incoming_abs, latest_name)
 
-        ft = (file_type or "both").lower()
-        if ft not in ("catalog", "stock", "both"):
-            raise ValueError("file_type должен быть 'catalog', 'stock' или 'both'")
+        # сохранить во временный локальный файл (для ваших downstream-сервисов)
+        temp_dir = os.path.join(".", "temp", str(enterprise_code))
+        os.makedirs(temp_dir, exist_ok=True)
+        safe_out_name = _normalize_dst_name(file_type, latest_name)
+        out_path = os.path.join(temp_dir, safe_out_name)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(text)
 
-        if ft in ("catalog", "both"):
-            catalog = transform_catalog(items)
-            cat_path = save_to_json(catalog, enterprise_code, "catalog")
-            await send_catalog_data(cat_path, enterprise_code)
+        logger.info("✅ Сохранено: %s", out_path)
 
-        if ft in ("stock", "both"):
-            branch = await fetch_branch_by_enterprise_code(enterprise_code)
-            stock = transform_stock(items, branch)
-            st_path = save_to_json(stock, enterprise_code, "stock")
-            await send_stock_data(st_path, enterprise_code)
+        # отправка дальше
+        import asyncio
+        if file_type == "catalog":
+            logger.info("Начало обработки catalog для предприятия %s", enterprise_code)
+            asyncio.run(send_catalog_data(out_path, enterprise_code))
+        else:
+            logger.info("Начало обработки stock для предприятия %s", enterprise_code)
+            asyncio.run(send_stock_data(out_path, enterprise_code))
 
-        moved = _move_into(ftp, incoming_abs, latest_name, archive_abs)
-        logging.info(f"📦 Перемещён в архив: {moved}")
+        logger.info("Данные %s успешно записаны в БД для предприятия %s", file_type, enterprise_code)
 
-        _cleanup_incoming(ftp, incoming_abs, KEEP_LATEST, MAX_AGE_DAYS)
+        # очистка: оставляем только самый свежий из .json, остальные удаляем
+        _delete_all_except(ftp, incoming_abs, latest_name)
+        logger.info("🧹 Очистка завершена (оставлен только последний файл).")
+
+        return True
 
     except Exception as e:
-        logging.exception(f"❌ Ошибка: {e}")
-        try:
-            if latest_name:
-                failed = _move_into(ftp, incoming_abs, latest_name, failed_abs)
-                logging.warning(f"Файл перемещён в failed: {failed}")
-        except Exception as e2:
-            logging.warning(f"Не удалось переместить в failed: {e2}")
+        logger.error("❌ Критическая ошибка: %s", e, exc_info=True)
+        return False
+
     finally:
         try:
-            ftp.quit()
+            if ftp:
+                ftp.quit()
         except Exception:
             pass
 
 
-# Локальный запуск
+# =========================
+# ЛОКАЛЬНЫЙ ЗАПУСК
+# =========================
 if __name__ == "__main__":
-    asyncio.run(run_service(ENTERPRISE_CODE, FILE_TYPE))
+    import argparse
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+
+    parser = argparse.ArgumentParser(description="FtpZoomagazin processor")
+    parser.add_argument("--enterprise", type=int, required=True, help="enterprise_code")
+    parser.add_argument("--type", choices=["catalog", "stock"], default=DEFAULT_FILE_TYPE, help="file type to process")
+    args = parser.parse_args()
+
+    ok = run_service(args.enterprise, args.type)
+    raise SystemExit(0 if ok else 1)
