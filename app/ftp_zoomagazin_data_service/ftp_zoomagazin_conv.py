@@ -121,10 +121,10 @@ def _decode_bytes(raw: bytes) -> str:
 def _download_to_string(ftp: FTP, directory: str, filename: str) -> str:
     """
     Скачивает файл бинарно и возвращает текст.
-    Делает несколько попыток RETR с альтернативными «представлениями» имени.
+    Не делаем cwd; RETR идёт по абсолютному пути.
+    Делаем несколько попыток имени (кавычки, экранирование пробелов, перекодировки).
     """
-    if not _safe_cwd(ftp, directory):
-        raise RuntimeError(f"Не удалось перейти в {directory}")
+    abs_name = _join_ftp(directory, filename)
 
     def _retr(name: str) -> bytes:
         buf = BytesIO()
@@ -132,35 +132,43 @@ def _download_to_string(ftp: FTP, directory: str, filename: str) -> str:
         ftp.retrbinary("RETR " + name, buf.write)
         return buf.getvalue()
 
-    # Попытка №1: как вернул сервер (latin1)
-    try:
-        raw = _retr(filename)
-        return _decode_bytes(raw)
-    except error_perm as e:
-        last_exc = e
+    # Кандидаты имён (в порядке приоритетов)
+    candidates = [abs_name]
 
-    # Попытка №2: альтернативные представления имени
-    variants = []
+    # В кавычках
+    if not (abs_name.startswith('"') and abs_name.endswith('"')):
+        candidates.append(f'"{abs_name}"')
+
+    # С экранированием пробелов
+    if " " in abs_name and r"\ " not in abs_name:
+        candidates.append(abs_name.replace(" ", r"\ "))
+
+    # Перекодированные варианты
     try:
-        variants.append(filename.encode("latin1", "ignore").decode("cp1251", "ignore"))
+        candidates.append(abs_name.encode("latin1", "ignore").decode("cp1251", "ignore"))
     except Exception:
         pass
     try:
-        variants.append(filename.encode("latin1", "ignore").decode("utf-8", "ignore"))
+        candidates.append(abs_name.encode("latin1", "ignore").decode("utf-8", "ignore"))
     except Exception:
         pass
 
+    # Убираем дубли и пустые
     seen = set()
-    variants = [v for v in variants if v and not (v in seen or seen.add(v))]
+    candidates = [c for c in candidates if c and not (c in seen or seen.add(c))]
 
-    for alt in variants:
+    last_exc = None
+    for cand in candidates:
         try:
-            raw = _retr(alt)
+            raw = _retr(cand)
             return _decode_bytes(raw)
-        except Exception:
+        except Exception as e:
+            last_exc = e
             continue
 
-    raise last_exc
+    # Ничего не вышло
+    raise last_exc if last_exc else error_perm("550 Failed to open file.")
+
 
 
 def _normalize_dst_name(file_type: str, filename: str) -> str:
