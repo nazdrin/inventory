@@ -3,7 +3,7 @@ import json
 import asyncio
 import logging
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime
 from ftplib import FTP, error_perm
 
 from dotenv import load_dotenv
@@ -18,8 +18,6 @@ from app.services.database_service import process_database_service
 ENTERPRISE_CODE = "2"
 FILE_TYPE = "both"
 DEFAULT_VAT = 20.0
-KEEP_LATEST = 3
-MAX_AGE_DAYS = 7
 TEMP_DIR = "./temp"
 
 load_dotenv()
@@ -29,14 +27,12 @@ FTP_PORT = int(os.getenv("FTP_PORT", "21"))
 FTP_USER = os.getenv("FTP_USER", "zoomagazin")
 FTP_PASS = os.getenv("FTP_PASS", "")
 FTP_DIR = os.getenv("FTP_DIR", "/")
-FTP_ARCHIVE_DIR = os.getenv("FTP_ARCHIVE_DIR", "archive").lstrip("/")
-FTP_FAILED_DIR = os.getenv("FTP_FAILED_DIR", "failed").lstrip("/")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 
 # =========================
-# Утилиты
+# Утилиты FTP
 # =========================
 def _join_ftp(*parts: str) -> str:
     cleaned = [p.strip("/") for p in parts if p and p != "/"]
@@ -61,9 +57,6 @@ def _list_json_files_with_mtime(ftp, path):
     ftp.encoding = 'latin1'
     try:
         names = ftp.nlst(path)
-    except UnicodeDecodeError as e:
-        logging.warning(f"❗️ UnicodeDecodeError: {e}")
-        names = ftp.nlst()
     except Exception as e:
         logging.error(f"Ошибка получения списка файлов: {e}")
         return []
@@ -93,38 +86,21 @@ def _download_to_string(ftp, path, filename):
         return buf.read().decode("windows-1251")
 
 
-def _move_into(ftp, src_dir_abs, filename, dst_dir_abs):
-    src_path = _join_ftp(src_dir_abs, filename)
-    dst_path = _join_ftp(dst_dir_abs, filename)
-
-    try:
-        buf = BytesIO()
-        ftp.retrbinary(f'RETR {src_path}', buf.write)
-        buf.seek(0)
-        ftp.storbinary(f'STOR {dst_path}', buf)
-        ftp.delete(src_path)
-        return True
-    except Exception as e:
-        logging.warning(f"❌ Не удалось переместить файл вручную: {e}")
-        return False
-
-
-def _cleanup_incoming(ftp: FTP, cwd_abs: str, keep_latest: int, max_age_days: int):
-    now = datetime.now()
+def _cleanup_except_latest(ftp: FTP, cwd_abs: str):
+    """Удаляет все JSON-файлы кроме самого последнего"""
     files = _list_json_files_with_mtime(ftp, cwd_abs)
     if not files:
         return
+
     files.sort(key=lambda x: x[1], reverse=True)
-    latest = set(name for name, _ in files[:max(0, keep_latest)])
-    for name, mt in files:
-        if name in latest:
-            continue
-        if (now - mt).days >= max_age_days:
-            try:
-                ftp.delete(_join_ftp(cwd_abs, name))
-                logging.info(f"🧹 Удалён старый файл: {name}")
-            except Exception as e:
-                logging.warning(f"Не удалось удалить {name}: {e}")
+    latest_file = files[0][0]
+
+    for name, _ in files[1:]:
+        try:
+            ftp.delete(_join_ftp(cwd_abs, name))
+            logging.info(f"🧹 Удалён старый файл: {name}")
+        except Exception as e:
+            logging.warning(f"Не удалось удалить {name}: {e}")
 
 
 # =========================
@@ -203,16 +179,13 @@ async def send_stock_data(data: list[dict], enterprise_code: str):
 # =========================
 async def run_service(enterprise_code: str, file_type: str):
     incoming_abs = FTP_DIR if FTP_DIR.startswith("/") else _join_ftp("/", FTP_DIR)
-    archive_abs = _join_ftp(incoming_abs, FTP_ARCHIVE_DIR) if not FTP_ARCHIVE_DIR.startswith("/") else FTP_ARCHIVE_DIR
-    failed_abs = _join_ftp(incoming_abs, FTP_FAILED_DIR) if not FTP_FAILED_DIR.startswith("/") else FTP_FAILED_DIR
 
     ftp = FTP()
     ftp.connect(FTP_HOST, FTP_PORT, timeout=30)
     ftp.login(FTP_USER, FTP_PASS)
     ftp.encoding = "utf-8"
 
-    for d in (incoming_abs, archive_abs, failed_abs):
-        _ensure_remote_dir(ftp, d)
+    _ensure_remote_dir(ftp, incoming_abs)
 
     latest_name = None
     try:
@@ -241,19 +214,11 @@ async def run_service(enterprise_code: str, file_type: str):
             stock = transform_stock(items, branch)
             await send_stock_data(stock, enterprise_code)
 
-        moved = _move_into(ftp, incoming_abs, latest_name, archive_abs)
-        logging.info(f"📦 Перемещён в архив: {moved}")
-
-        _cleanup_incoming(ftp, incoming_abs, KEEP_LATEST, MAX_AGE_DAYS)
+        logging.info("📦 Перемещение отключено. Удаляем все кроме последнего файла.")
+        _cleanup_except_latest(ftp, incoming_abs)
 
     except Exception as e:
         logging.exception(f"❌ Ошибка: {e}")
-        try:
-            if latest_name:
-                failed = _move_into(ftp, incoming_abs, latest_name, failed_abs)
-                logging.warning(f"Файл перемещён в failed: {failed}")
-        except Exception as e2:
-            logging.warning(f"Не удалось переместить в failed: {e2}")
     finally:
         try:
             ftp.quit()
@@ -261,5 +226,6 @@ async def run_service(enterprise_code: str, file_type: str):
             pass
 
 
+# Локальный запуск
 if __name__ == "__main__":
     asyncio.run(run_service(ENTERPRISE_CODE, FILE_TYPE))
