@@ -94,7 +94,6 @@ def _save_temp_json(content: str, enterprise_code: str, file_type: str = DEFAULT
     return file_path
 
 
-# --- Основной сервис ---
 async def run_service(enterprise_code: str, file_type: str = DEFAULT_FILE_TYPE) -> None:
     logging.info(f"🚀 Запуск сервиса для enterprise_code={enterprise_code}, type={file_type}")
     ftp = _connect_ftp()
@@ -104,9 +103,35 @@ async def run_service(enterprise_code: str, file_type: str = DEFAULT_FILE_TYPE) 
         if not latest_name:
             raise FileNotFoundError("❌ Не найден ни один подходящий файл .json")
 
-        logging.info(f"📥 Загрузка файла: {latest_name}")
+        log_name = _decode_filename(latest_name)
+        logging.info(f"📥 Загрузка файла: {log_name}")
+
+        # 1. Скачиваем файл
         raw_content = _download_to_string(ftp, FTP_DIR, latest_name)
-        temp_path = _save_temp_json(raw_content, enterprise_code, file_type)
+        data_json = json.loads(raw_content)
+
+        # 2. Преобразуем в целевой формат
+        if file_type == "catalog":
+            from app.services.data_converter import transform_catalog
+            transformed = transform_catalog(data_json)
+
+        elif file_type == "stock":
+            from app.services.data_converter import transform_stock
+            from app.services.database_service import fetch_branch_by_enterprise_code
+            branch = await fetch_branch_by_enterprise_code(enterprise_code)
+            transformed = transform_stock(data_json, branch)
+
+        else:
+            raise ValueError("Неверный тип файла (ожидается 'catalog' или 'stock')")
+
+        # 3. Сохраняем уже ПРЕОБРАЗОВАННЫЕ данные
+        temp_path = _save_temp_json(
+            json.dumps(transformed, ensure_ascii=False, indent=4),
+            enterprise_code,
+            file_type
+        )
+
+        # 4. Отправляем в БД
         await process_database_service(temp_path, file_type, enterprise_code)
 
     except Exception as e:
@@ -114,6 +139,7 @@ async def run_service(enterprise_code: str, file_type: str = DEFAULT_FILE_TYPE) 
     finally:
         ftp.quit()
         logging.info("🔒 FTP-сессия завершена")
+
 
 
 # --- Запуск вручную ---
