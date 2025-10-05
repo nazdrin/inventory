@@ -188,7 +188,9 @@ async def process_stock(ftp: FTP, enterprise_code: str):
         branch = sb["branch"]
 
         # ищем файл с таким именем
-        match = next((f for f in file_names if f == store_id), None)
+        # match = next((f for f in file_names if f == store_id), None)
+        match = next((f for f in file_names if store_id.lower() in f.lower() and f.lower().endswith(".json")), None)
+
         if not match:
             logging.warning(f"❗ Файл {store_id} не найден на FTP, пропускаем.")
             continue
