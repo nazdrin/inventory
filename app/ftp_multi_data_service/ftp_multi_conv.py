@@ -155,9 +155,10 @@ async def process_catalog(ftp: FTP, enterprise_code: str):
     target_file = None
 
     for name, _ in files:
-        if name.lower() == "catalog-zoomagazin_2sm.json":
+        if "zoomagazin_2sm" in name.lower() and name.lower().endswith(".json"):
             target_file = name
             break
+
 
     if not target_file:
         logging.warning("Файл catalog-Zoomagazin_2sm.json не найден")
