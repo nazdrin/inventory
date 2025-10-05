@@ -12,10 +12,12 @@ from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
 
 ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
+    "ComboKeyCRM": send_order_to_key_crm,
     # Добавишь сюда новые форматы позже
 }
 ORDER_STATUS_CHECKERS = {
     "KeyCRM": check_statuses_key_crm,
+    "ComboKeyCRM": check_statuses_key_crm,
     # Примеры для будущих форматов:
     # "Dntrade": check_statuses_dntrade,
     # "Prom": check_statuses_prom,
