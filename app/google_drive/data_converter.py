@@ -2,6 +2,8 @@ import tempfile
 import logging
 import json
 import os
+import re  # добавить в начало файла, если ещё нет
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import EnterpriseSettings
 from sqlalchemy import select
@@ -204,19 +206,25 @@ async def transform_data_types(data, file_type,enterprise_code):
                 continue
 
             transformed_item = {}
+
+
             if file_type == "catalog":
+                raw_name = str(item.get("name", "")).strip()
+                # Убираем лишние цифры в начале, например "6609 " → ""
+                cleaned_name = re.sub(r"^[A-Za-zА-Яа-я]*[-]?\d+\s*", "", raw_name)
+
                 transformed_item = {
-                    "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),  
-                    "name": str(item.get("name", "")).strip(),
-                    "vat": float(item.get("vat", 0.0)),  # Значение по умолчанию — 0.0
+                    "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),
+                    "name": cleaned_name,
+                    "vat": float(item.get("vat", 0.0)),
                     "producer": str(item.get("producer", "")).strip(),
                     "morion": str(item.get("morion", "")).strip(),
                     "tabletki": str(item.get("tabletki", "")).strip(),
                     "barcode": str(item.get("barcode", "")).strip(),
                     "badm": str(item.get("badm", "")).strip(),
                     "optima": str(item.get("optima", "")).strip(),
-                    # "branch_id": str(item.get("branch_id", "")).strip()
                 }
+
             elif file_type == "stock":
                 transformed_item = {
                     "branch": str(item.get("branch", "")).strip(),
