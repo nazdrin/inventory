@@ -39,20 +39,6 @@ def _join_ftp(*parts: str) -> str:
     return "/" + "/".join(cleaned) if cleaned else "/"
 
 
-def _ensure_remote_dir(ftp: FTP, abs_path: str) -> None:
-    if not abs_path.startswith("/"):
-        raise ValueError("Ожидался абсолютный путь")
-    segs = [s for s in abs_path.strip("/").split("/") if s]
-    cur = "/"
-    for s in segs:
-        cur = _join_ftp(cur, s)
-        try:
-            ftp.mkd(cur)
-        except error_perm as e:
-            if not str(e).startswith("550"):
-                raise
-
-
 def _list_json_files_with_mtime(ftp, path):
     ftp.encoding = 'latin1'
     try:
@@ -86,35 +72,20 @@ def _download_to_string(ftp, path, filename):
         return buf.read().decode("windows-1251")
 
 
-def _cleanup_except_latest(ftp: FTP, cwd_abs: str):
-    """Удаляет все JSON-файлы кроме самого последнего"""
-    files = _list_json_files_with_mtime(ftp, cwd_abs)
-    if not files:
-        return
-
-    files.sort(key=lambda x: x[1], reverse=True)
-    latest_file = files[0][0]
-
-    for name, _ in files[1:]:
-        try:
-            ftp.delete(_join_ftp(cwd_abs, name))
-            logging.info(f"🧹 Удалён старый файл: {name}")
-        except Exception as e:
-            logging.warning(f"Не удалось удалить {name}: {e}")
-
-
 # =========================
 # Доступ к БД
 # =========================
-async def fetch_branch_by_enterprise_code(enterprise_code: str) -> str:
+async def fetch_store_branches(enterprise_code: str) -> list[dict]:
+    """Возвращает список [{'store_id': 'Zoomagazin_1.json', 'branch': '111'}, ...]"""
     async with get_async_db() as session:
         result = await session.execute(
-            select(MappingBranch.branch).where(MappingBranch.enterprise_code == enterprise_code)
+            select(MappingBranch.store_id, MappingBranch.branch)
+            .where(MappingBranch.enterprise_code == enterprise_code)
         )
-        branch = result.scalars().first()
-        if not branch:
-            raise ValueError(f"Branch не найден для enterprise_code={enterprise_code}")
-        return str(branch)
+        rows = result.all()
+        if not rows:
+            raise ValueError(f"Нет данных mapping_branch для enterprise_code={enterprise_code}")
+        return [{"store_id": r[0], "branch": str(r[1])} for r in rows]
 
 
 # =========================
@@ -175,47 +146,83 @@ async def send_stock_data(data: list[dict], enterprise_code: str):
 
 
 # =========================
+# Обработка каталога
+# =========================
+async def process_catalog(ftp: FTP, enterprise_code: str):
+    """Обработка каталога — ищет файл catalog-Zoomagazin_2sm.json"""
+    incoming_abs = FTP_DIR if FTP_DIR.startswith("/") else _join_ftp("/", FTP_DIR)
+    files = _list_json_files_with_mtime(ftp, incoming_abs)
+    target_file = None
+
+    for name, _ in files:
+        if "zoomagazin_2sm" in name.lower() and name.lower().endswith(".json"):
+            target_file = name
+            break
+
+
+    if not target_file:
+        logging.warning("Файл catalog-Zoomagazin_2sm.json не найден")
+        return
+
+    logging.info(f"📘 Обработка каталога: {target_file}")
+    raw = _download_to_string(ftp, incoming_abs, target_file)
+    items = _normalize_input(raw)
+    catalog = transform_catalog(items)
+    await send_catalog_data(catalog, enterprise_code)
+
+
+# =========================
+# Обработка стока
+# =========================
+async def process_stock(ftp: FTP, enterprise_code: str):
+    """Обрабатывает все стоки по store_id из mapping_branch"""
+    incoming_abs = FTP_DIR if FTP_DIR.startswith("/") else _join_ftp("/", FTP_DIR)
+    store_branches = await fetch_store_branches(enterprise_code)
+    all_stock = []
+
+    files = _list_json_files_with_mtime(ftp, incoming_abs)
+    file_names = [name for name, _ in files]
+
+    for sb in store_branches:
+        store_id = sb["store_id"]
+        branch = sb["branch"]
+
+        # ищем файл с таким именем
+        # match = next((f for f in file_names if f == store_id), None)
+        match = next((f for f in file_names if store_id.lower() in f.lower() and f.lower().endswith(".json")), None)
+
+        if not match:
+            logging.warning(f"❗ Файл {store_id} не найден на FTP, пропускаем.")
+            continue
+
+        logging.info(f"💾 Обработка стока: {store_id} → branch {branch}")
+        raw = _download_to_string(ftp, incoming_abs, match)
+        items = _normalize_input(raw)
+        stock = transform_stock(items, branch)
+        all_stock.extend(stock)
+
+    if not all_stock:
+        logging.warning("⚠️ Не найдено ни одного валидного файла стока.")
+        return
+
+    await send_stock_data(all_stock, enterprise_code)
+
+
+# =========================
 # Основной сценарий
 # =========================
 async def run_service(enterprise_code: str, file_type: str):
-    incoming_abs = FTP_DIR if FTP_DIR.startswith("/") else _join_ftp("/", FTP_DIR)
-
     ftp = FTP()
     ftp.connect(FTP_HOST, FTP_PORT, timeout=30)
     ftp.login(FTP_USER, FTP_PASS)
     ftp.encoding = "utf-8"
 
-    _ensure_remote_dir(ftp, incoming_abs)
-
-    latest_name = None
     try:
-        files = _list_json_files_with_mtime(ftp, incoming_abs)
-        if not files:
-            logging.info("Нет JSON-файлов во входящей папке.")
-            return
+        if file_type in ("catalog", "both"):
+            await process_catalog(ftp, enterprise_code)
 
-        files.sort(key=lambda x: x[1], reverse=True)
-        latest_name, latest_mtime = files[0]
-        logging.info(f"Обработка файла: {latest_name} (mtime={latest_mtime})")
-
-        raw = _download_to_string(ftp, incoming_abs, latest_name)
-        items = _normalize_input(raw)
-
-        ft = (file_type or "both").lower()
-        if ft not in ("catalog", "stock", "both"):
-            raise ValueError("file_type должен быть 'catalog', 'stock' или 'both'")
-
-        if ft in ("catalog", "both"):
-            catalog = transform_catalog(items)
-            await send_catalog_data(catalog, enterprise_code)
-
-        if ft in ("stock", "both"):
-            branch = await fetch_branch_by_enterprise_code(enterprise_code)
-            stock = transform_stock(items, branch)
-            await send_stock_data(stock, enterprise_code)
-
-        logging.info("📦 Перемещение отключено. Удаляем все кроме последнего файла.")
-        _cleanup_except_latest(ftp, incoming_abs)
+        if file_type in ("stock", "both"):
+            await process_stock(ftp, enterprise_code)
 
     except Exception as e:
         logging.exception(f"❌ Ошибка: {e}")

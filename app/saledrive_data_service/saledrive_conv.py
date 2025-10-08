@@ -165,6 +165,7 @@ async def run_service(enterprise_code: str, file_type: str) -> str:
         raise ValueError("Тип файла должен быть 'catalog' или 'stock'")
 
     url = await fetch_feed_url(enterprise_code)
+    url = "https://cloud.data-aggregation.com/files/it_baza/products_feed.xml"
     if not url:
         raise ValueError(f"URL фида не найден для enterprise_code={enterprise_code}")
 
