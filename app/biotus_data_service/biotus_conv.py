@@ -39,7 +39,7 @@ def parse_xml_feed(xml_text: str) -> list:
         item = {
             "productId": offer.findtext("sku"),  
             "productName": offer.findtext("name"),
-            "brand": offer.findtext("brand"),
+            "brand": offer.findtext("vendor"),
             "barcode": offer.findtext("barcode"),
             "price": float(offer.findtext("price_rsp_uah") or 0),
             "quantity": float(offer.findtext("in_stock") or 0),
