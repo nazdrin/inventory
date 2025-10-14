@@ -29,6 +29,7 @@ from app.jetvet_data_service.jetvet_google_drive import extract_stock_from_googl
 from app.saledrive_data_service.saledrive_conv import run_service as run_saledrive
 from app.ftp_zoomagazin_data_service.ftp_zoomagazin_conv import run_service as run_ftp_zoomagazin
 from app.ftp_multi_data_service.ftp_multi_conv import run_service as run_ftp_multi
+from app.biotus_data_service.biotus_conv import run_service as run_biotus
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 #from app.services.auto_confirm import main as auto_confirm_main
@@ -57,6 +58,7 @@ PROCESSORS = {
     # "Saledrive": run_saledrive,
     "ComboKeyCRM": run_saledrive,
     "FtpMulti": run_ftp_multi,
+    "Biotus": run_biotus,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
