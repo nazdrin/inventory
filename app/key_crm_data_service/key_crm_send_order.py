@@ -4,7 +4,6 @@ import datetime
 from sqlalchemy.future import select
 from app.database import get_async_db, EnterpriseSettings
 
-
 def fetch_skus_by_product_ids(api_key, product_ids):
     headers = {
         "accept": "application/json",
@@ -34,7 +33,20 @@ def fetch_skus_by_product_ids(api_key, product_ids):
             sku_map[str(offer.get("product_id"))] = offer.get("sku")
     return sku_map
 
+
 async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
+    """
+    🟢 Зміни:
+      - Додано нормалізацію вхідних даних: якщо order = [ {...} ], беремо перший елемент.
+      - Передаємо order['code'] у поле manager_comment у payload (рядком).
+    """
+    # 0) Нормалізація вхідних даних (якщо раптом передали список)
+    if isinstance(order, list):
+        if not order:
+            print("❌ Порожній список замовлень.")
+            return
+        order = order[0]
+
     print(f"📦 [KeyCRM] Передача нового замовлення {order.get('id')} для {enterprise_code}, філія {branch}")
 
     async with get_async_db() as session:
@@ -54,7 +66,7 @@ async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
         }
 
         async with aiohttp.ClientSession() as http_session:
-            # 1. Получаем source_id
+            # 1) Отримуємо source_id
             source_id = None
             async with http_session.get("https://openapi.keycrm.app/v1/order/source", headers=headers) as resp:
                 data = await resp.json()
@@ -66,7 +78,7 @@ async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
                 print("❌ source_id для 'Tabletki.ua' не найден.")
                 return
 
-            # 2. Получаем delivery_service_id
+            # 2) Отримуємо delivery_service_id за Alias
             delivery_service_id = None
             alias_map = {
                 "NP": "Novaposhta",
@@ -82,30 +94,30 @@ async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
                             delivery_service_id = item.get("id")
                             break
 
-            # 3. Формируем recipient full name
+            # 3) Формуємо ПІБ отримувача
             full_name = " ".join([
-                next((x["value"] for x in order["deliveryData"] if x["key"] == k), "") 
+                next((x["value"] for x in order.get("deliveryData", []) if x["key"] == k), "") 
                 for k in ["LastName", "Name", "MiddleName"]
-            ])
+            ]).strip()
 
-            # 4. Секция shipping
+            # 4) Секція shipping
             delivery = {
                 "delivery_service_id": delivery_service_id,
                 "tracking_code": "",
-                "shipping_service": next((x["value"] for x in order["deliveryData"] if x["key"] == "DeliveryServiceName"), ""),
-                "shipping_address_city": next((x["value"] for x in order["deliveryData"] if x["key"] == "CityReceiver"), ""),
+                "shipping_service": next((x["value"] for x in order.get("deliveryData", []) if x["key"] == "DeliveryServiceName"), ""),
+                "shipping_address_city": next((x["value"] for x in order.get("deliveryData", []) if x["key"] == "CityReceiver"), ""),
                 "shipping_address_country": "Ukraine",
                 "shipping_address_region": "",
                 "shipping_address_zip": "",
                 "shipping_secondary_line": "string",
-                "shipping_receive_point": next((x["value"] for x in order["deliveryData"] if x["key"] == "ReceiverWhs"), ""),
+                "shipping_receive_point": next((x["value"] for x in order.get("deliveryData", []) if x["key"] == "ReceiverWhs"), ""),
                 "recipient_full_name": full_name,
                 "recipient_phone": order.get("customerPhone", ""),
-                "warehouse_ref": next((x["value"] for x in order["deliveryData"] if x["key"] == "ID_Whs"), ""),
+                "warehouse_ref": next((x["value"] for x in order.get("deliveryData", []) if x["key"] == "ID_Whs"), ""),
                 "shipping_date": datetime.date.today().isoformat()
             } if order.get("deliveryData") else {}
 
-            # 5. Секция products
+            # 5) Секція products
             product_ids = [row["goodsCode"] for row in order["rows"]]
             sku_map = fetch_skus_by_product_ids(token, product_ids)
             products = [{
@@ -120,13 +132,17 @@ async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
                 "comment": ""
             } for row in order["rows"]]
 
-            # 6. Финальный payload
+            # 5.1) Значення для manager_comment з order['code']
+            manager_comment_value = str(order.get("code", ""))
+            print(f"📝 manager_comment (із order.code): {manager_comment_value}")
+
+            # 6) Фінальний payload
             payload = {
                 "source_id": source_id,
                 "source_uuid": order.get("id"),
                 "buyer_comment": order.get("comment", ""),
                 "manager_id": 1,
-                "manager_comment": "",
+                "manager_comment": manager_comment_value,  # <- тут передаємо code
                 "promocode": "",
                 "discount_percent": 0,
                 "discount_amount": 0,
@@ -157,7 +173,7 @@ async def send_order_to_key_crm(order: dict, enterprise_code: str, branch: str):
                 "custom_fields": []
             }
 
-            # 7. Отправка
+            # 7) Відправка
             async with http_session.post("https://openapi.keycrm.app/v1/order", json=payload, headers=headers) as resp:
                 resp_text = await resp.text()
                 print(f"📬 Відповідь від KeyCRM ({resp.status}): {resp_text}")
