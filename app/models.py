@@ -2,7 +2,7 @@ from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Foreig
 from sqlalchemy.orm import declarative_mixin, declarative_base
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from sqlalchemy import PrimaryKeyConstraint
+from sqlalchemy import PrimaryKeyConstraint, text
 
 Base = declarative_base()
 
@@ -119,3 +119,34 @@ class ClientNotifications(Base, TimestampMixin):
     enterprise_code = Column(String, nullable=False)
     message = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
+
+
+
+class CatalogMapping(Base):
+    __tablename__ = "catalog_mapping"
+    ID = Column(String, primary_key=True)
+    Name = Column(String, nullable=True)
+    Producer = Column(String, nullable=True)
+    Barcode = Column(String, nullable=True)
+    Guid = Column(String, nullable=True)
+    Code_Tabletki = Column(String, nullable=True)
+    Name_D1  = Column(String, nullable=True, server_default=text("''"))
+    Name_D2  = Column(String, nullable=True, server_default=text("''"))
+    Name_D3  = Column(String, nullable=True, server_default=text("''"))
+    Name_D4  = Column(String, nullable=True, server_default=text("''"))
+    Name_D5  = Column(String, nullable=True, server_default=text("''"))
+    Name_D6  = Column(String, nullable=True, server_default=text("''"))
+    Name_D7  = Column(String, nullable=True, server_default=text("''"))
+    Name_D8  = Column(String, nullable=True, server_default=text("''"))
+    Name_D9  = Column(String, nullable=True, server_default=text("''"))
+    Name_D10 = Column(String, nullable=True, server_default=text("''"))
+    Code_D1  = Column(String, nullable=True, server_default=text("''"))
+    Code_D2  = Column(String, nullable=True, server_default=text("''"))
+    Code_D3  = Column(String, nullable=True, server_default=text("''"))
+    Code_D4  = Column(String, nullable=True, server_default=text("''"))
+    Code_D5  = Column(String, nullable=True, server_default=text("''"))
+    Code_D6  = Column(String, nullable=True, server_default=text("''"))
+    Code_D7  = Column(String, nullable=True, server_default=text("''"))
+    Code_D8  = Column(String, nullable=True, server_default=text("''"))
+    Code_D9  = Column(String, nullable=True, server_default=text("''"))
+    Code_D10 = Column(String, nullable=True, server_default=text("''"))
