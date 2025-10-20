@@ -14,7 +14,22 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import get_async_db, EnterpriseSettings, MappingBranch, CatalogMapping
 from app.services.notification_service import send_notification
-from sqlalchemy import update
+
+from sqlalchemy import update, text  # ← было только update
+# Реестр парсеров: code -> async функция parse(code=...) -> JSON-строка
+# Для D1 используем ваш парсер, который берёт URL из БД по code
+try:
+    from app.business.feed_biotus import parse_feed_to_json as parse_feed_D1
+except Exception:
+    parse_feed_D1 = None  # если модуля нет — пропустим D1
+
+PARSER_REGISTRY: Dict[str, Any] = {
+    "D1": parse_feed_D1,
+    # Добавите сюда остальные, например:
+    # "D2": parse_feed_D2,
+    # "D3": parse_feed_D3,
+}
+
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -30,6 +45,28 @@ UPSERT_CHUNK_SIZE = 5000
 # Допустимые колонки для записи данных поставщика
 NAME_D_COLUMNS = [f"Name_D{i}" for i in range(1, 11)]
 CODE_D_COLUMNS = [f"Code_D{i}" for i in range(1, 11)]
+
+
+async def _get_active_supplier_codes() -> List[str]:
+    """
+    Возвращает список code из dropship_enterprises, где is_active = TRUE.
+    """
+    async with get_async_db() as session:
+        res = await session.execute(
+            text("SELECT code FROM dropship_enterprises WHERE is_active = TRUE")
+        )
+        codes = res.scalars().all()
+    # Чистим пустые/дубли, сохраняем порядок
+    seen = set()
+    result = []
+    for c in codes:
+        if not c:
+            continue
+        c = str(c).strip()
+        if c and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
 
 async def write_supplier_data_by_barcode(
     payload: Dict[str, Any],
@@ -280,9 +317,10 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
     """
     Оркестрация:
       1) Импорт одного .xlsx из Google Drive → парсинг → upsert базовых полей в CatalogMapping
-      2) Получение данных поставщика из feed_parser.parse_feed_to_json(FEED_URL)
-         Нормализуем результат к list[dict] (в т.ч. если вернулась строка JSON),
-         и по каждому payload вызываем write_supplier_data_by_barcode(..., Name_D1, Code_D1)
+      2) Для всех активных поставщиков (dropship_enterprises.is_active=TRUE):
+           - находим парсер в PARSER_REGISTRY по code
+           - вызываем его (await parser(code=code)) → JSON
+           - нормализуем, затем пишем name -> Name_{code}, id -> Code_{code} по barcode
     """
     if (file_type or "").strip().lower() != "catalog":
         logger.info("file_type != 'catalog' → сервис завершён без действий")
@@ -290,7 +328,7 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "file_name": None,
             "rows": 0,
             "db": {"affected": 0},
-            "feed": {"url": None, "items": 0, "updated": 0, "errors": 0},
+            "feeds": {},  # ← несколько поставщиков
         }
 
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
@@ -302,52 +340,44 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "file_name": None,
             "rows": 0,
             "db": {"affected": 0},
-            "feed": {"url": None, "items": 0, "updated": 0, "errors": 0},
+            "feeds": {},
         }
 
     def _to_items(obj: Any) -> List[Dict[str, Any]]:
         """
-        Нормализует результат parse_feed_to_json к списку словарей.
+        Нормализует результат парсера к списку словарей.
         Поддерживает:
           - list[dict]
           - dict с ключом items/products/data/result (список) или одиночный объект → [dict]
-          - str / bytes с JSON → json.loads → рекурсивно
+          - str/bytes с JSON → json.loads → рекурсивно
           - любой итерируемый (кроме str/bytes) → list(...)
         Иначе → [].
         """
         if obj is None:
             return []
-
-        # Если пришёл JSON-текст
         if isinstance(obj, (str, bytes, bytearray)):
             try:
                 decoded = obj.decode("utf-8") if isinstance(obj, (bytes, bytearray)) else obj
-                # срежем BOM если есть
                 if decoded and decoded[0] == "\ufeff":
                     decoded = decoded.lstrip("\ufeff")
                 parsed = json.loads(decoded)
                 return _to_items(parsed)
             except Exception as e:
-                logger.error("Не удалось распарсить строковый JSON из фида: %s", e)
+                logger.error("Не удалось распарсить строковый JSON из парсера: %s", e)
                 return []
-
         if isinstance(obj, list):
             return obj
-
         if isinstance(obj, dict):
             for k in ("items", "products", "data", "result"):
                 v = obj.get(k)
                 if isinstance(v, list):
                     return v
-            # одиночный объект-позиция
             return [obj]
-
         if hasattr(obj, "__iter__"):
             try:
                 return list(obj)
             except Exception:
                 return []
-
         return []
 
     try:
@@ -364,59 +394,69 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
         db_stats = await upsert_catalog_mapping(rows)
         logger.info("Upsert в БД выполнен. Затронуто записей (вставлено/обновлено): %d", db_stats["affected"])
 
-        # 2) Обновление D-полей по данным из фида
-        FEED_URL = "https://static-opt.biotus.ua/media/amasty/feed/biotus_partner.xml"
-        feed_result = {"url": FEED_URL, "items": 0, "updated": 0, "errors": 0}
-
-        if FEED_URL:
-            try:
-                try:
-                    from app.business.feed_biotus import parse_feed_to_json
-                except ImportError:
-                    from app.business.feed_biotus import parse_feed_to_json
-
-                raw = parse_feed_to_json(FEED_URL)
-                items = _to_items(raw)
-                feed_result["items"] = len(items)
-
-                updated = 0
-                errors = 0
-                for payload in items:
-                    try:
-                        if not isinstance(payload, dict):
-                            errors += 1
-                            continue
-                        norm = {
-                            "id": str(payload.get("id", "") or "").strip(),
-                            "name": str(payload.get("name", "") or "").strip(),
-                            "barcode": str(payload.get("barcode", "") or "").strip(),
-                        }
-                        if not norm["barcode"]:
-                            errors += 1
-                            continue
-
-                        res = await write_supplier_data_by_barcode(
-                            norm, name_column="Name_D1", code_column="Code_D1"
-                        )
-                        updated += int(res.get("updated", 0) or 0)
-                    except Exception as item_err:
-                        errors += 1
-                        logger.exception("Ошибка обновления по позиции фида: %s", item_err)
-
-                feed_result["updated"] = updated
-                feed_result["errors"] = errors
-                logger.info(
-                    "Feed обработан: url=%s, items=%d, updated=%d, errors=%d",
-                    FEED_URL, feed_result["items"], updated, errors
-                )
-
-            except Exception as feed_err:
-                logger.exception("Ошибка обработки фида (%s): %s", FEED_URL, feed_err)
-                send_notification(f"Ошибка обработки фида: {feed_err}", "Разработчик")
+        # 2) Мульти-поставщики: читаем активные коды и запускаем соответствующие парсеры
+        feeds_agg: Dict[str, Dict[str, int]] = {}
+        active_codes = await _get_active_supplier_codes()
+        if not active_codes:
+            logger.info("Активные поставщики не найдены — этап обновления по фидам пропущен")
         else:
-            logger.info("FEED_URL не задан — этап обновления по фиду пропущен")
+            logger.info("Активные коды поставщиков: %s", ", ".join(active_codes))
 
-        return {"file_name": file_name, "rows": len(rows), "db": db_stats, "feed": feed_result}
+        for code in active_codes:
+            parser = PARSER_REGISTRY.get(code)
+            if not callable(parser):
+                logger.warning("Нет парсера для code=%s — пропускаем", code)
+                feeds_agg[code] = {"items": 0, "updated": 0, "errors": 0}
+                continue
+
+            name_col = f"Name_{code}"
+            code_col = f"Code_{code}"
+
+            # Парсинг фида (URL берётся внутри парсера по code)
+            try:
+                raw = await parser(code=code)
+            except Exception as e:
+                logger.exception("Ошибка выполнения парсера для code=%s: %s", code, e)
+                send_notification(f"Ошибка парсера для {code}: {e}", "Разработчик")
+                feeds_agg[code] = {"items": 0, "updated": 0, "errors": 1}
+                continue
+
+            items = _to_items(raw)
+            updated = 0
+            errors = 0
+
+            for payload in items:
+                try:
+                    if not isinstance(payload, dict):
+                        errors += 1
+                        continue
+                    norm = {
+                        "id": str(payload.get("id", "") or "").strip(),
+                        "name": str(payload.get("name", "") or "").strip(),
+                        "barcode": str(payload.get("barcode", "") or "").strip(),
+                    }
+                    if not norm["barcode"]:
+                        errors += 1
+                        continue
+
+                    res = await write_supplier_data_by_barcode(
+                        norm, name_column=name_col, code_column=code_col
+                    )
+                    updated += int(res.get("updated", 0) or 0)
+                except Exception as item_err:
+                    errors += 1
+                    logger.exception("Ошибка обновления позиции (code=%s): %s", code, item_err)
+
+            feeds_agg[code] = {"items": len(items), "updated": updated, "errors": errors}
+            logger.info("Feed %s обработан: items=%d, updated=%d, errors=%d",
+                        code, len(items), updated, errors)
+
+        return {
+            "file_name": file_name,
+            "rows": len(rows),
+            "db": db_stats,
+            "feeds": feeds_agg,  # сводка по всем поставщикам
+        }
 
     except Exception as e:
         msg = f"[{enterprise_code}] Ошибка импорта каталога: {e}"
@@ -426,7 +466,7 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "file_name": None,
             "rows": 0,
             "db": {"affected": 0},
-            "feed": {"url": os.getenv("FEED_URL"), "items": 0, "updated": 0, "errors": 0},
+            "feeds": {},
         }
 
 
