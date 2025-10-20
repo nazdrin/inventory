@@ -150,3 +150,23 @@ class CatalogMapping(Base):
     Code_D8  = Column(String, nullable=True, server_default=text("''"))
     Code_D9  = Column(String, nullable=True, server_default=text("''"))
     Code_D10 = Column(String, nullable=True, server_default=text("''"))
+
+class DropshipEnterprise(Base):
+    __tablename__ = "dropship_enterprises"
+
+    code = Column(String, primary_key=True, index=True, doc="Уникальный код предприятия")
+    name = Column(String, nullable=False, doc="Название предприятия")
+    feed_url = Column(String, nullable=True, doc="Ссылка на прайс-фид")
+    gdrive_folder = Column(String, nullable=True, doc="Папка на Google Drive")
+
+    is_rrp = Column(Boolean, default=False, doc="Флаг — есть ли РРЦ")
+    is_wholesale = Column(Boolean, default=True, doc="Флаг — опт или розница")
+    profit_percent = Column(Float, nullable=True, doc="Процент заработка")
+    retail_markup = Column(Float, nullable=True, doc="Наценка для розницы")
+    min_markup_threshold = Column(Float, nullable=True, doc="Минимальный порог наценки")
+
+    is_active = Column(Boolean, default=True, doc="Флаг активности")
+    api_orders_enabled = Column(Boolean, default=False, doc="Флаг — заказы через API")
+    priority = Column(Integer, default=5, doc="Приоритет обработки (1–10)")
+    weekend_work = Column(Boolean, default=False, doc="Флаг — работает в выходные")
+    use_feed_instead_of_gdrive = Column(Boolean, default=True, doc="Флаг — использовать ФИД (если False — Google Drive)")
