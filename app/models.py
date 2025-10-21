@@ -1,8 +1,24 @@
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey, ARRAY
-from sqlalchemy.orm import declarative_mixin, declarative_base
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from sqlalchemy import PrimaryKeyConstraint, text
+
+from sqlalchemy import (
+    ARRAY,
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    PrimaryKeyConstraint,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.orm import declarative_base, declarative_mixin
 
 Base = declarative_base()
 
@@ -170,3 +186,38 @@ class DropshipEnterprise(Base):
     priority = Column(Integer, default=5, doc="Приоритет обработки (1–10)")
     weekend_work = Column(Boolean, default=False, doc="Флаг — работает в выходные")
     use_feed_instead_of_gdrive = Column(Boolean, default=True, doc="Флаг — использовать ФИД (если False — Google Drive)")
+    city = Column(String, nullable=False, doc="Город")
+
+class CompetitorPrice(Base):
+    __tablename__ = "competitor_prices"
+
+    # Составной первичный ключ
+    code = Column(String, primary_key=True, index=True, doc="Код товара")
+    city = Column(String, primary_key=True, doc="Город")
+    competitor_price = Column(Numeric(12, 2), nullable=False, doc="Цена конкурента")
+
+    __table_args__ = (
+        Index("ix_competitor_prices_city", "city"),
+    )
+class Offer(Base):
+    __tablename__ = "offers"
+
+    id = Column(BigInteger, primary_key=True)  # службовий PK
+    product_code  = Column(String, nullable=False, index=True, doc="Загальний код товару")
+    supplier_code = Column(String, nullable=False, index=True, doc="Код/назва постачальника")
+    city          = Column(String, nullable=False, index=True, doc="Місто")
+    price         = Column(Numeric(12, 2), nullable=False, doc="Ціна у валюті currency")
+    stock         = Column(Integer, nullable=False, default=0, doc="Доступний залишок ≥0")
+    updated_at    = Column(DateTime(timezone=True), nullable=False,
+                           server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # одна актуальна запис на звʼязку (товар, постачальник, місто)
+        UniqueConstraint("product_code", "supplier_code", "city",
+                         name="uq_offers_product_supplier_city"),
+        # під основні запити (мінімальна ціна по місту/товару)
+        Index("ix_offers_city_product_price", "city", "product_code", "price"),
+        # частковий індекс: швидкі фільтри по доступних
+        Index("ix_offers_city_stock_pos", "city",
+              postgresql_where=text("stock > 0")),
+    )
