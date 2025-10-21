@@ -186,7 +186,7 @@ class DropshipEnterprise(Base):
     priority = Column(Integer, default=5, doc="Приоритет обработки (1–10)")
     weekend_work = Column(Boolean, default=False, doc="Флаг — работает в выходные")
     use_feed_instead_of_gdrive = Column(Boolean, default=True, doc="Флаг — использовать ФИД (если False — Google Drive)")
-    city = Column(String, nullable=False, doc="Город")
+    city = Column(String, nullable=True, doc="Город")
 
 class CompetitorPrice(Base):
     __tablename__ = "competitor_prices"
