@@ -19,7 +19,7 @@ from sqlalchemy import update, text  # ← было только update
 # Реестр парсеров: code -> async функция parse(code=...) -> JSON-строка
 # Для D1 используем ваш парсер, который берёт URL из БД по code
 try:
-    from app.business.feed_biotus import parse_feed_to_json as parse_feed_D1
+    from app.business.feed_biotus import parse_feed_catalog_to_json as parse_feed_D1
 except Exception:
     parse_feed_D1 = None  # если модуля нет — пропустим D1
 
