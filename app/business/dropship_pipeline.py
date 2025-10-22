@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db
 from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorPrice имеет поля: code, city, competitor_price
 from app.business.feed_biotus import parse_feed_stock_to_json
-
+from app.business.feed_dsn import parse_dsn_stock_to_json
 
 logger = logging.getLogger("dropship")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -60,7 +60,9 @@ async def parse_feed_stock_to_json_template(*, code: str, timeout: int = 20, **k
     return []
 
 PARSERS: Dict[str, ParserFn] = {
+    
     "D1": parse_feed_stock_to_json,
+    "D2": parse_dsn_stock_to_json,
 }
 
 # --------------------------------------------------------------------------------------

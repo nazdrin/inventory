@@ -20,13 +20,14 @@ from sqlalchemy import update, text  # ← было только update
 # Для D1 используем ваш парсер, который берёт URL из БД по code
 try:
     from app.business.feed_biotus import parse_feed_catalog_to_json as parse_feed_D1
+    from app.business.feed_dsn import parse_dsn_catalog_to_json as parse_feed_D2
 except Exception:
     parse_feed_D1 = None  # если модуля нет — пропустим D1
 
 PARSER_REGISTRY: Dict[str, Any] = {
     "D1": parse_feed_D1,
     # Добавите сюда остальные, например:
-    # "D2": parse_feed_D2,
+    "D2": parse_feed_D2,
     # "D3": parse_feed_D3,
 }
 
