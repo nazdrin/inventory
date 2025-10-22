@@ -3,18 +3,33 @@ import asyncio
 import inspect
 import logging
 import re
+import argparse
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
+import tempfile
+import json
+from datetime import datetime, timezone
 
-from sqlalchemy import text, select
+from sqlalchemy import text, select, func, asc, desc
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # === ВАША ИНФРАСТРУКТУРА / МОДЕЛИ ===
 from app.database import get_async_db
-from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorPrice имеет поля: code, city, competitor_price
+from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorPrice: code, city, competitor_price
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
+
+# опционально: сервис "куда отдать массив"
+try:
+    from app.services.database_service import process_database_service
+except Exception:
+    async def process_database_service(file_path, file_type, enterprise_code):
+        logging.getLogger("dropship").warning(
+            "process_database_service() недоступен. Заглушка: file_type=%s enterprise_code=%s items=%d",
+            file_type, enterprise_code, len(file_path)
+        )
 
 logger = logging.getLogger("dropship")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -60,7 +75,6 @@ async def parse_feed_stock_to_json_template(*, code: str, timeout: int = 20, **k
     return []
 
 PARSERS: Dict[str, ParserFn] = {
-    
     "D1": parse_feed_stock_to_json,
     "D2": parse_dsn_stock_to_json,
 }
@@ -320,22 +334,176 @@ async def process_supplier(
             )
 
 # --------------------------------------------------------------------------------------
-# 6) Главный раннер
+# 6) Построение "stock"-пакета из offers и отправка в БД-сервис
 # --------------------------------------------------------------------------------------
-async def run_pipeline() -> None:
+async def _load_branch_mapping(session: AsyncSession, enterprise_code: str) -> Dict[str, str]:
+    """
+    Читает mapping_branch для enterprise_code и возвращает dict: {store_id (city) -> branch}.
+    """
+    sql = text("""
+        SELECT store_id, branch
+        FROM mapping_branch
+        WHERE enterprise_code = :enterprise_code
+    """)
+    res = await session.execute(sql, {"enterprise_code": enterprise_code})
+    rows = res.fetchall()
+    return {r[0]: r[1] for r in rows}
+
+# --- ВМЕСТО старой build_best_offers_by_city ---
+async def build_best_offers_by_city(session: AsyncSession) -> List[dict]:
+    """
+    Лучший оффер по каждой паре (city, product_code) ТОЛЬКО из записей со stock > 0.
+    Тай-брейки: price ASC → supplier.priority DESC → stock DESC → updated_at DESC.
+    """
+    # coalesce(priority, 0) — если поставщик не найден в dropship_enterprises
+    priority = func.coalesce(DropshipEnterprise.priority, 0)
+
+    ranked = (
+        select(
+            Offer.city.label("city"),
+            Offer.product_code.label("product_code"),
+            Offer.price.label("price"),
+            Offer.stock.label("stock"),
+            Offer.updated_at.label("updated_at"),
+            func.row_number().over(
+                partition_by=(Offer.city, Offer.product_code),
+                order_by=(
+                    asc(Offer.price),
+                    desc(priority),
+                    desc(Offer.stock),
+                    desc(Offer.updated_at),
+                ),
+            ).label("rn"),
+        )
+        .select_from(Offer)
+        .join(
+            DropshipEnterprise,
+            DropshipEnterprise.code == Offer.supplier_code,
+            isouter=True,
+        )
+        .where(Offer.stock > 0)   # ← ключевое условие: исключаем нулевые остатки
+        .subquery()
+    )
+
+    best = (
+        select(
+            ranked.c.city,
+            ranked.c.product_code,
+            ranked.c.price,
+            ranked.c.stock,
+            ranked.c.updated_at,
+        )
+        .where(ranked.c.rn == 1)
+    )
+
+    res = await session.execute(best)
+    return [dict(r._mapping) for r in res.fetchall()]
+
+# --- ВМЕСТО старой build_stock_payload ---
+async def build_stock_payload(session: AsyncSession, enterprise_code: str) -> List[dict]:
+    """
+    Формирует массив для process_database_service:
+      [{"branch": "...", "code": <product_code>, "price": <min_price>, "qty": <stock>, "price_reserve": <min_price>}]
+    Берём только офферы с qty > 0 (доп. предохранитель).
+    """
+    best = await build_best_offers_by_city(session)
+    city2branch = await _load_branch_mapping(session, enterprise_code)
+
+    payload: List[dict] = []
+    skipped_no_branch = 0
+    skipped_zero_stock = 0
+
+    for row in best:
+        if (row.get("stock") or 0) <= 0:
+            skipped_zero_stock += 1
+            continue
+
+        city = row["city"]
+        branch = city2branch.get(city)
+        if not branch:
+            skipped_no_branch += 1
+            continue
+
+        price = float(row["price"])
+        payload.append({
+            "branch": branch,
+            "code": str(row["product_code"]),
+            "price": price,
+            "qty": int(row["stock"]),
+            "price_reserve": price,
+        })
+
+    if skipped_no_branch:
+        logger.warning("Пропущено позиций без маппинга branch: %d", skipped_no_branch)
+    if skipped_zero_stock:
+        logger.warning("Пропущено позиций с нулевым остатком (safety): %d", skipped_zero_stock)
+
+    logger.info("Stock payload size: %d", len(payload))
+    return payload
+
+def _dump_payload_to_file(payload: list[dict], enterprise_code: str, file_type: str) -> Path:
+    """
+    Сохраняет payload в JSON-файл и возвращает путь.
+    Пишем во временную директорию ОС: <tmp>/inventory_exports/<file_type>_<enterprise>_<UTC>.json
+    """
+    base_dir = Path(tempfile.gettempdir()) / "inventory_exports"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    fname = f"{file_type}_{enterprise_code}_{ts}.json"
+    path = base_dir / fname
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+    logger.info("Сохранил %s (%d позиций) в %s", file_type, len(payload), path)
+    return path
+
+async def generate_and_send_stock(session: AsyncSession, enterprise_code: str) -> None:
+    data = await build_stock_payload(session, enterprise_code)
+    json_path = _dump_payload_to_file(data, enterprise_code, "stock")
+    # сервис ожидает путь к файлу
+    await process_database_service(str(json_path), "stock", enterprise_code)
+
+# --------------------------------------------------------------------------------------
+# 7) Главный раннер с аргументами (enterprise_code, file_type, optional --supplier)
+# --------------------------------------------------------------------------------------
+async def run_pipeline(
+    enterprise_code: Optional[str] = None,
+    file_type: Optional[str] = None,
+) -> None:
     async with get_async_db() as session:
+        # 1) Обновляем offers по всем активным поставщикам
         suppliers = await fetch_active_enterprises(session)
         if not suppliers:
             logger.info("No active dropship enterprises.")
-            return
+        else:
+            for ent in suppliers:
+                try:
+                    await process_supplier(session, ent, PARSERS)
+                    await session.commit()
+                except Exception as exc:
+                    logger.exception("Failed supplier %s: %s", ent.code, exc)
+                    await session.rollback()
 
-        for ent in suppliers:
-            try:
-                await process_supplier(session, ent, PARSERS)
-                await session.commit()
-            except Exception as exc:
-                logger.exception("Failed supplier %s: %s", ent.code, exc)
-                await session.rollback()
+        # 2) Если нужно, формируем и отправляем пакет
+        if enterprise_code and file_type:
+            ft = file_type.lower()
+            if ft == "stock":
+                try:
+                    await generate_and_send_stock(session, enterprise_code)
+                except Exception as exc:
+                    logger.exception("Build/send stock payload failed: %s", exc)
+                    await session.rollback()
+            else:
+                logger.warning("Неизвестный file_type: %s (поддерживается только 'stock')", file_type)
 
 if __name__ == "__main__":
-    asyncio.run(run_pipeline())
+    parser = argparse.ArgumentParser(description="Dropship pipeline runner")
+    parser.add_argument("-e", "--enterprise_code", type=str, default=None,
+                        help="Код предприятия (для mapping_branch и отдачи в БД-сервис)")
+    parser.add_argument("-t", "--file_type", type=str, default=None,
+                        help="Тип выдачи (сейчас поддерживается: stock)")
+    args = parser.parse_args()
+
+    asyncio.run(run_pipeline(
+        enterprise_code=args.enterprise_code,
+        file_type=args.file_type,
+    ))

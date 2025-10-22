@@ -9,6 +9,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from googleapiclient.errors import HttpError
+from pathlib import Path
+from datetime import datetime
+from sqlalchemy import select  # ← добавили
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -310,7 +313,94 @@ async def upsert_catalog_mapping(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
     return {"affected": affected}
 
+async def export_catalog_mapping_to_json_and_process(
+    enterprise_code: str,
+    file_type: str = "catalog",
+    export_dir_env: str = "CATALOG_EXPORT_DIR",
+    default_dir: str = "exports"
+) -> str:
+    """
+    1) Читает ВСЕ записи из CatalogMapping.
+    2) Конвертирует в список словарей формата:
+       {
+         "code": ID,
+         "name": Name,
+         "vat": 20.0,
+         "producer": Producer,
+         "morion": Guid,         # <-- допущение: morion берём из Guid
+         "tabletki": Code_Tabletki,
+         "barcode": Barcode,
+       }
+    3) Сохраняет JSON в файл.
+    4) Вызывает await process_database_service(json_file_path, file_type, enterprise_code).
+    5) Возвращает путь к сохранённому файлу.
 
+    Путь сохранения берётся из переменной окружения CATALOG_EXPORT_DIR,
+    иначе ./exports/.
+    """
+    # 1) Выборка из БД: берём только нужные колонки
+    async with get_async_db() as session:
+        result = await session.execute(
+            select(
+                CatalogMapping.ID,
+                CatalogMapping.Name,
+                CatalogMapping.Producer,
+                CatalogMapping.Guid,
+                CatalogMapping.Barcode,
+                CatalogMapping.Code_Tabletki,
+            )
+        )
+        rows = result.all()
+
+    # 2) Преобразование к нужному формату
+    payload = []
+    for (ID, Name, Producer, Guid, Barcode, Code_Tabletki) in rows:
+        payload.append({
+            "code": (ID or "").strip(),
+            "name": (Name or "").strip(),
+            "vat": 20.0,  # фиксированно по задаче
+            "producer": (Producer or "").strip(),
+            # ↓ Допущение: "morion" маппим на Guid. При необходимости легко заменить.
+            "morion": (Guid or "").strip(),
+            "tabletki": (Code_Tabletki or "").strip(),
+            "barcode": (Barcode or "").strip(),
+        })
+
+    # 3) Сохранение файла
+    export_root = Path(os.getenv(export_dir_env) or default_dir)
+    export_root.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_file_path = export_root / f"catalog_{enterprise_code}_{ts}.json"
+
+    with open(json_file_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    logger.info("Каталог выгружен в JSON: %s (записей: %d)", json_file_path, len(payload))
+
+    # 4) Вызов process_database_service
+    try:
+        # пытаемся импортировать из ожидаемого места
+        from app.business.process_database_service import process_database_service  # type: ignore
+    except Exception:
+        try:
+            # запасной вариант пути — если модуль у тебя лежит иначе
+            from app.services.database_service import process_database_service # type: ignore
+        except Exception as e:
+            msg = f"Не удалось импортировать process_database_service: {e}"
+            logger.exception(msg)
+            send_notification(msg, "Разработчик")
+            # Возвращаем путь к файлу — пусть дальше разберёмся вручную
+            return str(json_file_path)
+
+    try:
+        await process_database_service(str(json_file_path), file_type, enterprise_code)
+        logger.info("process_database_service: обработан файл %s", json_file_path)
+    except Exception as e:
+        msg = f"Ошибка при вызове process_database_service: {e}"
+        logger.exception(msg)
+        send_notification(msg, "Разработчик")
+
+    return str(json_file_path)
 # ──────────────────────────────────────────────────────────────────────────────
 # Оркестрация
 # ──────────────────────────────────────────────────────────────────────────────
@@ -320,8 +410,11 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
       1) Импорт одного .xlsx из Google Drive → парсинг → upsert базовых полей в CatalogMapping
       2) Для всех активных поставщиков (dropship_enterprises.is_active=TRUE):
            - находим парсер в PARSER_REGISTRY по code
-           - вызываем его (await parser(code=code)) → JSON
-           - нормализуем, затем пишем name -> Name_{code}, id -> Code_{code} по barcode
+           - вызываем его (await parser(code=code)) → JSON/объект
+           - нормализуем → записываем name -> Name_{code}, id -> Code_{code} по barcode
+      3) Экспорт ВСЕЙ таблицы CatalogMapping в JSON нужного формата и вызов
+         process_database_service(json_file_path, "catalog", enterprise_code)
+    Возврат: сводка по шагам + путь к экспортированному JSON.
     """
     if (file_type or "").strip().lower() != "catalog":
         logger.info("file_type != 'catalog' → сервис завершён без действий")
@@ -329,7 +422,8 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "file_name": None,
             "rows": 0,
             "db": {"affected": 0},
-            "feeds": {},  # ← несколько поставщиков
+            "feeds": {},
+            "export_file": None,
         }
 
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
@@ -342,15 +436,16 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "rows": 0,
             "db": {"affected": 0},
             "feeds": {},
+            "export_file": None,
         }
 
+    # Локальная утилита нормализации результатов парсера к списку dict
     def _to_items(obj: Any) -> List[Dict[str, Any]]:
         """
-        Нормализует результат парсера к списку словарей.
         Поддерживает:
           - list[dict]
-          - dict с ключом items/products/data/result (список) или одиночный объект → [dict]
-          - str/bytes с JSON → json.loads → рекурсивно
+          - dict с ключом items/products/data/result (list) или одиночный dict → [dict]
+          - str/bytes → json.loads → рекурсивно
           - любой итерируемый (кроме str/bytes) → list(...)
         Иначе → [].
         """
@@ -393,7 +488,7 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
         logger.info("Распарсено строк: %d", len(rows))
 
         db_stats = await upsert_catalog_mapping(rows)
-        logger.info("Upsert в БД выполнен. Затронуто записей (вставлено/обновлено): %d", db_stats["affected"])
+        logger.info("Upsert в БД выполнен. Затронуто записей (вставлено/обновлено): %d", db_stats.get("affected", 0))
 
         # 2) Мульти-поставщики: читаем активные коды и запускаем соответствующие парсеры
         feeds_agg: Dict[str, Dict[str, int]] = {}
@@ -452,11 +547,19 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             logger.info("Feed %s обработан: items=%d, updated=%d, errors=%d",
                         code, len(items), updated, errors)
 
+        # 3) Экспорт готовой таблицы в JSON и запуск процессинга
+        export_path = await export_catalog_mapping_to_json_and_process(
+            enterprise_code=enterprise_code,
+            file_type="catalog"
+        )
+        logger.info("Файл экспорта: %s", export_path)
+
         return {
             "file_name": file_name,
             "rows": len(rows),
             "db": db_stats,
-            "feeds": feeds_agg,  # сводка по всем поставщикам
+            "feeds": feeds_agg,            # сводка по всем поставщикам
+            "export_file": export_path,    # путь к созданному JSON
         }
 
     except Exception as e:
@@ -468,8 +571,8 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "rows": 0,
             "db": {"affected": 0},
             "feeds": {},
+            "export_file": None,
         }
-
 
 
 if __name__ == "__main__":

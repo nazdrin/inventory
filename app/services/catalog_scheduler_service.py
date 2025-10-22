@@ -33,6 +33,7 @@ from app.saledrive_data_service.saledrive_conv import run_service as run_saledri
 from app.ftp_zoomagazin_data_service.ftp_zoomagazin_conv import run_service as run_ftp_zoomagazin
 from app.ftp_multi_data_service.ftp_multi_conv import run_service as run_ftp_multi
 from app.biotus_data_service.biotus_conv import run_service as run_biotus
+from app.business.import_catalog import run_service as run_business
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 
@@ -60,6 +61,7 @@ PROCESSORS = {
     "ComboKeyCRM": run_saledrive,
     "FtpMulti": run_ftp_multi,
     "Biotus": run_biotus,
+    "Business": run_business,
 };
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
