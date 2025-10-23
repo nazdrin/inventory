@@ -269,6 +269,19 @@ async def upsert_offer(
     )
     await session.execute(stmt)
 
+async def clear_offers_for_supplier(session: AsyncSession, supplier_code: str) -> int:
+    """
+    Удаляет все офферы поставщика из offers.
+    Возвращает число удалённых строк (для логирования).
+    """
+    res = await session.execute(
+        text("DELETE FROM offers WHERE supplier_code = :supplier_code"),
+        {"supplier_code": supplier_code},
+    )
+    deleted = res.rowcount or 0
+    logger.info("Удалено старых офферов: %d для supplier=%s", deleted, supplier_code)
+    return deleted
+
 # --------------------------------------------------------------------------------------
 # 5) Обработка одного поставщика end-to-end
 # --------------------------------------------------------------------------------------
@@ -279,6 +292,8 @@ async def process_supplier(
 ) -> None:
     code = ent.code
     parser = parser_registry.get(code, parse_feed_stock_to_json_template)
+    # <<< ДОБАВЛЕНО: полная очистка старых офферов поставщика
+    await clear_offers_for_supplier(session, code)
 
     # 5.1 сырые данные из парсера (именованно: code=<ent.code>, timeout=20, + session/enterprise если поддерживаются)
     raw_items = await _call_parser_kw(parser, session, ent)
