@@ -361,8 +361,8 @@ async def export_catalog_mapping_to_json_and_process(
             "vat": 20.0,  # фиксированно по задаче
             "producer": (Producer or "").strip(),
             # ↓ Допущение: "morion" маппим на Guid. При необходимости легко заменить.
-            "morion": (Guid or "").strip(),
-            "tabletki": (Code_Tabletki or "").strip(),
+            "morion": ("").strip(),
+            "tabletki": (Guid or "").strip(),
             "barcode": (Barcode or "").strip(),
         })
 
