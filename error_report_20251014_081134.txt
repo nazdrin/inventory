@@ -1,6 +1,0 @@
-2025-10-14 08:11:34.555384 - Enterprise Code: 265 - Error: (raised as a result of Query-invoked autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)
-(sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.NotNullViolationError'>: значение NULL в столбце "code" отношения "inventory_data" нарушает ограничение NOT NULL
-DETAIL:  Ошибочная строка содержит (null, Замінник харчування з протеїном, е..., , 20, null, null, null, null, null, null, 265, 2025-10-14 11:11:33.578257+03).
-[SQL: INSERT INTO inventory_data (name, producer, vat, morion, tabletki, barcode, optima, badm, venta, enterprise_code, updated_at) VALUES ($1::VARCHAR, $2::VARCHAR, $3::FLOAT, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::TIMESTAMP WITH TIME ZONE)]
-[parameters: ("Замінник харчування з протеїном, енергія, Energy Shake, Nature's Plus, 756 м", '', 20.0, None, None, None, None, None, None, '265', datetime.datetime(2025, 10, 14, 11, 11, 33, 578257, tzinfo=zoneinfo.ZoneInfo(key='Europe/Kiev')))]
-(Background on this error at: https://sqlalche.me/e/20/gkpj)

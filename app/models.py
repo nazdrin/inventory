@@ -1,8 +1,24 @@
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey, ARRAY
-from sqlalchemy.orm import declarative_mixin, declarative_base
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from sqlalchemy import PrimaryKeyConstraint
+
+from sqlalchemy import (
+    ARRAY,
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    PrimaryKeyConstraint,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.orm import declarative_base, declarative_mixin
 
 Base = declarative_base()
 
@@ -119,3 +135,89 @@ class ClientNotifications(Base, TimestampMixin):
     enterprise_code = Column(String, nullable=False)
     message = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
+
+
+
+class CatalogMapping(Base):
+    __tablename__ = "catalog_mapping"
+    ID = Column(String, primary_key=True)
+    Name = Column(String, nullable=True)
+    Producer = Column(String, nullable=True)
+    Barcode = Column(String, nullable=True)
+    Guid = Column(String, nullable=True)
+    Code_Tabletki = Column(String, nullable=True)
+    Name_D1  = Column(String, nullable=True, server_default=text("''"))
+    Name_D2  = Column(String, nullable=True, server_default=text("''"))
+    Name_D3  = Column(String, nullable=True, server_default=text("''"))
+    Name_D4  = Column(String, nullable=True, server_default=text("''"))
+    Name_D5  = Column(String, nullable=True, server_default=text("''"))
+    Name_D6  = Column(String, nullable=True, server_default=text("''"))
+    Name_D7  = Column(String, nullable=True, server_default=text("''"))
+    Name_D8  = Column(String, nullable=True, server_default=text("''"))
+    Name_D9  = Column(String, nullable=True, server_default=text("''"))
+    Name_D10 = Column(String, nullable=True, server_default=text("''"))
+    Code_D1  = Column(String, nullable=True, server_default=text("''"))
+    Code_D2  = Column(String, nullable=True, server_default=text("''"))
+    Code_D3  = Column(String, nullable=True, server_default=text("''"))
+    Code_D4  = Column(String, nullable=True, server_default=text("''"))
+    Code_D5  = Column(String, nullable=True, server_default=text("''"))
+    Code_D6  = Column(String, nullable=True, server_default=text("''"))
+    Code_D7  = Column(String, nullable=True, server_default=text("''"))
+    Code_D8  = Column(String, nullable=True, server_default=text("''"))
+    Code_D9  = Column(String, nullable=True, server_default=text("''"))
+    Code_D10 = Column(String, nullable=True, server_default=text("''"))
+
+class DropshipEnterprise(Base):
+    __tablename__ = "dropship_enterprises"
+
+    code = Column(String, primary_key=True, index=True, doc="Уникальный код предприятия")
+    name = Column(String, nullable=False, doc="Название предприятия")
+    feed_url = Column(String, nullable=True, doc="Ссылка на прайс-фид")
+    gdrive_folder = Column(String, nullable=True, doc="Папка на Google Drive")
+
+    is_rrp = Column(Boolean, default=False, doc="Флаг — есть ли РРЦ")
+    is_wholesale = Column(Boolean, default=True, doc="Флаг — опт или розница")
+    profit_percent = Column(Float, nullable=True, doc="Процент заработка")
+    retail_markup = Column(Float, nullable=True, doc="Наценка для розницы")
+    min_markup_threshold = Column(Float, nullable=True, doc="Минимальный порог наценки")
+
+    is_active = Column(Boolean, default=True, doc="Флаг активности")
+    api_orders_enabled = Column(Boolean, default=False, doc="Флаг — заказы через API")
+    priority = Column(Integer, default=5, doc="Приоритет обработки (1–10)")
+    weekend_work = Column(Boolean, default=False, doc="Флаг — работает в выходные")
+    use_feed_instead_of_gdrive = Column(Boolean, default=True, doc="Флаг — использовать ФИД (если False — Google Drive)")
+    city = Column(String, nullable=True, doc="Город")
+
+class CompetitorPrice(Base):
+    __tablename__ = "competitor_prices"
+
+    # Составной первичный ключ
+    code = Column(String, primary_key=True, index=True, doc="Код товара")
+    city = Column(String, primary_key=True, doc="Город")
+    competitor_price = Column(Numeric(12, 2), nullable=False, doc="Цена конкурента")
+
+    __table_args__ = (
+        Index("ix_competitor_prices_city", "city"),
+    )
+class Offer(Base):
+    __tablename__ = "offers"
+
+    id = Column(BigInteger, primary_key=True)  # службовий PK
+    product_code  = Column(String, nullable=False, index=True, doc="Загальний код товару")
+    supplier_code = Column(String, nullable=False, index=True, doc="Код/назва постачальника")
+    city          = Column(String, nullable=False, index=True, doc="Місто")
+    price         = Column(Numeric(12, 2), nullable=False, doc="Ціна у валюті currency")
+    stock         = Column(Integer, nullable=False, default=0, doc="Доступний залишок ≥0")
+    updated_at    = Column(DateTime(timezone=True), nullable=False,
+                           server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # одна актуальна запис на звʼязку (товар, постачальник, місто)
+        UniqueConstraint("product_code", "supplier_code", "city",
+                         name="uq_offers_product_supplier_city"),
+        # під основні запити (мінімальна ціна по місту/товару)
+        Index("ix_offers_city_product_price", "city", "product_code", "price"),
+        # частковий індекс: швидкі фільтри по доступних
+        Index("ix_offers_city_stock_pos", "city",
+              postgresql_where=text("stock > 0")),
+    )
