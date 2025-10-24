@@ -32,8 +32,8 @@ from app.services.database_service import process_database_service
 
 
 # ===== НАСТРОЙКИ =====
-PREFERRED_CLINIC_ID = "4"           # ЖЁСТКО используем эту клинику
-TARGET_STORE_ID = 4                 # ЖЁСТКО используем этот склад
+PREFERRED_CLINIC_ID = "2"           # ЖЁСТКО используем эту клинику
+TARGET_STORE_ID = 12                # ЖЁСТКО используем этот склад
 X_REST_TIME_ZONE = "Europe/Kiev"    # На вашем инстансе 'Europe/Kyiv' может давать 500
 LOG_PROGRESS_EVERY = 200            # Шаг прогресс-логов
 MAX_CONCURRENCY = 16                # Одновременных запросов к остаткам
