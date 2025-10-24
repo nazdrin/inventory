@@ -24,8 +24,8 @@ load_dotenv()
 
 FTP_HOST = os.getenv("FTP_HOST", "127.0.0.1")
 FTP_PORT = int(os.getenv("FTP_PORT", "21"))
-FTP_USER_1 = os.getenv("FTP_USER", "zoomagazin")
-FTP_PASS_1 = os.getenv("FTP_PASS", "")
+FTP_USER = os.getenv("FTP_USER_1", "zoomagazin")
+FTP_PASS = os.getenv("FTP_PASS_1", "")
 FTP_DIR = os.getenv("FTP_DIR", "/")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
