@@ -79,7 +79,7 @@ def _delivery_dict(order: Dict[str, Any]) -> Dict[str, str]:
 async def _get_enterprise_salesdrive_form(session: AsyncSession, enterprise_code: str) -> Optional[str]:
     # Замените 'salesdrive_form_key' на реальное поле в EnterpriseSettings
     q = (
-        select(EnterpriseSettings.salesdrive_form_key)
+        select(EnterpriseSettings.token)
         .where(EnterpriseSettings.enterprise_code == str(enterprise_code))
         .limit(1)
     )

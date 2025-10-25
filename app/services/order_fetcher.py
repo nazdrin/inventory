@@ -9,10 +9,12 @@ from app.services.order_sender import send_orders_to_tabletki
 from app.services.order_sender import send_single_order_status_2
 from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
 from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
+from app.business.order_sender import process_and_send_order
 
 ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
     "ComboKeyCRM": send_order_to_key_crm,
+    "Business": process_and_send_order,
     # Добавишь сюда новые форматы позже
 }
 ORDER_STATUS_CHECKERS = {
