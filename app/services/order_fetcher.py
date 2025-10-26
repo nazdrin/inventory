@@ -99,7 +99,8 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             session,
                                             processed_orders,
                                             tabletki_login=enterprise.tabletki_login,
-                                            tabletki_password=enterprise.tabletki_password
+                                            tabletki_password=enterprise.tabletki_password,
+                                            cancel_reason=2,
                                         )
 
                                     if status == 0:

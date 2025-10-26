@@ -1,0 +1,1 @@
+2025-10-26 12:26:34.490649 - Enterprise Code: 265 - Error: Ошибка разбора XML: junk after document element: line 380927, column 6
