@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple, Iterable
-
+import json
 from sqlalchemy import select, and_, or_, func, literal
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
 from app.models import Offer, DropshipEnterprise, CatalogMapping, EnterpriseSettings
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,29 @@ class SupplierPick:
     supplier_name: str
     sku: Optional[str]
     price: Decimal
+async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
+    """
+    Отправка заказа в SalesDrive по API, с использованием X-Api-Key.
+    """
+    url = "https://petrenko.salesdrive.me/handler/"  # ← измените на ваш endpoint
 
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Api-Key": api_key,
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            logger.info("📦 Payload для SalesDrive:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
+            response = await client.post(url, json=payload, headers=headers)
+            logger.info("📤 Отправка в SalesDrive. Код ответа: %s", response.status_code)
+            logger.info("📨 Ответ от SalesDrive: %s", response.text)
+            response.raise_for_status()
+        except httpx.RequestError as e:
+            logger.error("❌ Ошибка подключения к SalesDrive: %s", str(e))
+        except httpx.HTTPStatusError as e:
+            logger.error("❌ Ошибка HTTP от SalesDrive: %s — %s", e.response.status_code, e.response.text)
 
 def _as_decimal(x: Any) -> Decimal:
     if isinstance(x, Decimal):
@@ -76,16 +99,14 @@ def _delivery_dict(order: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
-async def _get_enterprise_salesdrive_form(session: AsyncSession, enterprise_code: str) -> Optional[str]:
-    # Замените 'salesdrive_form_key' на реальное поле в EnterpriseSettings
+async def _get_salesdrive_api_key(session: AsyncSession, enterprise_code: str) -> Optional[str]:
     q = (
         select(EnterpriseSettings.token)
         .where(EnterpriseSettings.enterprise_code == str(enterprise_code))
         .limit(1)
     )
     res = await session.execute(q)
-    form = res.scalar_one_or_none()
-    return form
+    return res.scalar_one_or_none()
 
 
 async def _fetch_supplier_by_price(
@@ -220,12 +241,12 @@ def _build_rozetka_block(d: Dict[str, str]) -> Dict[str, Any]:
     }
 
 
-async def _send_to_salesdrive_stub(payload: Dict[str, Any]) -> None:
-    """
-    Заглушка: вместо реальной отправки — подробный лог.
-    """
-    import json
-    logger.info("🧪 [SALES DRIVE STUB] Payload:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
+# async def _send_to_salesdrive_stub(payload: Dict[str, Any]) -> None:
+#     """
+#     Заглушка: вместо реальной отправки — подробный лог.
+#     """
+#     import json
+#     logger.info("🧪 [SALES DRIVE STUB] Payload:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 async def _initiate_refusal_stub(order: Dict[str, Any], reason: str) -> None:
@@ -313,7 +334,7 @@ async def _build_products_block(
                 "name": r.goodsName,
                 "costPerItem": str(r.price),  # исх. цена позиции
                 "amount": str(r.qty),
-                "description": description,
+                "description": "",
                 "discount": "",
                 "sku": sku or "",
             }
@@ -354,10 +375,10 @@ async def build_salesdrive_payload(
         session, rows, supplier_code, supplier_name, supplier_changed_note
     )
 
-    form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
+    #form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
 
     payload = {
-        "form": form_key or "",  # ключ API формы SalesDrive
+        
         "getResultData": "1",
         "fName": fName,
         "lName": lName,
@@ -369,7 +390,7 @@ async def build_salesdrive_payload(
         "payment_method": "",
         "shipping_method": d.get("DeliveryServiceName", ""),
         "shipping_address": d.get("ReceiverWhs", ""),
-        "comment": "",
+        "comment": supplier_changed_note or supplier_name,
         "sajt": "",
         "externalId": order.get("id", ""),
         "organizationId": "1",
@@ -398,57 +419,43 @@ async def process_and_send_order(
     enterprise_code: str,
     branch: Optional[str] = None,
 ) -> None:
-    """
-    Главная функция-процессор: готовит и «отправляет» заказ в SalesDrive (лог-заглушка).
-    """
     rows = _normalize_order_rows(order)
     if not rows:
         await _initiate_refusal_stub(order, "Пустые позиции заказа")
         return
 
-    async with get_async_db() as session:  # type: AsyncSession
+    async with get_async_db() as session:
+        api_key = await _get_salesdrive_api_key(session, enterprise_code)
+        if not api_key:
+            await _initiate_refusal_stub(order, "❌ Отсутствует API‑ключ для SalesDrive")
+            return
+
         if len(rows) == 1:
-            # Один товар — по базовому правилу
             r = rows[0]
             supplier_code = await _fetch_supplier_by_price(session, r.goodsCode, r.price)
             if not supplier_code:
-                # можем попробовать fallback: взять любого поставщика, у кого есть цена <= исходной?
-                # оставим заглушку на третью логику:
-                logger.info("ℹ️ Заглушка третьей логики (single item). Не найден точный поставщик по цене.")
-                await _initiate_refusal_stub(order, "Не найден поставщик по цене для единственной позиции")
+                await _initiate_refusal_stub(order, "Не найден поставщик по цене")
                 return
 
             supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-            payload = await build_salesdrive_payload(
-                session, order, enterprise_code, rows, supplier_code, supplier_name
-            )
-            await _send_to_salesdrive_stub(payload)
+            payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name)
+            await _send_to_salesdrive(payload, api_key)
             return
 
-        # Много товаров:
-        # 1) Пробуем «все из одного поставщика по точному совпадению цен»:
         supplier_code = await _try_pick_single_supplier_by_exact_prices(session, rows)
-        supplier_changed = False
-
         if not supplier_code:
-            # 2) Кандидаты — все поставщики (можете сузить)
             candidates = await _collect_all_supplier_candidates(session)
             alt = await _try_pick_alternative_supplier_by_total_cap(session, rows, candidates)
             if alt:
                 supplier_code = alt
-                supplier_changed = True
-                order["_supplier_changed"] = True  # флажок для описания
+                order["_supplier_changed"] = True
             else:
-                # 3) Заглушка третьей логики:
-                logger.info("ℹ️ Заглушка третьей логики (multi-item). Подходящий поставщик по сумме не найден.")
                 await _initiate_refusal_stub(order, "Не удалось подобрать поставщика по сумме заказа")
                 return
 
         supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-        payload = await build_salesdrive_payload(
-            session, order, enterprise_code, rows, supplier_code, supplier_name
-        )
-        await _send_to_salesdrive_stub(payload)
+        payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name)
+        await _send_to_salesdrive(payload, api_key)
 
 
 # -----------------------------------------
