@@ -22,6 +22,19 @@ from app.services.database_service import process_database_service
 from app.services.notification_service import send_notification
 from app.unipro_data_service.unipro_conv import unipro_convert
 from app.auth import create_access_token, verify_token
+import logging
+import os
+import json
+from datetime import datetime
+from logging.handlers import TimedRotatingFileHandler
+from fastapi import BackgroundTasks, Request, HTTPException,Body
+
+# ——— Логгер "salesdrive" — пишем в ./logs/salesdrive_webhook.log и в консоль ———
+LOG_DIR = os.getenv("LOG_DIR", "./logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+sd_logger = logging.getLogger("salesdrive")
+sd_logger.setLevel(logging.INFO)
 
 # ⏩ ОДИН РАЗ указываем prefix, а внутри маршрутов больше не дублируем developer_panel
 router = APIRouter(prefix="/developer_panel", tags=["Developer Panel"])
@@ -159,3 +172,54 @@ async def upload_catalog(file: UploadFile, enterprise_code: str, db: AsyncSessio
 @router.post("/stock/")
 async def upload_stock(file: UploadFile, enterprise_code: str, db: AsyncSession = Depends(get_db)):
     return {"message": "Stock data processed successfully."}
+# ⬇️ НОВЫЙ ПУБЛИЧНЫЙ ЭНДПОИНТ (БЕЗ verify_token)
+from app.business.salesdrive_webhook import process_salesdrive_webhook  # заглушка, см. ниже
+
+@router.post("/webhooks/salesdrive", summary="SalesDrive Webhook (public)")
+async def salesdrive_webhook(
+    payload: dict = Body(
+        ...,
+        title="SalesDrive payload",
+        description="Сырой JSON, который присылает SalesDrive",
+        example={
+            "info": {
+                "webhookType": "order",
+                "webhookEvent": "new_order",
+                "account": "demo"
+            },
+            "data": {
+                "id": 12345,
+                "statusId": 10,
+                "products": [
+                    {"name": "Тест", "amount": 1, "price": 100}
+                ]
+            }
+        }
+    ),
+    request: Request = None,
+    background: BackgroundTasks = None
+):
+    # Заголовки без чувствительных данных
+    headers_safe = {
+        k: ("<redacted>" if k.lower() == "authorization" else v)
+        for k, v in request.headers.items()
+    }
+    sd_logger.info("📥 SalesDrive webhook: %s %s", request.method, request.url.path)
+    sd_logger.info("Headers: %s", json.dumps(headers_safe, ensure_ascii=False))
+
+    # Короткая сводка
+    info = (payload.get("info") or {})
+    data = (payload.get("data") or {})
+    sd_logger.info(
+        "Summary: webhookType=%s webhookEvent=%s account=%s order_id=%s status_id=%s",
+        info.get("webhookType"), info.get("webhookEvent"), info.get("account"),
+        data.get("id"), data.get("statusId")
+    )
+
+    # Полный «как есть» JSON
+    sd_logger.info("Payload:\n%s", json.dumps(payload, ensure_ascii=False, indent=2))
+
+    # Фоновая обработка (заглушка)
+    background.add_task(process_salesdrive_webhook, payload)
+
+    return {"ok": True}

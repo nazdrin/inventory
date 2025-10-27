@@ -159,7 +159,7 @@ async def map_supplier_codes(
         res = await session.execute(sql, {"code_sup": code_sup})
         row = res.first()
         if not row:
-            logger.info("Mapping not found: supplier=%s code_sup=%s", supplier_code, code_sup)
+            #logger.info("Mapping not found: supplier=%s code_sup=%s", supplier_code, code_sup)
             continue
 
         product_code = str(row[0])  # master-код (ваш ID)

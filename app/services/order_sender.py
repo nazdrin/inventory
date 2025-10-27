@@ -7,11 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models import DeveloperSettings
 
-async def send_orders_to_tabletki(session: AsyncSession, orders: list, tabletki_login: str, tabletki_password: str):
+
+
+async def send_orders_to_tabletki(
+    session: AsyncSession,
+    orders: list,
+    tabletki_login: str,
+    tabletki_password: str,
+    cancel_reason: int,  # ← теперь обязательный параметр, БЕЗ значения по умолчанию
+):
     """
-    Отправляет заказы в Tabletki.ua по API в зависимости от статуса заказа:
-    - статус 4 или 6: подтверждён (отправка в /api/orders),
-    - статус 7: отказ (отправка в /api/Orders/cancelledOrders).
+    Отправляет заказы в Tabletki.ua по API:
+    - статус 4 или 6: подтверждение → /api/orders
+    - статус 7 или все qtyShip == 0: отказ → /api/Orders/cancelledOrders
+    Поле id_CancelReason берётся из аргумента cancel_reason.
     """
     dev_settings = await session.execute(select(DeveloperSettings.endpoint_orders))
     endpoint_orders = dev_settings.scalar()
@@ -24,11 +33,15 @@ async def send_orders_to_tabletki(session: AsyncSession, orders: list, tabletki_
 
     async with aiohttp.ClientSession() as http_session:
         for order in orders:
-            if order["statusID"] == 7 or all(item.get("qtyShip", 0) == 0 for item in order["rows"]):
+            is_cancel = (order.get("statusID") == 7) or all(
+                (row.get("qtyShip", 0) == 0) for row in order.get("rows", [])
+            )
+
+            if is_cancel:
                 url = f"{endpoint_orders}/api/Orders/cancelledOrders"
                 cancel_data = [{
                     "id": order["id"],
-                    "id_CancelReason": 1,
+                    "id_CancelReason": cancel_reason,  # ← используем входной аргумент
                     "rows": [
                         {
                             "goodsCode": item["goodsCode"],
@@ -36,22 +49,23 @@ async def send_orders_to_tabletki(session: AsyncSession, orders: list, tabletki_
                         } for item in order["rows"]
                     ]
                 }]
-                print(f"🚫 Отправка отказа заказа {order['id']}:")
+                print(f"🚫 Отправка отказа заказа {order['id']} (id_CancelReason={cancel_reason}):")
                 print(json.dumps(cancel_data, indent=2, ensure_ascii=False))
                 async with http_session.post(url, json=cancel_data, headers=headers) as response:
                     print(f"📬 Ответ при отказе: {response.status}, {await response.text()}")
 
-            elif order["statusID"] in [4, 6]:
+            elif order.get("statusID") in [4, 6]:
                 valid_rows = [item for item in order["rows"] if item.get("qtyShip", 0) > 0]
                 if not valid_rows:
                     print(f"⚠️ Пропущен заказ {order['id']} — нет строк с qtyShip > 0")
                     continue
 
-                order["rows"] = valid_rows
+                order_to_send = dict(order)
+                order_to_send["rows"] = valid_rows
+
                 url = f"{endpoint_orders}/api/orders"
-                async with http_session.post(url, json=[order], headers=headers) as response:
+                async with http_session.post(url, json=[order_to_send], headers=headers) as response:
                     print(f"✅ Заказ {order['id']} отправлен: {response.status}, {await response.text()}")
-                    
 					
 async def send_single_order_status_2(session: AsyncSession, order: dict, tabletki_login: str, tabletki_password: str):
     """

@@ -3,11 +3,13 @@ from __future__ import annotations
 """
 Vetmanager → Tabletki Data Service (без классов; простые импорты)
 
-Семантика «как в правильной медленной версии», но быстрее:
-- Работа строго по clinic_id="2"
-- Склад по умолчанию TARGET_STORE_ID=4
-- В stock попадают только товары с qty>0 по складу TARGET_STORE_ID
-- Цена из good.goodSaleParams по этой же клинике
+Изменения:
+- И clinic_id, и target store_id берём из одного поля mapping_branch.store_id,
+  куда записывается строка вида "4, 24":
+    PREFERRED_CLINIC_ID ← первый элемент
+    TARGET_STORE_ID    ← второй элемент (или первый, если второго нет)
+- В stock попадают только товары с qty>0 по выбранному складу
+- Цена из good.goodSaleParams по clinic_id
 - Параллельный сбор остатков (aiohttp) c лимитом конкурентности
 
 Точка входа: async def run_service(enterprise_code: str, file_type: str)
@@ -31,9 +33,9 @@ from app.models import MappingBranch
 from app.services.database_service import process_database_service
 
 
-# ===== НАСТРОЙКИ =====
-PREFERRED_CLINIC_ID = "2"           # ЖЁСТКО используем эту клинику
-TARGET_STORE_ID = 10                # ЖЁСТКО используем этот склад
+# ===== НАСТРОЙКИ (дефолты; реальные значения берём из БД mapping_branch.store_id) =====
+PREFERRED_CLINIC_ID = "999"           # дефолт (перекрывается store_id[0])
+TARGET_STORE_ID = 999               # дефолт (перекрывается store_id[1] или store_id[0])
 X_REST_TIME_ZONE = "Europe/Kiev"    # На вашем инстансе 'Europe/Kyiv' может давать 500
 LOG_PROGRESS_EVERY = 200            # Шаг прогресс-логов
 MAX_CONCURRENCY = 16                # Одновременных запросов к остаткам
@@ -73,11 +75,59 @@ async def get_domain_and_key(session, enterprise_code: str) -> Tuple[str, str]:
 
 
 async def get_branches(session, enterprise_code: str) -> List[str]:
+    """
+    Нужны для формирования stock по всем филиалам Tabletki (как раньше).
+    Источник не меняем: остаётся MappingBranch.branch.
+    """
     stmt = select(MappingBranch).where(MappingBranch.enterprise_code == enterprise_code)
     rows = (await session.execute(stmt)).scalars().all()
     if not rows:
         raise ValueError(f"В mapping_branch нет записей для enterprise_code={enterprise_code}")
     return [str(getattr(r, "branch", "")) for r in rows if getattr(r, "branch", None)]
+
+
+def _parse_store_id_csv(s: str) -> Tuple[str, str]:
+    """
+    Принимает строку вида '4, 24' и возвращает (preferred_clinic_id, target_store_id).
+    Пробелы допускаются. Пустые элементы игнорируем.
+    Если указан только один элемент — оба значения одинаковые.
+    """
+    parts = [p.strip() for p in (s or "").split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError("store_id пустой — ожидается строка вида '4, 24'")
+    preferred = parts[0]
+    target = parts[1] if len(parts) > 1 else parts[0]
+    return str(preferred), str(target)
+
+
+async def get_ids_from_mapping_branch(session, enterprise_code: str) -> Tuple[str, str]:
+    """
+    Возвращает (preferred_clinic_id, target_store_id) из mapping_branch.store_id.
+    Берём первую непустую строку store_id и парсим как CSV.
+    Если найдено несколько разных store_id — логируем предупреждение.
+    """
+    stmt = select(MappingBranch.store_id).where(MappingBranch.enterprise_code == enterprise_code)
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        raise ValueError(f"В mapping_branch нет записей для enterprise_code={enterprise_code}")
+
+    # Собираем уникальные непустые store_id
+    store_values = [str(x[0]).strip() for x in rows if x[0] is not None and str(x[0]).strip() != ""]
+    unique_values = list(dict.fromkeys(store_values))  # сохраняем порядок, убираем дубли
+
+    if not unique_values:
+        raise ValueError(f"Не найдено непустых store_id в mapping_branch для enterprise_code={enterprise_code}")
+
+    chosen = unique_values[0]
+    if len(unique_values) > 1:
+        logging.getLogger("vetmanager.min").warning(
+            f"Найдено несколько различных store_id для enterprise_code={enterprise_code}: {unique_values}. "
+            f"Использую первое: '{chosen}'."
+        )
+
+    preferred_clinic_id, target_store_id = _parse_store_id_csv(chosen)
+    return preferred_clinic_id, target_store_id
 
 
 # ===== HTTP (sync для каталога) =====
@@ -159,21 +209,26 @@ def discover_clinics(domain: str, api_key: str, logger: logging.Logger, user_id:
     return [str(c.get("id")) for c in items if c.get("id") is not None]
 
 
-def discover_single_clinic(domain: str, api_key: str, logger: logging.Logger) -> Tuple[str, str]:
+def discover_single_clinic(
+    domain: str,
+    api_key: str,
+    logger: logging.Logger,
+    preferred_clinic_id: str
+) -> Tuple[str, str]:
     """
-    Жёстко используем clinic_id = PREFERRED_CLINIC_ID.
+    Жёстко используем clinic_id = preferred_clinic_id (из mapping_branch.store_id[0]).
     Проверяем, что пользователю эта клиника доступна.
     """
     uid = discover_user_id(domain, api_key, logger)
     clinics = discover_clinics(domain, api_key, logger, uid)
-    if PREFERRED_CLINIC_ID in clinics:
-        logger.info(f"Using FIXED clinic_id={PREFERRED_CLINIC_ID} (allowed={clinics})")
-        return uid, PREFERRED_CLINIC_ID
+    if preferred_clinic_id in clinics:
+        logger.info(f"Using FIXED clinic_id={preferred_clinic_id} (allowed={clinics})")
+        return uid, preferred_clinic_id
     logger.error(
-        f"Requested fixed clinic_id={PREFERRED_CLINIC_ID} is not allowed for user_id={uid}. Allowed clinics: {clinics}"
+        f"Requested fixed clinic_id={preferred_clinic_id} is not allowed for user_id={uid}. Allowed clinics: {clinics}"
     )
     raise ValueError(
-        f"clinic_id={PREFERRED_CLINIC_ID} is not available for this API key/user. "
+        f"clinic_id={preferred_clinic_id} is not available for this API key/user. "
         f"Allowed clinics: {clinics}"
     )
 
@@ -207,7 +262,12 @@ def select_price_from_catalog(good: Dict[str, Any], clinic_id: str) -> float:
 
 
 # ===== КАТАЛОГ =====
-def fetch_goods_paginated(domain: str, api_key: str, logger: logging.Logger, limit: int = CATALOG_PAGE_LIMIT) -> List[Dict[str, Any]]:
+def fetch_goods_paginated(
+    domain: str,
+    api_key: str,
+    logger: logging.Logger,
+    limit: int = CATALOG_PAGE_LIMIT
+) -> List[Dict[str, Any]]:
     """Каталог: /rest/api/Good → берём массив из data.good (или data.items)."""
     base = f"https://{domain}/rest/api/Good"
     goods: List[Dict[str, Any]] = []
@@ -273,9 +333,16 @@ def transform_catalog(goods: List[Dict[str, Any]], logger: logging.Logger) -> Li
 
 
 # ===== ПАРАЛЛЕЛЬНЫЙ СБОР ОСТАТКОВ =====
-async def fetch_qty_for_good(session: ClientSession, base_stock: str, clinic_id: str, user_id: str, gid: str) -> Tuple[str, int]:
+async def fetch_qty_for_good(
+    session: ClientSession,
+    base_stock: str,
+    clinic_id: str,
+    user_id: str,
+    gid: str,
+    target_store_id: str
+) -> Tuple[str, int]:
     """
-    Возвращает (gid, qty_on_TARGET_STORE_ID). Ошибки -> qty=0.
+    Возвращает (gid, qty_on_target_store_id). Ошибки -> qty=0.
     """
     url = f"{base_stock}?clinic_id={clinic_id}&good_id={gid}&user_id={user_id}"
     try:
@@ -291,7 +358,7 @@ async def fetch_qty_for_good(session: ClientSession, base_stock: str, clinic_id:
     if isinstance(balances, list):
         for row in balances:
             sid = extract_store_id(row)
-            if sid != str(TARGET_STORE_ID):
+            if sid != str(target_store_id):
                 continue
             raw_q = row.get("qty") or row.get("quantity") or 0
             qty_store += parse_qty_to_int_floor(raw_q)
@@ -303,12 +370,14 @@ async def fetch_stock_concurrent(
     api_key: str,
     logger: logging.Logger,
     goods: List[Dict[str, Any]],
+    preferred_clinic_id: str,
+    target_store_id: str,
 ) -> Dict[str, int]:
     """
-    Асинхронно, с ограничением конкурентности, тянем остатки по TARGET_STORE_ID для всех goods.
-    Возвращаем только товары с qty>0 (как в «правильной» версии).
+    Асинхронно, с ограничением конкурентности, тянем остатки по target_store_id для всех goods.
+    Возвращаем только товары с qty>0.
     """
-    uid, clinic_id = discover_single_clinic(domain, api_key, logger)
+    uid, clinic_id = discover_single_clinic(domain, api_key, logger, preferred_clinic_id)
     base_stock = f"https://{domain}/rest/api/Good/StockBalancesForProduct"
 
     timeout = ClientTimeout(total=REQUEST_TIMEOUT_SEC)
@@ -322,16 +391,16 @@ async def fetch_stock_concurrent(
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
     async with aiohttp.TCPConnector(limit=None) as connector:
-        async with ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
+        async with ClientSession(headers=headers, timeout=timeout, connector=connector) as http:
 
             async def bounded_fetch(gid: str) -> None:
                 async with sem:
-                    g, q = await fetch_qty_for_good(session, base_stock, clinic_id, uid, gid)
-                    if q > 0:  # ключевой момент: храним только qty>0
+                    g, q = await fetch_qty_for_good(http, base_stock, clinic_id, uid, gid, target_store_id)
+                    if q > 0:
                         qty_by_good[g] = q
 
             total = len(goods)
-            tasks = []
+            tasks: List[asyncio.Task] = []
             for idx, g in enumerate(goods, start=1):
                 gid_val = g.get("id")
                 if gid_val is None:
@@ -344,7 +413,7 @@ async def fetch_stock_concurrent(
             if tasks:
                 await asyncio.gather(*tasks)
 
-            logger.info(f"[done] fetched qty>0 for {len(qty_by_good)} goods (store_id={TARGET_STORE_ID})")
+            logger.info(f"[done] fetched qty>0 for {len(qty_by_good)} goods (store_id={target_store_id})")
             return qty_by_good
 
 
@@ -402,9 +471,13 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
     async with get_async_db() as session:
         domain, api_key = await get_domain_and_key(session, enterprise_code)
         branches = await get_branches(session, enterprise_code)
+
+        # Новая логика: оба ID из mapping_branch.store_id CSV
+        preferred_clinic_id, target_store_id = await get_ids_from_mapping_branch(session, enterprise_code)
+
         logger.info(f"branches loaded: {len(branches)} -> {branches}")
         logger.info(f"settings: domain={domain}, api_key_masked={api_key[:4]}{'*'*(len(api_key)-4)}")
-        logger.info(f"fixed clinic_id={PREFERRED_CLINIC_ID}, target store_id={TARGET_STORE_ID}")
+        logger.info(f"clinic_id(from store_id[0])={preferred_clinic_id}, target store_id(from store_id[1] or [0])={target_store_id}")
 
         # 1) Каталог
         logger.info("===== STAGE: Fetch GOODS =====")
@@ -424,11 +497,13 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
             return
 
         # 2) Остатки (параллельно) → результат только с qty>0
-        logger.info(f"===== STAGE: Fetch STOCK (concurrent; store_id={TARGET_STORE_ID}) =====")
-        qty_by_good = await fetch_stock_concurrent(domain, api_key, logger, goods)
+        logger.info(f"===== STAGE: Fetch STOCK (concurrent; store_id={target_store_id}) =====")
+        qty_by_good = await fetch_stock_concurrent(
+            domain, api_key, logger, goods, preferred_clinic_id, target_store_id
+        )
 
-        # 3) Сборка stock с ценой из каталога (клиника 2)
-        stock = build_stock(branches, goods, qty_by_good, PREFERRED_CLINIC_ID, logger)
+        # 3) Сборка stock с ценой из каталога (по clinic_id из store_id[0])
+        stock = build_stock(branches, goods, qty_by_good, preferred_clinic_id, logger)
 
         out_dir = f"temp/{enterprise_code}"
         ensure_dir(out_dir)
