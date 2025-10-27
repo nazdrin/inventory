@@ -401,7 +401,7 @@ async def build_salesdrive_payload(
         "meest": _build_meest_block(d),
         "rozetka_delivery": _build_rozetka_block(d),
         "prodex24source_full": "",
-        "prodex24source": "",
+        "prodex24source": str(branch or ""),
         "prodex24medium": "",
         "prodex24campaign": "",
         "prodex24content": "",
