@@ -362,6 +362,7 @@ async def build_salesdrive_payload(
     rows: List[OrderRow],
     supplier_code: str,
     supplier_name: str,
+    branch: Optional[str] = None, 
 ) -> Dict[str, Any]:
     d = _delivery_dict(order)
     fName, lName, mName = _extract_name_parts(order, d)
@@ -391,7 +392,7 @@ async def build_salesdrive_payload(
         "shipping_method": d.get("DeliveryServiceName", ""),
         "shipping_address": d.get("ReceiverWhs", ""),
         "comment": supplier_changed_note or supplier_name,
-        "sajt": "",
+        "sajt": str(branch or ""),
         "externalId": order.get("id", ""),
         "organizationId": "1",
         "stockId": "",
@@ -438,7 +439,7 @@ async def process_and_send_order(
                 return
 
             supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-            payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name)
+            payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name,branch=branch)
             await _send_to_salesdrive(payload, api_key)
             return
 
@@ -454,7 +455,7 @@ async def process_and_send_order(
                 return
 
         supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-        payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name)
+        payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name,branch=branch )
         await _send_to_salesdrive(payload, api_key)
 
 
