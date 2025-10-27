@@ -3,9 +3,11 @@ from __future__ import annotations
 """
 Vetmanager → Tabletki Data Service (без классов; простые импорты)
 
-Семантика «как в правильной медленной версии», но быстрее:
-- clinic_id берём из mapping_branch.branch
-- Склад (store_id) берём из mapping_branch.store_id
+Изменения:
+- И clinic_id, и target store_id берём из одного поля mapping_branch.store_id,
+  куда записывается строка вида "4, 24":
+    PREFERRED_CLINIC_ID ← первый элемент
+    TARGET_STORE_ID    ← второй элемент (или первый, если второго нет)
 - В stock попадают только товары с qty>0 по выбранному складу
 - Цена из good.goodSaleParams по clinic_id
 - Параллельный сбор остатков (aiohttp) c лимитом конкурентности
@@ -31,9 +33,9 @@ from app.models import MappingBranch
 from app.services.database_service import process_database_service
 
 
-# ===== НАСТРОЙКИ (дефолты; реальные значения берём из БД mapping_branch) =====
-PREFERRED_CLINIC_ID = "2"           # дефолт (перекрывается значением из mapping_branch.branch)
-TARGET_STORE_ID = 10             # дефолт (перекрывается значением из mapping_branch.store_id)
+# ===== НАСТРОЙКИ (дефолты; реальные значения берём из БД mapping_branch.store_id) =====
+PREFERRED_CLINIC_ID = "999"           # дефолт (перекрывается store_id[0])
+TARGET_STORE_ID = 999               # дефолт (перекрывается store_id[1] или store_id[0])
 X_REST_TIME_ZONE = "Europe/Kiev"    # На вашем инстансе 'Europe/Kyiv' может давать 500
 LOG_PROGRESS_EVERY = 200            # Шаг прогресс-логов
 MAX_CONCURRENCY = 16                # Одновременных запросов к остаткам
@@ -73,6 +75,10 @@ async def get_domain_and_key(session, enterprise_code: str) -> Tuple[str, str]:
 
 
 async def get_branches(session, enterprise_code: str) -> List[str]:
+    """
+    Нужны для формирования stock по всем филиалам Tabletki (как раньше).
+    Источник не меняем: остаётся MappingBranch.branch.
+    """
     stmt = select(MappingBranch).where(MappingBranch.enterprise_code == enterprise_code)
     rows = (await session.execute(stmt)).scalars().all()
     if not rows:
@@ -80,47 +86,47 @@ async def get_branches(session, enterprise_code: str) -> List[str]:
     return [str(getattr(r, "branch", "")) for r in rows if getattr(r, "branch", None)]
 
 
+def _parse_store_id_csv(s: str) -> Tuple[str, str]:
+    """
+    Принимает строку вида '4, 24' и возвращает (preferred_clinic_id, target_store_id).
+    Пробелы допускаются. Пустые элементы игнорируем.
+    Если указан только один элемент — оба значения одинаковые.
+    """
+    parts = [p.strip() for p in (s or "").split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError("store_id пустой — ожидается строка вида '4, 24'")
+    preferred = parts[0]
+    target = parts[1] if len(parts) > 1 else parts[0]
+    return str(preferred), str(target)
+
+
 async def get_ids_from_mapping_branch(session, enterprise_code: str) -> Tuple[str, str]:
     """
-    Возвращает (preferred_clinic_id, target_store_id) из mapping_branch.
-    preferred_clinic_id ← branch
-    target_store_id     ← store_id
-    Если найдено несколько разных значений — берём первое и логируем warning.
+    Возвращает (preferred_clinic_id, target_store_id) из mapping_branch.store_id.
+    Берём первую непустую строку store_id и парсим как CSV.
+    Если найдено несколько разных store_id — логируем предупреждение.
     """
-    stmt = select(MappingBranch.branch, MappingBranch.store_id).where(
-        MappingBranch.enterprise_code == enterprise_code
-    )
+    stmt = select(MappingBranch.store_id).where(MappingBranch.enterprise_code == enterprise_code)
     rows = (await session.execute(stmt)).all()
     if not rows:
         raise ValueError(f"В mapping_branch нет записей для enterprise_code={enterprise_code}")
 
-    branches = {str(b) for b, _ in rows if b is not None and str(b).strip() != ""}
-    stores = {str(s) for _, s in rows if s is not None and str(s).strip() != ""}
+    # Собираем уникальные непустые store_id
+    store_values = [str(x[0]).strip() for x in rows if x[0] is not None and str(x[0]).strip() != ""]
+    unique_values = list(dict.fromkeys(store_values))  # сохраняем порядок, убираем дубли
 
-    if not branches:
-        raise ValueError(
-            f"Не найдено значение branch (для clinic_id) в mapping_branch, enterprise_code={enterprise_code}"
-        )
-    if not stores:
-        raise ValueError(
-            f"Не найдено значение store_id (для target_store_id) в mapping_branch, enterprise_code={enterprise_code}"
-        )
+    if not unique_values:
+        raise ValueError(f"Не найдено непустых store_id в mapping_branch для enterprise_code={enterprise_code}")
 
-    preferred_clinic_id = next(iter(branches))
-    target_store_id = next(iter(stores))
-
-    base_logger = logging.getLogger("vetmanager.min")
-    if len(branches) > 1:
-        base_logger.warning(
-            f"Найдено несколько branch для enterprise_code={enterprise_code}: {branches}. "
-            f"Использую {preferred_clinic_id}."
-        )
-    if len(stores) > 1:
-        base_logger.warning(
-            f"Найдено несколько store_id для enterprise_code={enterprise_code}: {stores}. "
-            f"Использую {target_store_id}."
+    chosen = unique_values[0]
+    if len(unique_values) > 1:
+        logging.getLogger("vetmanager.min").warning(
+            f"Найдено несколько различных store_id для enterprise_code={enterprise_code}: {unique_values}. "
+            f"Использую первое: '{chosen}'."
         )
 
+    preferred_clinic_id, target_store_id = _parse_store_id_csv(chosen)
     return preferred_clinic_id, target_store_id
 
 
@@ -210,7 +216,7 @@ def discover_single_clinic(
     preferred_clinic_id: str
 ) -> Tuple[str, str]:
     """
-    Жёстко используем clinic_id = preferred_clinic_id (из mapping_branch).
+    Жёстко используем clinic_id = preferred_clinic_id (из mapping_branch.store_id[0]).
     Проверяем, что пользователю эта клиника доступна.
     """
     uid = discover_user_id(domain, api_key, logger)
@@ -369,7 +375,7 @@ async def fetch_stock_concurrent(
 ) -> Dict[str, int]:
     """
     Асинхронно, с ограничением конкурентности, тянем остатки по target_store_id для всех goods.
-    Возвращаем только товары с qty>0 (как в «правильной» версии).
+    Возвращаем только товары с qty>0.
     """
     uid, clinic_id = discover_single_clinic(domain, api_key, logger, preferred_clinic_id)
     base_stock = f"https://{domain}/rest/api/Good/StockBalancesForProduct"
@@ -390,7 +396,7 @@ async def fetch_stock_concurrent(
             async def bounded_fetch(gid: str) -> None:
                 async with sem:
                     g, q = await fetch_qty_for_good(http, base_stock, clinic_id, uid, gid, target_store_id)
-                    if q > 0:  # ключевой момент: храним только qty>0
+                    if q > 0:
                         qty_by_good[g] = q
 
             total = len(goods)
@@ -466,12 +472,12 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
         domain, api_key = await get_domain_and_key(session, enterprise_code)
         branches = await get_branches(session, enterprise_code)
 
-        # ← ключевая новая строка: получаем clinic_id и store_id из mapping_branch
+        # Новая логика: оба ID из mapping_branch.store_id CSV
         preferred_clinic_id, target_store_id = await get_ids_from_mapping_branch(session, enterprise_code)
 
         logger.info(f"branches loaded: {len(branches)} -> {branches}")
         logger.info(f"settings: domain={domain}, api_key_masked={api_key[:4]}{'*'*(len(api_key)-4)}")
-        logger.info(f"clinic_id(from mapping_branch.branch)={preferred_clinic_id}, target store_id(from mapping_branch.store_id)={target_store_id}")
+        logger.info(f"clinic_id(from store_id[0])={preferred_clinic_id}, target store_id(from store_id[1] or [0])={target_store_id}")
 
         # 1) Каталог
         logger.info("===== STAGE: Fetch GOODS =====")
@@ -496,7 +502,7 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
             domain, api_key, logger, goods, preferred_clinic_id, target_store_id
         )
 
-        # 3) Сборка stock с ценой из каталога (по clinic_id из mapping_branch)
+        # 3) Сборка stock с ценой из каталога (по clinic_id из store_id[0])
         stock = build_stock(branches, goods, qty_by_good, preferred_clinic_id, logger)
 
         out_dir = f"temp/{enterprise_code}"
