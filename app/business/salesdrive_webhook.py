@@ -19,7 +19,7 @@ logger.setLevel(logging.INFO)
 
 # 1) Справочники
 STATUS_MAP = {2: 4, 3: 4, 4: 4, 5: 6, 6: 7}
-CANCEL_REASON = {"Відмова споживача": 1, "Недостатня кількість": 5}
+CANCEL_REASON = {24: 1, "Недостатня кількість": 5}
 DELIVERY_MAP = {"novaposhta": "NP", "ukrposhta": "UP"}  # без лишних пробелов, ключи в нижнем регистре
 
 async def _get_enterprise_code_by_branch(session: AsyncSession, branch_value: Any) -> Optional[str]:
@@ -73,37 +73,27 @@ def _extract_phone(data: Dict[str, Any]) -> Optional[str]:
     return None
 
 async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
-    """
-    Главная точка входа бизнес-логики вебхука SalesDrive.
-    Выполняет:
-      - маппинг статуса,
-      - сбор orders (list) в требуемом формате,
-      - поиск enterprise_code по sajt -> выдача credentials,
-      - вызов send_orders_to_tabletki(),
-      - при наличии TTN — вызов send_ttn().
-    """
     data = (payload.get("data") or {})
     status_in: Optional[int] = data.get("statusId")
-    mapped_status: int = STATUS_MAP.get(status_in, status_in)  # если нет в мапе — отдаём как есть
+    mapped_status: int = STATUS_MAP.get(status_in, status_in)
 
     external_id = str(data.get("externalId") or "")
-    sajt = data.get("sajt")  # branchID = sajt (как просил)
+    utm_source = data.get("utmSource")  # ✅ теперь берём branch из utmSource
     products = data.get("products") or []
 
-    # Сформировать объект заказа + обернуть в список
     order_obj = {
-        "id": external_id,                      # externalId из вебхука
-        "statusID": mapped_status,              # результат маппинга
-        "branchID": str(sajt) if sajt is not None else "",
+        "id": external_id,
+        "statusID": mapped_status,
+        "branchID": str(utm_source) if utm_source is not None else "",  # ✅ заменили sajt → utmSource
         "rows": _build_order_rows(products),
     }
     orders: List[Dict[str, Any]] = [order_obj]
 
-    # Подготовка к отправке: enterprise_code и креды
-    async with get_async_db() as session:  # предполагается, что get_async_db работает как async CM
-        enterprise_code = await _get_enterprise_code_by_branch(session, sajt)
+    async with get_async_db() as session:
+        # ✅ enterprise_code ищем по utmSource
+        enterprise_code = await _get_enterprise_code_by_branch(session, utm_source)
         if not enterprise_code:
-            logger.error("⛔ enterprise_code не найден по sajt=%s в MappingBranch", sajt)
+            logger.error("⛔ enterprise_code не найден по utmSource=%s в MappingBranch", utm_source)
             return
 
         creds = await _get_tabletki_credentials(session, enterprise_code)
@@ -112,7 +102,6 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
             return
         tabletki_login, tabletki_password = creds
 
-        # 2) Статусы 2/3/4 → подтверждение (cancel_reason=1)
         if status_in in (2, 3, 4):
             try:
                 await send_orders_to_tabletki(
@@ -127,14 +116,11 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
             except Exception as e:
                 logger.exception("❌ Ошибка send_orders_to_tabletki для подтверждения: %s", e)
 
-        # 3) Статус 6 → отказ (cancel_reason по словарю)
         elif status_in == 6:
             raw_reason = data.get("rejectionReason")
-            # В вебхуке иногда приходит код/число; у тебя словарь по строке — делаем мягкую деградацию
             if isinstance(raw_reason, str):
                 cancel_reason = CANCEL_REASON.get(raw_reason, 1)
             else:
-                # если пришёл int-код или None — ставим по умолчанию 1 и предупреждаем
                 cancel_reason = 1
                 logger.warning("⚠️ rejectionReason=%r не сопоставлён со словарём, используем cancel_reason=1", raw_reason)
 
@@ -151,10 +137,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
             except Exception as e:
                 logger.exception("❌ Ошибка send_orders_to_tabletki для отказа: %s", e)
 
-        else:
-            logger.info("ℹ️ statusId=%s не обрабатывается (map=%s). Ничего не отправляем.", status_in, mapped_status)
-
-        # 4) TTN — отправка трека, если есть
+        # TTN-блок без изменений
         ttn, provider = _extract_ttn_block(data)
         if ttn:
             alias = DELIVERY_MAP.get((provider or "").lower())
