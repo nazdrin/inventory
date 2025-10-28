@@ -108,7 +108,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
         tabletki_login, tabletki_password = creds
 
         # === Отправка подтверждения / отказа ===
-        if status_in in (2, 3, 4):
+        if status_in in (4):
             # подтверждение
             try:
                 await send_orders_to_tabletki(
