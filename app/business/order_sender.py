@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db
 from app.models import Offer, DropshipEnterprise, CatalogMapping, EnterpriseSettings
 import httpx
-
+from app.services.order_sender import send_orders_to_tabletki
 logger = logging.getLogger(__name__)
 
 
@@ -249,9 +249,61 @@ def _build_rozetka_block(d: Dict[str, str]) -> Dict[str, Any]:
 #     logger.info("🧪 [SALES DRIVE STUB] Payload:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-async def _initiate_refusal_stub(order: Dict[str, Any], reason: str) -> None:
-    logger.warning("🚫 Инициирован отказ по заказу %s: %s", order.get("id"), reason)
+async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_code: str) -> None:
+    """
+    Отправляет отказ по одному заказу в Tabletki.
+    Требования:
+      - statusID = 7 (принудительно)
+      - в rows минимум один товар
+      - tabletki_login/password берём из EnterpriseSettings по enterprise_code
+      - cancel_reason по ТЗ = 5
+    """
+    logger.warning("🚫 Инициализация отказа по заказу %s: %s", order.get("id"), reason)
 
+    # 1) Валидация
+    if not isinstance(order, dict) or not order.get("rows"):
+        logger.error("⛔ Заказ некорректен или отсутствуют rows — отказ не отправлен. id=%s", order.get("id"))
+        return
+    if not enterprise_code:
+        logger.error("⛔ Не передан enterprise_code — отказ не отправлен. id=%s", order.get("id"))
+        return
+
+    # Статус отказа
+    order["statusID"] = 7
+
+    # 2) Достаём креды по enterprise_code
+    try:
+        async with get_async_db() as session:
+            res = await session.execute(
+                select(
+                    EnterpriseSettings.tabletki_login,
+                    EnterpriseSettings.tabletki_password
+                ).where(EnterpriseSettings.enterprise_code == enterprise_code)
+            )
+            row = res.first()
+            if not row or not row[0] or not row[1]:
+                logger.error("⛔ tabletki_login/password не найдены для enterprise_code=%s — отказ не отправлен.", enterprise_code)
+                return
+
+            tabletki_login, tabletki_password = row[0], row[1]
+
+            # 3) Фиксированный код причины отказа
+            cancel_reason_code = 5
+
+            # 4) Отправка
+            await send_orders_to_tabletki(
+                session=session,
+                orders=[order],
+                tabletki_login=tabletki_login,
+                tabletki_password=tabletki_password,
+                cancel_reason=cancel_reason_code,
+            )
+            logger.info(
+                "✅ Отказ отправлен: id=%s, enterprise=%s, reason=%r → code=%s",
+                order.get("id"), enterprise_code, reason, cancel_reason_code
+            )
+    except Exception as e:
+        logger.exception("❌ Ошибка при отправке отказа: %s", e)
 
 # ------------------------------------------------
 # ЛОГИКА ОПРЕДЕЛЕНИЯ ПОСТАВЩИКА ДЛЯ MULTI-ITEM
@@ -428,14 +480,14 @@ async def process_and_send_order(
     async with get_async_db() as session:
         api_key = await _get_salesdrive_api_key(session, enterprise_code)
         if not api_key:
-            await _initiate_refusal_stub(order, "❌ Отсутствует API‑ключ для SalesDrive")
+            await _initiate_refusal_stub(order, "❌ Отсутствует API‑ключ для SalesDrive", enterprise_code)
             return
 
         if len(rows) == 1:
             r = rows[0]
             supplier_code = await _fetch_supplier_by_price(session, r.goodsCode, r.price)
             if not supplier_code:
-                await _initiate_refusal_stub(order, "Не найден поставщик по цене")
+                await _initiate_refusal_stub(order, "Не найден поставщик по цене", enterprise_code)
                 return
 
             supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
@@ -451,7 +503,7 @@ async def process_and_send_order(
                 supplier_code = alt
                 order["_supplier_changed"] = True
             else:
-                await _initiate_refusal_stub(order, "Не удалось подобрать поставщика по сумме заказа")
+                await _initiate_refusal_stub(order, "Не удалось подобрать поставщика по сумме заказа", enterprise_code)
                 return
 
         supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
