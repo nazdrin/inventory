@@ -20,7 +20,11 @@ import httpx
 from app.services.order_sender import send_orders_to_tabletki
 logger = logging.getLogger(__name__)
 
-
+def _notify_business(msg: str) -> None:
+    try:
+        send_notification(msg, "Business")  # ← второй аргумент — канал
+    except Exception:
+        logger.exception("Не удалось отправить уведомление: %s", msg)
 # ---------------------------
 # ВСПОМОГАТЕЛЬНЫЕ СТРУКТУРЫ
 # ---------------------------
@@ -347,11 +351,39 @@ def _build_rozetka_block(d: Dict[str, str]) -> Dict[str, Any]:
 
 
 async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_code: str) -> None:
-    ...
+    """
+    Отправляет отказ по одному заказу в Tabletki.
+    Требования:
+      - statusID = 7 (принудительно)
+      - в rows минимум один товар
+      - tabletki_login/password берём из EnterpriseSettings по enterprise_code
+      - cancel_reason по ТЗ = 5
+      - Всегда шлём уведомление в канал "Business" с причиной отказа
+    """
+    logger.warning("🚫 Инициализация отказа по заказу %s: %s", order.get("id"), reason)
+
+    # 1) Валидация входа
+    if not isinstance(order, dict) or not order.get("rows"):
+        msg = f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | причина: {reason} | помилка: порожні rows"
+        try:
+            send_notification(msg, "Business")
+        except Exception:
+            logger.exception("Не удалось отправить уведомление: %s", msg)
+        logger.error("⛔ Заказ некорректен или отсутствуют rows — отказ не отправлен. id=%s", order.get("id"))
+        return
+    if not enterprise_code:
+        msg = f"Відмова замовлення id={order.get('id')} | причина: {reason} | помилка: не передан enterprise_code"
+        try:
+            send_notification(msg, "Business")
+        except Exception:
+            logger.exception("Не удалось отправить уведомление: %s", msg)
+        logger.error("⛔ Не передан enterprise_code — отказ не отправлен. id=%s", order.get("id"))
+        return
+
     # Статус отказа
     order["statusID"] = 7
 
-    # 2) Достаём креды по enterprise_code
+    # 2) Достаём креды по enterprise_code и отправляем отказ
     try:
         async with get_async_db() as session:
             res = await session.execute(
@@ -362,7 +394,6 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             )
             row = res.first()
             if not row or not row[0] or not row[1]:
-                # 🟡 уведомление и при отсутствии кредов
                 msg = (
                     f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
                     f"причина: {reason} | помилка: немає tabletki_login/password"
@@ -370,7 +401,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
                 try:
                     send_notification(msg, "Business")
                 except Exception:
-                    logger.exception("Не вдалося надіслати сповіщення про відмову")
+                    logger.exception("Не удалось отправить уведомление: %s", msg)
                 logger.error("⛔ tabletki_login/password не найдены для enterprise_code=%s — отказ не отправлен.", enterprise_code)
                 return
 
@@ -379,7 +410,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             # 3) Фиксированный код причины отказа
             cancel_reason_code = 5
 
-            # 🟢 уведомление про отказ (основной кейс)
+            # 4) Уведомление о том, что отправляем отказ
             msg = (
                 f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
                 f"reason='{reason}' | cancel_reason_code={cancel_reason_code}"
@@ -387,9 +418,9 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             try:
                 send_notification(msg, "Business")
             except Exception:
-                logger.exception("Не вдалося надіслати сповіщення про відмову")
+                logger.exception("Не удалось отправить уведомление: %s", msg)
 
-            # 4) Отправка в Tabletki
+            # 5) Отправка в Tabletki
             await send_orders_to_tabletki(
                 session=session,
                 orders=[order],
@@ -403,14 +434,13 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             )
     except Exception as e:
         logger.exception("❌ Ошибка при отправке отказа: %s", e)
-        # 🔴 уведомление и при исключении
+        err_msg = (
+            f"Помилка під час відправки відмови id={order.get('id')} | enterprise={enterprise_code} | err={e}"
+        )
         try:
-            send_notification(
-                f"Помилка під час відправки відмови id={order.get('id')} | enterprise={enterprise_code} | err={e}",
-                "Business",
-            )
+            send_notification(err_msg, "Business")
         except Exception:
-            logger.exception("Не вдалося надіслати сповіщення про помилку відмови")
+            logger.exception("Не удалось отправить уведомление: %s", err_msg)
 # ------------------------------------------------
 # ЛОГИКА ОПРЕДЕЛЕНИЯ ПОСТАВЩИКА ДЛЯ MULTI-ITEM
 # ------------------------------------------------
@@ -611,32 +641,44 @@ async def process_and_send_order(
 ) -> None:
     """
     Логика:
-      - Нормализация rows; отказ при пустых строках.
-      - Получение api_key SalesDrive; отказ при отсутствии.
-      - SINGLE-ITEM:
-          * Подбор поставщика по правилам _pick_supplier_for_single_item:
-              1) Если есть цена ровно как в заказе — берём этого поставщика (цена остаётся как в заказе).
-              2) Иначе, если все цены ниже — берём поставщика с max(profit_percent) и снижаем цену позиции r.price.
-              3) Иначе — допускаем цены <= order_price + 0.10; если нет — отказ.
-          * Формируем payload и отправляем.
+      - Нормализация rows; отказ при пустых строках (уведомляем "Business").
+      - Получение api_key SalesDrive; отказ при отсутствии (уведомляем "Business").
+      - SINGLE-ITEM (_pick_supplier_for_single_item):
+          1) Если есть цена ровно как в заказе — берём этого поставщика (цена остаётся как в заказе).
+          2) Иначе, если все цены ниже — берём поставщика с max(profit_percent) и снижаем r.price.
+          3) Иначе — допускаем цены <= order_price + 0.10; если нет — отказ (уведомляем).
       - MULTI-ITEM:
           * Пытаемся найти единого поставщика по точным ценам (_try_pick_single_supplier_by_exact_prices).
           * Иначе — альтернатива по сумме (_try_pick_alternative_supplier_by_total_cap).
-          * Если поставщик найден — ПЕРЕПИСЫВАЕМ r.price на цены из БД выбранного поставщика.
-          * Формируем payload (в комментарий попадёт supplier_changed_note с именем поставщика) и отправляем.
+          * Если поставщик найден — перезаписываем r.price на цены из БД выбранного поставщика.
+          * Формируем payload и отправляем в SalesDrive.
     """
     supplier_code: Optional[str] = None  # защитная инициализация
 
     # 1) Нормализация позиций
     rows = _normalize_order_rows(order)
     if not rows:
+        try:
+            send_notification(
+                f"Відмова: порожні позиції | id={order.get('id')} | enterprise={enterprise_code}",
+                "Business",
+            )
+        except Exception:
+            logger.exception("Не удалось отправить уведомление о пустых позициях")
         await _initiate_refusal_stub(order, "Пустые позиции заказа", enterprise_code)
         return
 
-    # 2) Готовим сессию и api_key
+    # 2) Сессия и api_key
     async with get_async_db() as session:
         api_key = await _get_salesdrive_api_key(session, enterprise_code)
         if not api_key:
+            try:
+                send_notification(
+                    f"Відмова: немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
+                    "Business",
+                )
+            except Exception:
+                logger.exception("Не удалось отправить уведомление об отсутствии API-ключа")
             await _initiate_refusal_stub(order, "❌ Отсутствует API-ключ для SalesDrive", enterprise_code)
             return
 
@@ -646,6 +688,13 @@ async def process_and_send_order(
 
             pick = await _pick_supplier_for_single_item(session, r.goodsCode, r.price)
             if not pick:
+                try:
+                    send_notification(
+                        f"Відмова: не знайдено постачальника (допуск +0.10) | id={order.get('id')} | enterprise={enterprise_code}",
+                        "Business",
+                    )
+                except Exception:
+                    logger.exception("Не удалось отправить уведомление об отсутствии поставщика (single)")
                 await _initiate_refusal_stub(
                     order,
                     "Не найден подходящий поставщик (учтён допуск +0.10)",
@@ -680,6 +729,13 @@ async def process_and_send_order(
                 supplier_code = alt
                 order["_supplier_changed"] = True
             else:
+                try:
+                    send_notification(
+                        f"Відмова: не підібрано єдиного постачальника під суму | id={order.get('id')} | enterprise={enterprise_code}",
+                        "Business",
+                    )
+                except Exception:
+                    logger.exception("Не удалось отправить уведомление (multi, не подобрали по сумме)")
                 await _initiate_refusal_stub(
                     order,
                     "Не удалось подобрать единого поставщика под сумму заказа",
@@ -687,12 +743,19 @@ async def process_and_send_order(
                 )
                 return
 
-        # Страховка
+        # Страховка (на всякий случай)
         if not supplier_code:
+            try:
+                send_notification(
+                    f"Відмова: внутрішня помилка вибору постачальника | id={order.get('id')} | enterprise={enterprise_code}",
+                    "Business",
+                )
+            except Exception:
+                logger.exception("Не удалось отправить уведомление (multi, supplier_code is None)")
             await _initiate_refusal_stub(order, "Внутренняя ошибка: не выбран поставщик", enterprise_code)
             return
 
-        # ⬇️ ВАЖНО: теперь, когда выбран поставщик, перезаписываем цены строк на цены из БД выбранного поставщика
+        # Теперь, когда выбран поставщик, перезаписываем цены строк на цены из БД выбранного поставщика
         for r in rows:
             db_price = await _fetch_supplier_price(session, supplier_code, r.goodsCode)
             if db_price is not None:
