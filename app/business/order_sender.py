@@ -10,6 +10,8 @@ import json
 from sqlalchemy import select, and_, or_, func, literal
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR, getcontext
+
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
@@ -138,7 +140,81 @@ async def _fetch_supplier_name(session: AsyncSession, supplier_code: str) -> Opt
     )
     res = await session.execute(q)
     return res.scalar_one_or_none()
+async def _get_supplier_priority(session: AsyncSession, supplier_code: str) -> int:
+    q = select(DropshipEnterprise.priority).where(DropshipEnterprise.code == str(supplier_code)).limit(1)
+    res = await session.execute(q)
+    val = res.scalar_one_or_none()
+    return int(val or 0)
+async def _fetch_stock_qty(session: AsyncSession, supplier_code: str, product_code: str) -> Decimal:
+    """
+    Возвращает остаток по товару у поставщика.
+    По умолчанию читаю из Offer.qty. Если у вас остаток в другой таблице,
+    замените запрос внутри на вашу схему.
+    """
+    try:
+        # Вариант через Offers (если там есть поле qty)
+        q = (
+            select(Offer.stock)
+            .where(and_(Offer.supplier_code == str(supplier_code), Offer.product_code == str(product_code)))
+            .limit(1)
+        )
+        res = await session.execute(q)
+        v = res.scalar_one_or_none()
+        return _as_decimal(v or 0)
+    except Exception:
+        return Decimal(0)
+async def _pick_supplier_for_single_item(
+    session: AsyncSession,
+    product_code: str,
+    order_price: Decimal,
+) -> Optional[Tuple[str, Decimal, bool]]:
+    """
+    Возвращает (supplier_code, supplier_price, price_went_down_flag)
+    Правила:
+      - supplier_price <= order_price + 0.10
+      - если несколько — берем с бОльшим остатком; если равен — с бОльшим priority
+      - если supplier_price < order_price => price_went_down_flag = True (для supplier_changed_note)
+    """
+    price_tolerance = Decimal("0.10")
 
+    # Берем всех офферов по этому товару, которые проходят по допуску
+    q = (
+        select(Offer.supplier_code, Offer.price)
+        .where(
+            and_(
+                Offer.product_code == str(product_code),
+                Offer.price <= order_price + price_tolerance,
+            )
+        )
+    )
+    res = await session.execute(q)
+    rows = res.all()
+    if not rows:
+        return None
+
+    # Рассчитываем метрики выбора
+    candidates = []
+    for supplier_code, supplier_price in rows:
+        stock_qty = await _fetch_stock_qty(session, supplier_code, product_code)
+        priority = await _get_supplier_priority(session, supplier_code)
+        price_down = supplier_price is not None and Decimal(supplier_price) < order_price
+        candidates.append(
+            {
+                "supplier_code": str(supplier_code),
+                "supplier_price": _as_decimal(supplier_price),
+                "stock_qty": stock_qty,
+                "priority": int(priority),
+                "price_down": bool(price_down),
+            }
+        )
+
+    if not candidates:
+        return None
+
+    # Сортировка: по stock_qty DESC, затем priority DESC
+    candidates.sort(key=lambda x: (x["stock_qty"], x["priority"]), reverse=True)
+    top = candidates[0]
+    return top["supplier_code"], top["supplier_price"], top["price_down"]
 
 async def _fetch_supplier_price(
     session: AsyncSession, supplier_code: str, product_code: str
@@ -331,25 +407,43 @@ async def _try_pick_alternative_supplier_by_total_cap(
     session: AsyncSession, rows: List[OrderRow], candidates: Iterable[str]
 ) -> Optional[str]:
     """
-    Ищем такого поставщика s из списка candidates, чтобы сумма его цен по всем товарам
-    была <= сумме исходных цен по заказу. Возвращаем supplier_code.
+    Ищем таких поставщиков, у кого для каждой позиции есть цена, и
+    SUM(price_s * qty) <= SUM(order.price * qty).
+    Из тех, кто прошел, выбираем поставщика с максимальным суммарным остатком
+    по всем позициям (сумма stock_qty), при равенстве — больший priority.
     """
     total_incoming = sum((r.price * r.qty for r in rows), Decimal(0))
+    passed = []
 
     for supplier_code in candidates:
         ok = True
         total_alt = Decimal(0)
+        sum_stock = Decimal(0)
+
         for r in rows:
             price_s = await _fetch_supplier_price(session, supplier_code, r.goodsCode)
             if price_s is None:
                 ok = False
                 break
             total_alt += price_s * r.qty
+            sum_stock += await _fetch_stock_qty(session, supplier_code, r.goodsCode)
+
         if ok and total_alt <= total_incoming:
-            return supplier_code
+            priority = await _get_supplier_priority(session, supplier_code)
+            passed.append(
+                {
+                    "supplier_code": supplier_code,
+                    "sum_stock": sum_stock,
+                    "priority": int(priority),
+                }
+            )
 
-    return None
+    if not passed:
+        return None
 
+    # Выбираем лучшего: по суммарному остатку, затем по приоритету
+    passed.sort(key=lambda x: (x["sum_stock"], x["priority"]), reverse=True)
+    return passed[0]["supplier_code"]
 
 async def _collect_all_supplier_candidates(session: AsyncSession) -> List[str]:
     """
@@ -423,6 +517,10 @@ async def build_salesdrive_payload(
     supplier_changed_note = None
     if order.get("_supplier_changed"):
         supplier_changed_note = _make_supplier_changed_note(rows)
+     # ЯВНАЯ пометка о снижении цены (если это был кейс single-item со снижением)
+    if order.get("_price_went_down"):
+        extra_note = "Ціна постачальника нижча за ціну в замовленні: застосовано нижчу ціну."
+        supplier_changed_note = (supplier_changed_note + " | " + extra_note) if supplier_changed_note else extra_note
 
     products = await _build_products_block(
         session, rows, supplier_code, supplier_name, supplier_changed_note
@@ -474,7 +572,7 @@ async def process_and_send_order(
 ) -> None:
     rows = _normalize_order_rows(order)
     if not rows:
-        await _initiate_refusal_stub(order, "Пустые позиции заказа")
+        await _initiate_refusal_stub(order, "Пустые позиции заказа", enterprise_code)  # ← добавил enterprise_code
         return
 
     async with get_async_db() as session:
@@ -485,16 +583,26 @@ async def process_and_send_order(
 
         if len(rows) == 1:
             r = rows[0]
-            supplier_code = await _fetch_supplier_by_price(session, r.goodsCode, r.price)
-            if not supplier_code:
-                await _initiate_refusal_stub(order, "Не найден поставщик по цене", enterprise_code)
+
+            pick = await _pick_supplier_for_single_item(session, r.goodsCode, r.price)
+            if not pick:
+                await _initiate_refusal_stub(order, "Не найден поставщик по цене (учтен допуск +0.10)", enterprise_code)
                 return
 
+            supplier_code, supplier_price, price_went_down = pick
             supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-            payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name,branch=branch)
+
+            # === ВАЖНО: меняем исходную цену на цену поставщика, если она ниже ===
+            if price_went_down:
+                order["_supplier_changed"] = True
+                order["_price_went_down"] = True
+                r.price = supplier_price  # ← теперь в payload уйдёт новая, меньшая цена
+
+            payload = await build_salesdrive_payload(
+                session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
+            )
             await _send_to_salesdrive(payload, api_key)
             return
-
         supplier_code = await _try_pick_single_supplier_by_exact_prices(session, rows)
         if not supplier_code:
             candidates = await _collect_all_supplier_candidates(session)
