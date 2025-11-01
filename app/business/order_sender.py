@@ -547,7 +547,9 @@ async def build_salesdrive_payload(
 
     #form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
         # --- Сборка комментария: code (если есть) + (supplier_changed_note or supplier_name)
-    code_val = (order.get("code") or "").strip()
+# --- Сборка комментария: code (если есть) + (supplier_changed_note or supplier_name)
+    raw_code = order.get("code")
+    code_val = str(raw_code).strip() if raw_code is not None else ""   # ← вот так безопасно
     comment_text = supplier_changed_note or supplier_name
     if code_val:
         comment_text = f"{code_val} | {comment_text}"
@@ -593,45 +595,70 @@ async def process_and_send_order(
     enterprise_code: str,
     branch: Optional[str] = None,
 ) -> None:
-    supplier_code: Optional[str] = None 
+    """
+    Логика:
+      - Нормализация rows; отказ при пустых строках.
+      - Получение api_key SalesDrive; отказ при отсутствии.
+      - SINGLE-ITEM:
+          * Подбор поставщика по правилам _pick_supplier_for_single_item:
+              1) Если есть цена ровно как в заказе — берём этого поставщика (цена остаётся как в заказе).
+              2) Иначе, если все цены ниже — берём поставщика с max(profit_percent) и снижаем цену позиции r.price.
+              3) Иначе — допускаем цены <= order_price + 0.10; если нет — отказ.
+          * Формируем payload и отправляем.
+      - MULTI-ITEM:
+          * Пытаемся найти единого поставщика по точным ценам (_try_pick_single_supplier_by_exact_prices).
+          * Иначе — альтернатива по сумме (_try_pick_alternative_supplier_by_total_cap).
+          * Если поставщик найден — ПЕРЕПИСЫВАЕМ r.price на цены из БД выбранного поставщика.
+          * Формируем payload (в комментарий попадёт supplier_changed_note с именем поставщика) и отправляем.
+    """
+    supplier_code: Optional[str] = None  # защитная инициализация
+
+    # 1) Нормализация позиций
     rows = _normalize_order_rows(order)
     if not rows:
-        await _initiate_refusal_stub(order, "Пустые позиции заказа", enterprise_code)  # ← добавил enterprise_code
+        await _initiate_refusal_stub(order, "Пустые позиции заказа", enterprise_code)
         return
 
+    # 2) Готовим сессию и api_key
     async with get_async_db() as session:
         api_key = await _get_salesdrive_api_key(session, enterprise_code)
         if not api_key:
-            await _initiate_refusal_stub(order, "❌ Отсутствует API‑ключ для SalesDrive", enterprise_code)
+            await _initiate_refusal_stub(order, "❌ Отсутствует API-ключ для SalesDrive", enterprise_code)
             return
 
+        # === SINGLE-ITEM ===
         if len(rows) == 1:
             r = rows[0]
 
             pick = await _pick_supplier_for_single_item(session, r.goodsCode, r.price)
             if not pick:
-                await _initiate_refusal_stub(order, "Не найден поставщик по цене (учтен допуск +0.10)", enterprise_code)
+                await _initiate_refusal_stub(
+                    order,
+                    "Не найден подходящий поставщик (учтён допуск +0.10)",
+                    enterprise_code,
+                )
                 return
-                    # === NEW: для multi-item обновляем цены строк на цены из БД выбранного поставщика ===
-            for r in rows:
-                db_price = await _fetch_supplier_price(session, supplier_code, r.goodsCode)
-                if db_price is not None:
-                    r.price = _as_decimal(db_price)
+
             supplier_code, supplier_price, price_went_down = pick
             supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
 
-            # === ВАЖНО: меняем исходную цену на цену поставщика, если она ниже ===
+            # Если у выбранного поставщика цена ниже — применяем её и помечаем
             if price_went_down:
                 order["_supplier_changed"] = True
                 order["_price_went_down"] = True
-                r.price = supplier_price  # ← теперь в payload уйдёт новая, меньшая цена
+                r.price = supplier_price  # в SalesDrive уйдёт сниженная цена
 
             payload = await build_salesdrive_payload(
                 session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
             )
             await _send_to_salesdrive(payload, api_key)
             return
+
+        # === MULTI-ITEM ===
+        # 1) Пробуем единого поставщика по точным ценам
         supplier_code = await _try_pick_single_supplier_by_exact_prices(session, rows)
+
+        # 2) Иначе — альтернатива по сумме (выбор по суммарному остатку, затем по priority)
         if not supplier_code:
             candidates = await _collect_all_supplier_candidates(session)
             alt = await _try_pick_alternative_supplier_by_total_cap(session, rows, candidates)
@@ -639,13 +666,30 @@ async def process_and_send_order(
                 supplier_code = alt
                 order["_supplier_changed"] = True
             else:
-                await _initiate_refusal_stub(order, "Не удалось подобрать поставщика по сумме заказа", enterprise_code)
+                await _initiate_refusal_stub(
+                    order,
+                    "Не удалось подобрать единого поставщика под сумму заказа",
+                    enterprise_code,
+                )
                 return
 
-        supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-        payload = await build_salesdrive_payload(session, order, enterprise_code, rows, supplier_code, supplier_name,branch=branch )
-        await _send_to_salesdrive(payload, api_key)
+        # Страховка
+        if not supplier_code:
+            await _initiate_refusal_stub(order, "Внутренняя ошибка: не выбран поставщик", enterprise_code)
+            return
 
+        # ⬇️ ВАЖНО: теперь, когда выбран поставщик, перезаписываем цены строк на цены из БД выбранного поставщика
+        for r in rows:
+            db_price = await _fetch_supplier_price(session, supplier_code, r.goodsCode)
+            if db_price is not None:
+                r.price = _as_decimal(db_price)
+
+        supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
+
+        payload = await build_salesdrive_payload(
+            session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
+        )
+        await _send_to_salesdrive(payload, api_key)
 
 # -----------------------------------------
 # REGISTRY для вашего роутера/диспетчера
