@@ -320,23 +320,17 @@ async def export_catalog_mapping_to_json_and_process(
     default_dir: str = "exports"
 ) -> str:
     """
-    1) Читает ВСЕ записи из CatalogMapping.
-    2) Конвертирует в список словарей формата:
-       {
-         "code": ID,
-         "name": Name,
-         "vat": 20.0,
-         "producer": Producer,
-         "morion": Guid,         # <-- допущение: morion берём из Guid
-         "tabletki": Code_Tabletki,
-         "barcode": Barcode,
-       }
-    3) Сохраняет JSON в файл.
-    4) Вызывает await process_database_service(json_file_path, file_type, enterprise_code).
-    5) Возвращает путь к сохранённому файлу.
+    Экспорт ВСЕЙ таблицы CatalogMapping в JSON и вызов process_database_service.
+    Маппинг:
+      code <- ID
+      name <- Name
+      producer <- Producer
+      morion <- Guid
+      tabletki <- Code_Tabletki
+      barcode <- Barcode
+      vat <- 20.0
 
-    Путь сохранения берётся из переменной окружения CATALOG_EXPORT_DIR,
-    иначе ./exports/.
+    Файл **перезаписывается** каждый запуск (без версий).
     """
     # 1) Выборка из БД: берём только нужные колонки
     async with get_async_db() as session:
@@ -358,49 +352,50 @@ async def export_catalog_mapping_to_json_and_process(
         payload.append({
             "code": (ID or "").strip(),
             "name": (Name or "").strip(),
-            "vat": 20.0,  # фиксированно по задаче
+            "vat": 20.0,
             "producer": (Producer or "").strip(),
-            # ↓ Допущение: "morion" маппим на Guid. При необходимости легко заменить.
-            "morion": ("").strip(),
-            "tabletki": (Guid or "").strip(),
+            "morion": (Guid or "").strip(),                # ← фикc: morion из Guid
+            "tabletki": (Code_Tabletki or "").strip(),     # ← фикc: tabletki из Code_Tabletki
             "barcode": (Barcode or "").strip(),
         })
 
-    # 3) Сохранение файла
+    # 3) Сохранение файла (перезапись, атомарно)
     export_root = Path(os.getenv(export_dir_env) or default_dir)
     export_root.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    json_file_path = export_root / f"catalog_{enterprise_code}_{ts}.json"
 
-    with open(json_file_path, "w", encoding="utf-8") as f:
+    # фиксированное имя — БЕЗ timestamp
+    final_path = export_root / f"catalog_{enterprise_code}.json"
+    tmp_path = export_root / f"catalog_{enterprise_code}.json.partial"
+
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    logger.info("Каталог выгружен в JSON: %s (записей: %d)", json_file_path, len(payload))
+    # атомарная замена (без "дырявых" файлов при чтении)
+    os.replace(tmp_path, final_path)
+
+    logger.info("Каталог выгружен в JSON: %s (записей: %d)", final_path, len(payload))
 
     # 4) Вызов process_database_service
     try:
-        # пытаемся импортировать из ожидаемого места
         from app.business.process_database_service import process_database_service  # type: ignore
     except Exception:
         try:
-            # запасной вариант пути — если модуль у тебя лежит иначе
-            from app.services.database_service import process_database_service # type: ignore
+            from app.services.database_service import process_database_service  # type: ignore
         except Exception as e:
             msg = f"Не удалось импортировать process_database_service: {e}"
             logger.exception(msg)
             send_notification(msg, "Разработчик")
-            # Возвращаем путь к файлу — пусть дальше разберёмся вручную
-            return str(json_file_path)
+            return str(final_path)
 
     try:
-        await process_database_service(str(json_file_path), file_type, enterprise_code)
-        logger.info("process_database_service: обработан файл %s", json_file_path)
+        await process_database_service(str(final_path), file_type, enterprise_code)
+        logger.info("process_database_service: обработан файл %s", final_path)
     except Exception as e:
         msg = f"Ошибка при вызове process_database_service: {e}"
         logger.exception(msg)
         send_notification(msg, "Разработчик")
 
-    return str(json_file_path)
+    return str(final_path)
 # ──────────────────────────────────────────────────────────────────────────────
 # Оркестрация
 # ──────────────────────────────────────────────────────────────────────────────
