@@ -546,7 +546,11 @@ async def build_salesdrive_payload(
     )
 
     #form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
-
+        # --- Сборка комментария: code (если есть) + (supplier_changed_note or supplier_name)
+    code_val = (order.get("code") or "").strip()
+    comment_text = supplier_changed_note or supplier_name
+    if code_val:
+        comment_text = f"{code_val} | {comment_text}"
     payload = {
         
         "getResultData": "1",
@@ -560,7 +564,7 @@ async def build_salesdrive_payload(
         "payment_method": "",
         "shipping_method": d.get("DeliveryServiceName", ""),
         "shipping_address": d.get("ReceiverWhs", ""),
-        "comment": supplier_changed_note or supplier_name,
+        "comment": comment_text,
         "sajt": str(branch or ""),
         "externalId": order.get("id", ""),
         "organizationId": "1",
