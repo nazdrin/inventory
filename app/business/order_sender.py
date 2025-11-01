@@ -593,6 +593,7 @@ async def process_and_send_order(
     enterprise_code: str,
     branch: Optional[str] = None,
 ) -> None:
+    supplier_code: Optional[str] = None 
     rows = _normalize_order_rows(order)
     if not rows:
         await _initiate_refusal_stub(order, "Пустые позиции заказа", enterprise_code)  # ← добавил enterprise_code
