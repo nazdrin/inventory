@@ -11,7 +11,7 @@ from sqlalchemy import select, and_, or_, func, literal
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, getcontext
-
+from app.services.notification_service import send_notification
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
@@ -35,11 +35,13 @@ class OrderRow:
 
 
 @dataclass
-class SupplierPick:
-    supplier_code: str
-    supplier_name: str
-    sku: Optional[str]
+class OrderRow:
+    goodsCode: str
+    goodsName: str
+    qty: Decimal
     price: Decimal
+    goodsProducer: Optional[str] = None
+    original_price: Optional[Decimal] = None  # ← NEW
 async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
     """
     Отправка заказа в SalesDrive по API, с использованием X-Api-Key.
@@ -73,16 +75,19 @@ def _as_decimal(x: Any) -> Decimal:
         return Decimal(0)
 
 
+
 def _normalize_order_rows(order: Dict[str, Any]) -> List[OrderRow]:
     rows = []
     for r in order.get("rows", []):
+        price = _as_decimal(r.get("price", 0))
         rows.append(
             OrderRow(
                 goodsCode=str(r.get("goodsCode")),
                 goodsName=str(r.get("goodsName", "")),
                 qty=_as_decimal(r.get("qty", 0)),
-                price=_as_decimal(r.get("price", 0)),
+                price=price,                         # текущая (может меняться далее)
                 goodsProducer=r.get("goodsProducer"),
+                original_price=price,                # ← исходная (не меняем)
             )
         )
     return rows
@@ -342,24 +347,7 @@ def _build_rozetka_block(d: Dict[str, str]) -> Dict[str, Any]:
 
 
 async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_code: str) -> None:
-    """
-    Отправляет отказ по одному заказу в Tabletki.
-    Требования:
-      - statusID = 7 (принудительно)
-      - в rows минимум один товар
-      - tabletki_login/password берём из EnterpriseSettings по enterprise_code
-      - cancel_reason по ТЗ = 5
-    """
-    logger.warning("🚫 Инициализация отказа по заказу %s: %s", order.get("id"), reason)
-
-    # 1) Валидация
-    if not isinstance(order, dict) or not order.get("rows"):
-        logger.error("⛔ Заказ некорректен или отсутствуют rows — отказ не отправлен. id=%s", order.get("id"))
-        return
-    if not enterprise_code:
-        logger.error("⛔ Не передан enterprise_code — отказ не отправлен. id=%s", order.get("id"))
-        return
-
+    ...
     # Статус отказа
     order["statusID"] = 7
 
@@ -374,6 +362,15 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             )
             row = res.first()
             if not row or not row[0] or not row[1]:
+                # 🟡 уведомление и при отсутствии кредов
+                msg = (
+                    f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
+                    f"причина: {reason} | помилка: немає tabletki_login/password"
+                )
+                try:
+                    send_notification(msg, "Business")
+                except Exception:
+                    logger.exception("Не вдалося надіслати сповіщення про відмову")
                 logger.error("⛔ tabletki_login/password не найдены для enterprise_code=%s — отказ не отправлен.", enterprise_code)
                 return
 
@@ -382,7 +379,17 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             # 3) Фиксированный код причины отказа
             cancel_reason_code = 5
 
-            # 4) Отправка
+            # 🟢 уведомление про отказ (основной кейс)
+            msg = (
+                f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
+                f"reason='{reason}' | cancel_reason_code={cancel_reason_code}"
+            )
+            try:
+                send_notification(msg, "Business")
+            except Exception:
+                logger.exception("Не вдалося надіслати сповіщення про відмову")
+
+            # 4) Отправка в Tabletki
             await send_orders_to_tabletki(
                 session=session,
                 orders=[order],
@@ -396,7 +403,14 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             )
     except Exception as e:
         logger.exception("❌ Ошибка при отправке отказа: %s", e)
-
+        # 🔴 уведомление и при исключении
+        try:
+            send_notification(
+                f"Помилка під час відправки відмови id={order.get('id')} | enterprise={enterprise_code} | err={e}",
+                "Business",
+            )
+        except Exception:
+            logger.exception("Не вдалося надіслати сповіщення про помилку відмови")
 # ------------------------------------------------
 # ЛОГИКА ОПРЕДЕЛЕНИЯ ПОСТАВЩИКА ДЛЯ MULTI-ITEM
 # ------------------------------------------------
@@ -505,12 +519,12 @@ async def _build_products_block(
 
 
 def _make_supplier_changed_note(rows: List[OrderRow], supplier_name: Optional[str] = None) -> str:
-    parts = [f"{r.goodsName} — {str(r.price)}" for r in rows]
-    base = "Оригинальные позиции и цены: " + "; ".join(parts)
+    # показываем ЦЕНЫ ДО корректировки (если есть), иначе текущие
+    parts = [f"{r.goodsName} — {str(r.original_price if r.original_price is not None else r.price)}" for r in rows]
+    base = "Оригінальні позиції та ціни: " + "; ".join(parts)
     if supplier_name:
         return f"Постачальник: {supplier_name}. {base}"
-    return "Поставщик изменён. " + base
-
+    return base
 
 def _extract_name_parts(order: Dict[str, Any], d: Dict[str, str]) -> Tuple[str, str, str]:
     # fName: Name, lName: LastName, mName: MiddleName
