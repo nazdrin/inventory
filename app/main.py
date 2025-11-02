@@ -1,12 +1,10 @@
 from dotenv import load_dotenv
-import os
 load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import router as developer_router
 from app.database import create_tables
-from fastapi.middleware.cors import CORSMiddleware
 
 # Инициализация FastAPI приложения
 app = FastAPI()
@@ -23,18 +21,14 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     await create_tables()
+    print("🔹 Зарегистрированные маршруты:")
+    for route in app.routes:
+        print(f"{route.path} - {route.methods}")
 
 # ❌ Убираем prefix, потому что он уже задан в `routes.py`
-app.include_router(developer_router, tags=["Developer Panel"])
+app.include_router(developer_router)
 
 # Приветственный эндпоинт
 @app.get("/")
 def root():
     return {"message": "Welcome to Inventory Service"}
-
-# Логирование всех маршрутов (для отладки)
-@app.on_event("startup")
-async def log_routes():
-    print("🔹 Зарегистрированные маршруты:")
-    for route in app.routes:
-        print(f"{route.path} - {route.methods}")

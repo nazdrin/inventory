@@ -23,12 +23,12 @@ from app.services.notification_service import send_notification
 from app.unipro_data_service.unipro_conv import unipro_convert
 from app.auth import create_access_token, verify_token
 import logging
-import os
-import json
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
-from fastapi import BackgroundTasks, Request, HTTPException,Body
-
+from fastapi import BackgroundTasks, Body
+async def get_db():
+    async with AsyncSessionLocal() as db:
+        yield db
 # ——— Логгер "salesdrive" — пишем в ./logs/salesdrive_webhook.log и в консоль ———
 LOG_DIR = os.getenv("LOG_DIR", "./logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -39,11 +39,57 @@ sd_logger.setLevel(logging.INFO)
 # ⏩ ОДИН РАЗ указываем prefix, а внутри маршрутов больше не дублируем developer_panel
 router = APIRouter(prefix="/developer_panel", tags=["Developer Panel"])
 
-security = HTTPBearer()
 
-async def get_db():
-    async with AsyncSessionLocal() as db:
-        yield db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from app.auth import verify_token  # как у enterprise
+from app.models import DropshipEnterprise
+from app.schemas import DropshipEnterpriseSchema
+
+# List
+@router.get("/dropship/enterprises/", dependencies=[Depends(verify_token)])
+async def get_all_dropship_enterprises(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DropshipEnterprise))
+    items = result.scalars().all()
+    return [DropshipEnterpriseSchema.model_validate(i, from_attributes=True) for i in items]
+
+# Get by code
+@router.get("/dropship/enterprises/{code}", dependencies=[Depends(verify_token)])
+async def get_dropship_enterprise(code: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DropshipEnterprise).where(DropshipEnterprise.code == code))
+    item = result.scalars().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Dropship enterprise not found.")
+    return DropshipEnterpriseSchema.model_validate(item, from_attributes=True)
+
+# Create
+@router.post("/dropship/enterprises/", dependencies=[Depends(verify_token)])
+async def create_dropship_enterprise(payload: DropshipEnterpriseSchema, db: AsyncSession = Depends(get_db)):
+    exists = await db.execute(select(DropshipEnterprise).where(DropshipEnterprise.code == payload.code))
+    if exists.scalars().first():
+        raise HTTPException(status_code=400, detail="Dropship enterprise with this code already exists.")
+
+    obj = DropshipEnterprise(**payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return DropshipEnterpriseSchema.model_validate(obj, from_attributes=True)
+
+# Update
+@router.put("/dropship/enterprises/{code}", dependencies=[Depends(verify_token)])
+async def update_dropship_enterprise(code: str, payload: DropshipEnterpriseSchema, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DropshipEnterprise).where(DropshipEnterprise.code == code))
+    obj = result.scalars().first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Dropship enterprise not found.")
+
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, k, v)
+
+    await db.commit()
+    await db.refresh(obj)
+    return {"detail": "Dropship enterprise updated successfully", "data": DropshipEnterpriseSchema.model_validate(obj, from_attributes=True)}
 
 # 🔐 Авторизация
 @router.post("/login/", summary="Login User")
@@ -92,7 +138,7 @@ async def get_enterprise_by_code(enterprise_code: str, db: AsyncSession = Depend
     enterprise = result.scalars().first()
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
-    return EnterpriseSettingsSchema.from_orm(enterprise)
+    return EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True)
 
 @router.post("/enterprise/settings/", dependencies=[Depends(verify_token)])
 async def create_enterprise(settings: EnterpriseSettingsSchema, db: AsyncSession = Depends(get_db)):
@@ -100,11 +146,11 @@ async def create_enterprise(settings: EnterpriseSettingsSchema, db: AsyncSession
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="Enterprise with this code already exists.")
 
-    new_enterprise = EnterpriseSettings(**settings.dict())
+    new_enterprise = EnterpriseSettings(**settings.model_dump())
     db.add(new_enterprise)
     await db.commit()
     await db.refresh(new_enterprise)
-    return new_enterprise
+    return EnterpriseSettingsSchema.model_validate(new_enterprise, from_attributes=True)
 
 @router.put("/enterprise/settings/{enterprise_code}", dependencies=[Depends(verify_token)])
 async def update_enterprise_settings(enterprise_code: str, updated_settings: EnterpriseSettingsSchema, db: AsyncSession = Depends(get_db)):
@@ -113,7 +159,7 @@ async def update_enterprise_settings(enterprise_code: str, updated_settings: Ent
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
 
-    for key, value in updated_settings.dict(exclude_unset=True).items():
+    for key, value in updated_settings.model_dump(exclude_unset=True).items():
         setattr(enterprise, key, value)
 
     await db.commit()
