@@ -30,16 +30,19 @@ def now_with_timezone():
 # Mixin для временных меток
 @declarative_mixin
 class TimestampMixin:
+    # Значение по умолчанию задаём на стороне БД (server_default=func.now()),
+    # чтобы вставки через SQL или миграции не падали. Разрешаем NULL,
+    # чтобы не конфликтовать при добавлении колонок в таблицы с данными.
     created_at = Column(
         DateTime(timezone=True),
-        default=now_with_timezone,
-        nullable=False,
+        server_default=func.now(),   # ← дефолт в БД (NOW() в Postgres)
+        nullable=True,               # ← допускаем NULL для совместимости миграций
     )
     updated_at = Column(
         DateTime(timezone=True),
-        default=now_with_timezone,
-        onupdate=now_with_timezone,
-        nullable=False,
+        server_default=func.now(),   # ← первичное значение в БД
+        onupdate=func.now(),         # ← при UPDATE проставит ORM (когда обновляешь через SQLAlchemy)
+        nullable=True,               # ← то же самое по причинам выше
     )
 # Таблица номенклатуры
 class InventoryData(Base, TimestampMixin):
