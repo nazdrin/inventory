@@ -115,3 +115,26 @@ class DataFormatSchema(BaseModel):
 
     class Config:
         from_attributes = True
+  
+        # === Dropship enterprises ===
+class DropshipEnterpriseSchema(BaseModel):
+    code: str
+    name: str
+    feed_url: Optional[str] = None
+    gdrive_folder: Optional[str] = None
+
+    is_rrp: Optional[bool] = False
+    is_wholesale: Optional[bool] = True
+    profit_percent: Optional[float] = None
+    retail_markup: Optional[float] = None
+    min_markup_threshold: Optional[float] = None
+
+    is_active: Optional[bool] = True
+    api_orders_enabled: Optional[bool] = False
+    priority: Optional[int] = 5
+    weekend_work: Optional[bool] = False
+    use_feed_instead_of_gdrive: Optional[bool] = True
+    city: Optional[str] = None
+
+    class Config:
+        from_attributes = True

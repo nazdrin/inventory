@@ -4,6 +4,7 @@ import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import DeveloperPanel from "./pages/DeveloperPanel";
 import EnterprisePanel from "./pages/EnterprisePanel";
 import MappingBranchPage from "./pages/MappingBranchPage";
+import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
 
 import Login from "./pages/Login";
 
@@ -62,6 +63,20 @@ const App = () => {
                             style={{
                                 padding: "10px 20px",
                                 backgroundColor: "#007BFF",
+                                marginRight: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/dropship-enterprises")}
+                        >
+                            Dropship Enterprises
+                        </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
                                 color: "white",
                                 border: "none",
                                 cursor: "pointer",
@@ -83,6 +98,10 @@ const App = () => {
                 <Route
                     path="/enterprise"
                     element={<PrivateRoute element={<EnterprisePanel authUser={authUser} />} />}
+                />
+                <Route
+                    path="/dropship-enterprises"
+                    element={<PrivateRoute element={<DropshipEnterprisePanel authUser={authUser} />} />}
                 />
                 <Route
                     path="/mapping_branch"
