@@ -254,7 +254,7 @@ def parse_catalog_xlsx(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]
             "Producer": (r.get("Товар.Производитель.Наименование") or "").strip(),
             "Guid": (r.get("ГУИД") or "").strip(),
             "Barcode": (r.get("Код ШК") or "").strip(),
-            "Code_Tabletki": id_val,  # дублируем
+            "Code_Tabletki": (r.get("ГУИД") or "").strip()
         }
         rows.append(row)
 
