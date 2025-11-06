@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import get_async_db, EnterpriseSettings, MappingBranch, CatalogMapping
 from app.services.notification_service import send_notification
+from app.business.competitor_price_loader import run as run_competitor_loader
 
 from sqlalchemy import update, text  # ← было только update
 # Реестр парсеров: code -> async функция parse(code=...) -> JSON-строка
@@ -253,7 +254,7 @@ def parse_catalog_xlsx(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]
             "Producer": (r.get("Товар.Производитель.Наименование") or "").strip(),
             "Guid": (r.get("ГУИД") or "").strip(),
             "Barcode": (r.get("Код ШК") or "").strip(),
-            "Code_Tabletki": id_val,  # дублируем
+            "Code_Tabletki": (r.get("ГУИД") or "").strip()
         }
         rows.append(row)
 
@@ -354,7 +355,6 @@ async def export_catalog_mapping_to_json_and_process(
             "name": (Name or "").strip(),
             "vat": 20.0,
             "producer": (Producer or "").strip(),
-            "morion": (Guid or "").strip(),                # ← фикc: morion из Guid
             "tabletki": (Code_Tabletki or "").strip(),     # ← фикc: tabletki из Code_Tabletki
             "barcode": (Barcode or "").strip(),
         })
@@ -420,7 +420,14 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             "feeds": {},
             "export_file": None,
         }
-
+    # ── Доп. шаг: запуск обновления цен конкурентов
+    try:
+        await run_competitor_loader()
+        logger.info("competitor_price_loader.run(): выполнено успешно")
+    except Exception as e:
+        msg = f"Ошибка в competitor_price_loader.run(): {e}"
+        logger.exception(msg)
+        send_notification(msg, "Разработчик")
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
     if not folder_id:
         msg = "Не задан GOOGLE_DRIVE_FOLDER_ID в .env"
