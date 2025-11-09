@@ -12,6 +12,11 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, getcontext
 from app.services.notification_service import send_notification
+# БАЗОВЫЙ URL SalesDrive (используется для /handler/ и /api/order/update/)
+SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необходимости замените на ваш домен
+
+# Импорт для cancelled-orders API
+from app.business.cancelled_orders_fetcher import get_cancelled_orders, acknowledge_cancelled_orders
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
@@ -50,7 +55,7 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
     """
     Отправка заказа в SalesDrive по API, с использованием X-Api-Key.
     """
-    url = "https://petrenko.salesdrive.me/handler/"  # ← измените на ваш endpoint
+    url = f"{SALESDRIVE_BASE_URL.rstrip('/')}/handler/"  # ← базовый домен берём из SALESDRIVE_BASE_URL
 
     headers = {
         "accept": "application/json",
@@ -69,6 +74,29 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
             logger.error("❌ Ошибка подключения к SalesDrive: %s", str(e))
         except httpx.HTTPStatusError as e:
             logger.error("❌ Ошибка HTTP от SalesDrive: %s — %s", e.response.status_code, e.response.text)
+
+# --- HELPER для обновления заявки в SalesDrive через /api/order/update/
+async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
+    """
+    Обновление заявки в SalesDrive через /api/order/update/.
+    Требует X-Api-Key. update_url — полный URL до /api/order/update/.
+    payload — тело запроса с externalId и data.
+    Возвращает httpx.Response или None при сетевой/HTTP ошибке.
+    """
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Api-Key": api_key,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(update_url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp
+    except httpx.RequestError:
+        return None
+    except httpx.HTTPStatusError:
+        return None
 
 def _as_decimal(x: Any) -> Decimal:
     if isinstance(x, Decimal):
@@ -340,6 +368,80 @@ def _build_rozetka_block(d: Dict[str, str]) -> Dict[str, Any]:
         "payer": d.get("payer", ""),
         "ttn": d.get("ttn", ""),
     }
+
+async def process_cancelled_orders_service(
+    enterprise_code: str,
+    verify_ssl: bool = True,
+) -> None:
+    """
+    Внешний сервис вызывает только с enterprise_code.
+      • SalesDrive API key берём из БД: EnterpriseSettings.token
+      • SalesDrive base URL берём из SALESDRIVE_BASE_URL (константа в этом файле)
+    Шаги:
+      1) Получить отказы (get_cancelled_orders)
+      2) Для каждого отказа сделать POST /api/order/update/ в SalesDrive:
+         externalId = id, data.statusId = 6, data.comment = cancelReason
+      3) Подтвердить обработку через acknowledge_cancelled_orders
+    """
+    try:
+        cancelled = await get_cancelled_orders(enterprise_code=enterprise_code, verify_ssl=verify_ssl)
+    except Exception as e:
+        try:
+            send_notification(f"Помилка отримання відмов | enterprise={enterprise_code} | err={e}", "Business")
+        except Exception:
+            pass
+        return
+
+    if not cancelled:
+        return
+
+    # Получаем API-ключ SalesDrive из БД по enterprise_code
+    try:
+        async with get_async_db() as session:
+            api_key = await _get_salesdrive_api_key(session, enterprise_code)
+    except Exception:
+        api_key = None
+
+    if not api_key:
+        try:
+            send_notification(
+                f"Відмова: немає API ключа SalesDrive для обробки відмов | enterprise={enterprise_code}",
+                "Business",
+            )
+        except Exception:
+            pass
+        return
+
+    update_url = f"{SALESDRIVE_BASE_URL.rstrip('/')}/api/order/update/"
+
+    acknowledged_ids: List[str] = []
+    for item in cancelled:
+        ext_id = str(item.get("id", "")).strip()
+        cancel_reason = str(item.get("cancelReason", "")).strip()
+        if not ext_id:
+            continue
+
+        payload = {
+            "externalId": ext_id,
+            "data": {
+                "statusId": 6,
+                "comment": cancel_reason,
+            },
+        }
+
+        resp = await _salesdrive_update_order(update_url, api_key, payload)
+        if resp is not None:
+            acknowledged_ids.append(ext_id)
+
+    if acknowledged_ids:
+        try:
+            await acknowledge_cancelled_orders(
+                enterprise_code=enterprise_code,
+                request_ids=acknowledged_ids,
+                verify_ssl=verify_ssl,
+            )
+        except Exception:
+            pass
 
 
 # async def _send_to_salesdrive_stub(payload: Dict[str, Any]) -> None:
@@ -715,6 +817,8 @@ async def process_and_send_order(
                 session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
             )
             await _send_to_salesdrive(payload, api_key)
+            # После отправки заказа — обработать отказы из Reserve API и обновить заявки в SalesDrive
+            # (Автоматический вызов удалён)
             return
 
         # === MULTI-ITEM ===
@@ -767,6 +871,8 @@ async def process_and_send_order(
             session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
         )
         await _send_to_salesdrive(payload, api_key)
+        # После отправки заказа — обработать отказы из Reserve API и обновить заявки в SalesDrive
+        # (Автоматический вызов удалён)
 
 # -----------------------------------------
 # REGISTRY для вашего роутера/диспетчера
