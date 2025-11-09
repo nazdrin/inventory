@@ -55,10 +55,19 @@ async def schedule_order_fetcher_tasks():
                     for enterprise_code in fetcher_enterprises:
                         try:
                             await fetch_orders_for_enterprise(db, enterprise_code)
-                            # После загрузки заказов — обработать отказы из Reserve API и синхронизировать их в SalesDrive
+                            # После загрузки заказов — обработать отказы только для предприятий с data_format='business'
                             try:
-                                await process_cancelled_orders_service(enterprise_code=enterprise_code)
-                                logging.info(f"✅ Обработаны отказы для {enterprise_code}")
+                                result_df = await db.execute(
+                                    select(EnterpriseSettings.data_format).where(
+                                        EnterpriseSettings.enterprise_code == enterprise_code
+                                    )
+                                )
+                                df_val = result_df.scalar_one_or_none()
+                                if isinstance(df_val, str) and df_val.strip().lower() == 'business':
+                                    await process_cancelled_orders_service(enterprise_code=enterprise_code)
+                                    logging.info(f"✅ Обработаны отказы (business) для {enterprise_code}")
+                                else:
+                                    logging.info(f"⏭ Пропуск обработки отказов для {enterprise_code} (data_format='{df_val}')")
                             except Exception as ce:
                                 logging.error(f"❌ Ошибка при обработке отказов для {enterprise_code}: {ce}")
                                 await notify_error(f"Ошибка обработки отказов для {enterprise_code}: {ce}", enterprise_code)
