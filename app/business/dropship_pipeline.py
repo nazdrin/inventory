@@ -269,6 +269,7 @@ async def upsert_offer(
     )
     await session.execute(stmt)
 
+
 async def clear_offers_for_supplier(session: AsyncSession, supplier_code: str) -> int:
     """
     Удаляет все офферы поставщика из offers.
@@ -280,6 +281,35 @@ async def clear_offers_for_supplier(session: AsyncSession, supplier_code: str) -
     )
     deleted = res.rowcount or 0
     logger.info("Удалено старых офферов: %d для supplier=%s", deleted, supplier_code)
+    return deleted
+
+
+# --------------------------------------------------------------------------------------
+# Очищает офферы для неактивных или отсутствующих поставщиков
+# --------------------------------------------------------------------------------------
+async def clear_offers_for_inactive_or_missing(session: AsyncSession) -> int:
+    """
+    Очищает офферы для поставщиков, которые:
+      1) существуют в dropship_enterprises, но помечены как неактивные (is_active = false)
+      2) отсутствуют в dropship_enterprises вовсе (например, были удалены)
+    Возвращает количество удалённых строк.
+    """
+    sql = text("""
+        DELETE FROM offers o
+        WHERE EXISTS (
+            SELECT 1
+            FROM dropship_enterprises d
+            WHERE d.code = o.supplier_code
+              AND COALESCE(d.is_active, false) = false
+        )
+        OR NOT EXISTS (
+            SELECT 1
+            FROM dropship_enterprises d2
+            WHERE d2.code = o.supplier_code
+        )
+    """)
+    res = await session.execute(sql)
+    deleted = res.rowcount or 0
     return deleted
 
 # --------------------------------------------------------------------------------------
@@ -485,6 +515,16 @@ async def run_pipeline(
     file_type: Optional[str] = None,
 ) -> None:
     async with get_async_db() as session:
+        # 0) Санитарная очистка: удаляем офферы неактивных или отсутствующих поставщиков
+        try:
+            deleted = await clear_offers_for_inactive_or_missing(session)
+            if deleted:
+                logger.info("Удалены офферы неактивных/удалённых поставщиков: %d", deleted)
+            await session.commit()
+        except Exception as exc:
+            logger.exception("Очистка офферов неактивных/удалённых поставщиков завершилась ошибкой: %s", exc)
+            await session.rollback()
+
         # 1) Обновляем offers по всем активным поставщикам
         suppliers = await fetch_active_enterprises(session)
         if not suppliers:
