@@ -12,6 +12,7 @@ KIEV_TZ = pytz.timezone("Europe/Kiev")
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 from app.services.order_fetcher import fetch_orders_for_enterprise
+from app.business.order_sender import process_cancelled_orders_service
 
 # Настройка логирования (аналогично стоку)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,6 +55,13 @@ async def schedule_order_fetcher_tasks():
                     for enterprise_code in fetcher_enterprises:
                         try:
                             await fetch_orders_for_enterprise(db, enterprise_code)
+                            # После загрузки заказов — обработать отказы из Reserve API и синхронизировать их в SalesDrive
+                            try:
+                                await process_cancelled_orders_service(enterprise_code=enterprise_code)
+                                logging.info(f"✅ Обработаны отказы для {enterprise_code}")
+                            except Exception as ce:
+                                logging.error(f"❌ Ошибка при обработке отказов для {enterprise_code}: {ce}")
+                                await notify_error(f"Ошибка обработки отказов для {enterprise_code}: {ce}", enterprise_code)
                             logging.info(f"✅ Заказы получены для {enterprise_code}")
                         except Exception as fe:
                             logging.error(f"❌ Ошибка при получении заказов для {enterprise_code}: {fe}")
