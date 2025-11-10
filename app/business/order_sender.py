@@ -405,7 +405,7 @@ async def process_cancelled_orders_service(
     if not api_key:
         try:
             send_notification(
-                f"Відмова: немає API ключа SalesDrive для обробки відмов | enterprise={enterprise_code}",
+                f"🚫Відмова: немає API ключа SalesDrive для обробки відмов | enterprise={enterprise_code}",
                 "Business",
             )
         except Exception:
@@ -497,7 +497,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
             row = res.first()
             if not row or not row[0] or not row[1]:
                 msg = (
-                    f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
+                    f"🚫Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
                     f"причина: {reason} | помилка: немає tabletki_login/password"
                 )
                 try:
@@ -514,7 +514,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
 
             # 4) Уведомление о том, что отправляем отказ
             msg = (
-                f"Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
+                f"🚫Відмова замовлення id={order.get('id')} | enterprise={enterprise_code} | "
                 f"reason='{reason}' | cancel_reason_code={cancel_reason_code}"
             )
             try:
@@ -776,7 +776,7 @@ async def process_and_send_order(
         if not api_key:
             try:
                 send_notification(
-                    f"Відмова: немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
+                    f"🚫Відмова: немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
                     "Business",
                 )
             except Exception:
@@ -792,7 +792,7 @@ async def process_and_send_order(
             if not pick:
                 try:
                     send_notification(
-                        f"Відмова: не знайдено постачальника (допуск +0.10) | id={order.get('id')} | enterprise={enterprise_code}",
+                        f"🚫Відмова: не знайдено постачальника (допуск +0.10) | id={order.get('id')} | enterprise={enterprise_code}",
                         "Business",
                     )
                 except Exception:
@@ -835,7 +835,7 @@ async def process_and_send_order(
             else:
                 try:
                     send_notification(
-                        f"Відмова: не підібрано єдиного постачальника під суму | id={order.get('id')} | enterprise={enterprise_code}",
+                        f"🚫Відмова: не підібрано єдиного постачальника під суму | id={order.get('id')} | enterprise={enterprise_code}",
                         "Business",
                     )
                 except Exception:
@@ -851,7 +851,7 @@ async def process_and_send_order(
         if not supplier_code:
             try:
                 send_notification(
-                    f"Відмова: внутрішня помилка вибору постачальника | id={order.get('id')} | enterprise={enterprise_code}",
+                    f"🚫Відмова: внутрішня помилка вибору постачальника | id={order.get('id')} | enterprise={enterprise_code}",
                     "Business",
                 )
             except Exception:
