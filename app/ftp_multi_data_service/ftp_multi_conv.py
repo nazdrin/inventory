@@ -195,20 +195,26 @@ async def process_catalog(ftp: FTP, enterprise_code: str):
 
     # Получаем список файлов на FTP
     files = _list_json_files_with_mtime(ftp, incoming_abs)
-    file_names = [name for name, _ in files]
+    # Сопоставляем basename -> полное имя (на случай, если nlst вернёт полный путь)
+    basename_map = {os.path.basename(name).lower(): name for name, _ in files}
+    expected_lower = os.path.basename(expected_filename).lower()
 
-    # Ищем точное совпадение (без учёта регистра)
-    target_file = next(
-        (fname for fname in file_names if fname.lower() == expected_filename.lower()),
-        None
-    )
+    # Ищем точное совпадение по basename (без учёта регистра)
+    target_fullname = basename_map.get(expected_lower)
 
-    if not target_file:
+    # Fallback: если вдруг файл на FTP имеет регистровые/пробельные отличия, ищем contains по basename
+    if not target_fullname:
+        for full, _mtime in files:
+            if expected_lower in os.path.basename(full).lower():
+                target_fullname = full
+                break
+
+    if not target_fullname:
         logging.warning(f"Файл каталога '{expected_filename}' не найден в каталоге FTP '{incoming_abs}'")
         return
 
-    logging.info(f"📘 Обработка каталога: {target_file}")
-    raw = _download_to_string(ftp, incoming_abs, target_file)
+    logging.info(f"📘 Обработка каталога: {target_fullname}")
+    raw = _download_to_string(ftp, incoming_abs, target_fullname)
     items = _normalize_input(raw)
     catalog = transform_catalog(items)
     await send_catalog_data(catalog, enterprise_code)
