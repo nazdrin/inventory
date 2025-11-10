@@ -8,7 +8,7 @@ from ftplib import FTP, error_perm
 
 from dotenv import load_dotenv
 from sqlalchemy.future import select
-from app.database import get_async_db
+from app.database import get_async_db, EnterpriseSettings
 from app.models import MappingBranch
 from app.services.database_service import process_database_service
 
@@ -88,6 +88,38 @@ async def fetch_store_branches(enterprise_code: str) -> list[dict]:
         return [{"store_id": r[0], "branch": str(r[1])} for r in rows]
 
 
+async def fetch_catalog_store_id(enterprise_code: str) -> str:
+    """
+    Возвращает имя файла каталога для FTP по enterprise_code.
+    Алгоритм:
+      1) В EnterpriseSettings находим branch_id для данного enterprise_code.
+      2) В MappingBranch ищем запись с тем же enterprise_code и branch == branch_id.
+      3) Возвращаем значение store_id (например, 'catalog-Zoomagazin_2sm.json').
+    """
+    async with get_async_db() as session:
+        # 1) Получаем branch_id из EnterpriseSettings
+        result_branch_id = await session.execute(
+            select(EnterpriseSettings.branch_id).where(EnterpriseSettings.enterprise_code == enterprise_code)
+        )
+        branch_id = result_branch_id.scalars().first()
+        if branch_id is None:
+            raise ValueError(f"branch_id не найден в EnterpriseSettings для enterprise_code={enterprise_code}")
+
+        # 2) Находим store_id в MappingBranch по enterprise_code и branch == branch_id
+        result_store = await session.execute(
+            select(MappingBranch.store_id).where(
+                (MappingBranch.enterprise_code == enterprise_code) & (MappingBranch.branch == str(branch_id))
+            )
+        )
+        store_id = result_store.scalars().first()
+        if not store_id:
+            raise ValueError(
+                f"store_id не найден в MappingBranch для enterprise_code={enterprise_code} и branch={branch_id}"
+            )
+
+        return str(store_id)
+
+
 # =========================
 # Трансформации
 # =========================
@@ -149,19 +181,30 @@ async def send_stock_data(data: list[dict], enterprise_code: str):
 # Обработка каталога
 # =========================
 async def process_catalog(ftp: FTP, enterprise_code: str):
-    """Обработка каталога — ищет файл catalog-Zoomagazin_2sm.json"""
+    """Обработка каталога — имя файла берётся из БД:
+    EnterpriseSettings.branch_id -> MappingBranch.branch -> MappingBranch.store_id (например, 'catalog-Zoomagazin_2sm.json')
+    """
     incoming_abs = FTP_DIR if FTP_DIR.startswith("/") else _join_ftp("/", FTP_DIR)
+
+    # Получаем ожидаемое имя файла каталога из БД
+    try:
+        expected_filename = await fetch_catalog_store_id(enterprise_code)
+    except Exception as e:
+        logging.error(f"Не удалось получить имя файла каталога из БД: {e}")
+        return
+
+    # Получаем список файлов на FTP
     files = _list_json_files_with_mtime(ftp, incoming_abs)
-    target_file = None
+    file_names = [name for name, _ in files]
 
-    for name, _ in files:
-        if "zoomagazin_2sm" in name.lower() and name.lower().endswith(".json"):
-            target_file = name
-            break
-
+    # Ищем точное совпадение (без учёта регистра)
+    target_file = next(
+        (fname for fname in file_names if fname.lower() == expected_filename.lower()),
+        None
+    )
 
     if not target_file:
-        logging.warning("Файл catalog-Zoomagazin_2sm.json не найден")
+        logging.warning(f"Файл каталога '{expected_filename}' не найден в каталоге FTP '{incoming_abs}'")
         return
 
     logging.info(f"📘 Обработка каталога: {target_file}")
