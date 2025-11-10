@@ -285,6 +285,29 @@ async def clear_offers_for_supplier(session: AsyncSession, supplier_code: str) -
 
 
 # --------------------------------------------------------------------------------------
+# Определяет, какие поставщики подлежат очистке (отсутствуют или неактивны)
+# --------------------------------------------------------------------------------------
+from typing import List
+async def fetch_suppliers_to_clear(session: AsyncSession) -> List[str]:
+    """
+    Возвращает список supplier_code, офферы которых нужно очистить:
+      - Поставщики отсутствуют в dropship_enterprises
+      - Поставщики присутствуют, но неактивны (is_active = false/NULL)
+    """
+    sql = text("""
+        SELECT DISTINCT o.supplier_code
+        FROM offers o
+        LEFT JOIN dropship_enterprises d
+          ON d.code = o.supplier_code
+        WHERE d.code IS NULL
+           OR (d.is_active IS NULL OR d.is_active = :inactive)
+    """)
+    res = await session.execute(sql, {"inactive": False})
+    rows = res.fetchall()
+    return [r[0] for r in rows if r[0] is not None]
+
+
+# --------------------------------------------------------------------------------------
 # Очищает офферы для неактивных или отсутствующих поставщиков
 # --------------------------------------------------------------------------------------
 async def clear_offers_for_inactive_or_missing(session: AsyncSession) -> int:
@@ -515,11 +538,17 @@ async def run_pipeline(
     file_type: Optional[str] = None,
 ) -> None:
     async with get_async_db() as session:
-        # 0) Санитарная очистка: удаляем офферы неактивных или отсутствующих поставщиков
+        # 0) Санитарная очистка: удаляем офферы по списку поставщиков, которых нужно очистить
         try:
-            deleted = await clear_offers_for_inactive_or_missing(session)
-            if deleted:
-                logger.info("Удалены офферы неактивных/удалённых поставщиков: %d", deleted)
+            to_clear = await fetch_suppliers_to_clear(session)
+            total_deleted = 0
+            for scode in to_clear:
+                total_deleted += await clear_offers_for_supplier(session, scode)
+            if total_deleted:
+                logger.info(
+                    "Удалены офферы неактивных/отсутствующих поставщиков: %d (поставщиков: %d)",
+                    total_deleted, len(to_clear)
+                )
             await session.commit()
         except Exception as exc:
             logger.exception("Очистка офферов неактивных/удалённых поставщиков завершилась ошибкой: %s", exc)
