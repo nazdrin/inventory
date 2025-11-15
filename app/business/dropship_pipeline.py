@@ -20,7 +20,7 @@ from app.database import get_async_db
 from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorPrice: code, city, competitor_price
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
-
+from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -77,6 +77,7 @@ async def parse_feed_stock_to_json_template(*, code: str, timeout: int = 20, **k
 PARSERS: Dict[str, ParserFn] = {
     "D1": parse_feed_stock_to_json,
     "D2": parse_dsn_stock_to_json,
+    "D3": parse_feed_D3,
 }
 
 # --------------------------------------------------------------------------------------
