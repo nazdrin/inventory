@@ -313,24 +313,26 @@ async def _fetch_sku_from_catalog_mapping(
 from typing import Optional, Tuple
 async def _fetch_barcode_and_supplier_code(
     session: AsyncSession, goods_code: str, supplier_code: str
-) -> Tuple[Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    Возвращает (barcode, supplier_item_code) из CatalogMapping по goods_code и supplier_code.
+    Возвращает (barcode, supplier_item_code, supplier_item_name) из CatalogMapping по goods_code и supplier_code.
     """
     field_name = f"Code_{supplier_code}"
+    name_field = f"Name_{supplier_code}"
     code_col = getattr(CatalogMapping, field_name, None)
-    if code_col is None:
-        return (None, None)
+    name_col = getattr(CatalogMapping, name_field, None)
+    if code_col is None and name_col is None:
+        return (None, None, None)
     q = (
-        select(CatalogMapping.Barcode, code_col)
+        select(CatalogMapping.Barcode, code_col, name_col)
         .where(CatalogMapping.ID == str(goods_code))
         .limit(1)
     )
     res = await session.execute(q)
     row = res.first()
     if not row:
-        return (None, None)
-    return (row[0], row[1])
+        return (None, None, None)
+    return (row[0], row[1], row[2])
 
 
 def _build_novaposhta_block(d: Dict[str, str]) -> Dict[str, Any]:
@@ -655,16 +657,17 @@ async def _build_products_block(
     products = []
     for r in rows:
         sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
-        # Fetch barcode and supplier item code
-        barcode, supplier_item_code = await _fetch_barcode_and_supplier_code(session, r.goodsCode, supplier_code)
-        # Build description string as per rules
-        description = ""
-        if barcode and supplier_item_code:
-            description = f"{barcode}, {supplier_item_code}"
-        elif barcode:
-            description = str(barcode)
-        elif supplier_item_code:
-            description = str(supplier_item_code)
+        # Fetch barcode, supplier item code, and supplier item name
+        barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(session, r.goodsCode, supplier_code)
+        # Build description string: supplier name, barcode, supplier code (if present), comma-separated
+        parts: list[str] = []
+        if supplier_item_name:
+            parts.append(str(supplier_item_name))
+        if barcode:
+            parts.append(str(barcode))
+        if supplier_item_code:
+            parts.append(str(supplier_item_code))
+        description = ", ".join(parts)
 
         products.append(
             {
