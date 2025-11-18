@@ -289,6 +289,7 @@ async def _fetch_supplier_price(
     return res.scalar_one_or_none()
 
 
+
 async def _fetch_sku_from_catalog_mapping(
     session: AsyncSession, goods_code: str, supplier_code: str
 ) -> Optional[str]:
@@ -307,6 +308,29 @@ async def _fetch_sku_from_catalog_mapping(
     )
     res = await session.execute(q)
     return res.scalar_one_or_none()
+
+# NEW: fetch barcode and supplier item code from CatalogMapping
+from typing import Optional, Tuple
+async def _fetch_barcode_and_supplier_code(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Возвращает (barcode, supplier_item_code) из CatalogMapping по goods_code и supplier_code.
+    """
+    field_name = f"Code_{supplier_code}"
+    code_col = getattr(CatalogMapping, field_name, None)
+    if code_col is None:
+        return (None, None)
+    q = (
+        select(CatalogMapping.Barcode, code_col)
+        .where(CatalogMapping.ID == str(goods_code))
+        .limit(1)
+    )
+    res = await session.execute(q)
+    row = res.first()
+    if not row:
+        return (None, None)
+    return (row[0], row[1])
 
 
 def _build_novaposhta_block(d: Dict[str, str]) -> Dict[str, Any]:
@@ -631,10 +655,16 @@ async def _build_products_block(
     products = []
     for r in rows:
         sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
-        description = supplier_name
-        if supplier_changed_note:
-            # расширяем описание при смене поставщика
-            description = f"{supplier_name}. {supplier_changed_note}"
+        # Fetch barcode and supplier item code
+        barcode, supplier_item_code = await _fetch_barcode_and_supplier_code(session, r.goodsCode, supplier_code)
+        # Build description string as per rules
+        description = ""
+        if barcode and supplier_item_code:
+            description = f"{barcode}, {supplier_item_code}"
+        elif barcode:
+            description = str(barcode)
+        elif supplier_item_code:
+            description = str(supplier_item_code)
 
         products.append(
             {
@@ -642,7 +672,7 @@ async def _build_products_block(
                 "name": r.goodsName,
                 "costPerItem": str(r.price),  # исх. цена позиции
                 "amount": str(r.qty),
-                "description": "",
+                "description": description,
                 "discount": "",
                 "sku": sku or "",
             }
