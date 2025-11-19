@@ -12,6 +12,7 @@ from googleapiclient.errors import HttpError
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy import select  # ← добавили
+from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore[import]
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -78,6 +79,7 @@ async def write_supplier_data_by_barcode(
     payload: Dict[str, Any],
     name_column: str,
     code_column: str,
+    session: "AsyncSession | None" = None,
 ) -> Dict[str, Any]:
     """
     Обновляет строку catalog_mapping по штрихкоду: записывает name -> name_column и id -> code_column.
@@ -95,12 +97,18 @@ async def write_supplier_data_by_barcode(
 
     Возврат:
       {"updated": <int>, "barcode": <str>, "name_column": <str>, "code_column": <str>}
+
+    ⚠️ Если передан session, функция НЕ создаёт свою сессию и НЕ делает commit — это остаётся на вызывающем коде.
     """
     # Валидация колонок (защитимся от опечаток/SQL-инъекций в именах полей)
     if name_column not in NAME_D_COLUMNS:
-        raise ValueError(f"Недопустимая колонка для имени: {name_column}. Разрешены: {', '.join(NAME_D_COLUMNS)}")
+        raise ValueError(
+            f"Недопустимая колонка для имени: {name_column}. Разрешены: {', '.join(NAME_D_COLUMNS)}"
+        )
     if code_column not in CODE_D_COLUMNS:
-        raise ValueError(f"Недопустимая колонка для кода: {code_column}. Разрешены: {', '.join(CODE_D_COLUMNS)}")
+        raise ValueError(
+            f"Недопустимая колонка для кода: {code_column}. Разрешены: {', '.join(CODE_D_COLUMNS)}"
+        )
 
     # Достаём значения из входных данных
     ext_id = (payload.get("id") or "").strip()
@@ -114,7 +122,7 @@ async def write_supplier_data_by_barcode(
         raise ValueError("Во входных данных нет значений 'id' и 'name' для записи")
 
     # Сборка динамического UPDATE
-    values_to_set = {}
+    values_to_set: Dict[str, Any] = {}
     if ext_name:
         values_to_set[name_column] = ext_name
     if ext_id:
@@ -122,7 +130,12 @@ async def write_supplier_data_by_barcode(
 
     # Если нечего обновлять — выходим
     if not values_to_set:
-        return {"updated": 0, "barcode": barcode, "name_column": name_column, "code_column": code_column}
+        return {
+            "updated": 0,
+            "barcode": barcode,
+            "name_column": name_column,
+            "code_column": code_column,
+        }
 
     # Построим выражение через модельные атрибуты, чтобы избежать ручного квотирования
     name_attr = getattr(CatalogMapping, name_column)
@@ -131,27 +144,36 @@ async def write_supplier_data_by_barcode(
     stmt = (
         update(CatalogMapping)
         .where(CatalogMapping.Barcode == barcode)
-        .values({name_attr.key: values_to_set.get(name_column, None),
-                 code_attr.key: values_to_set.get(code_column, None)})
+        .values(
+            {
+                name_attr.key: values_to_set.get(name_column, None),
+                code_attr.key: values_to_set.get(code_column, None),
+            }
+        )
         .execution_options(synchronize_session=False)
     )
 
-    async with get_async_db() as session:
+    # Если сессию не передали — создаём и коммитим внутри (старое поведение, 1 товар = 1 транзакция)
+    if session is None:
+        async with get_async_db() as own_session:
+            result = await own_session.execute(stmt)
+            await own_session.commit()
+            updated = result.rowcount or 0
+    else:
+        # Используем уже открытую сессию, коммит снаружи
         result = await session.execute(stmt)
-        await session.commit()
-
-    updated = result.rowcount or 0
-    # logger.info(
-        # "Поставщик по barcode %s: обновлено %d строк (%s, %s)",
-        # barcode, updated, name_column, code_column
-    # )
+        updated = result.rowcount or 0
 
     if updated == 0:
+        # Можно добавить нотификацию при необходимости
         pass
-        # Можно отправить нотификацию, если критично
-        # send_notification(f"catalog_mapping: не найден штрихкод {barcode} для обновления", "Разработчик")
 
-    return {"updated": updated, "barcode": barcode, "name_column": name_column, "code_column": code_column}
+    return {
+        "updated": updated,
+        "barcode": barcode,
+        "name_column": name_column,
+        "code_column": code_column,
+    }
 
 
 
@@ -524,31 +546,44 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
             updated = 0
             errors = 0
 
-            for payload in items:
-                try:
-                    if not isinstance(payload, dict):
-                        errors += 1
-                        continue
-                    norm = {
-                        "id": str(payload.get("id", "") or "").strip(),
-                        "name": str(payload.get("name", "") or "").strip(),
-                        "barcode": str(payload.get("barcode", "") or "").strip(),
-                    }
-                    if not norm["barcode"]:
-                        errors += 1
-                        continue
+            # Одна сессия и одна транзакция на всего поставщика
+            async with get_async_db() as session:
+                for payload in items:
+                    try:
+                        if not isinstance(payload, dict):
+                            errors += 1
+                            continue
+                        norm = {
+                            "id": str(payload.get("id", "") or "").strip(),
+                            "name": str(payload.get("name", "") or "").strip(),
+                            "barcode": str(payload.get("barcode", "") or "").strip(),
+                        }
+                        if not norm["barcode"]:
+                            errors += 1
+                            continue
 
-                    res = await write_supplier_data_by_barcode(
-                        norm, name_column=name_col, code_column=code_col
-                    )
-                    updated += int(res.get("updated", 0) or 0)
-                except Exception as item_err:
-                    errors += 1
-                    logger.exception("Ошибка обновления позиции (code=%s): %s", code, item_err)
+                        res = await write_supplier_data_by_barcode(
+                            norm,
+                            name_column=name_col,
+                            code_column=code_col,
+                            session=session,
+                        )
+                        updated += int(res.get("updated", 0) or 0)
+                    except Exception as item_err:
+                        errors += 1
+                        logger.exception("Ошибка обновления позиции (code=%s): %s", code, item_err)
+
+                # Коммитим все обновления по поставщику одним разом
+                await session.commit()
 
             feeds_agg[code] = {"items": len(items), "updated": updated, "errors": errors}
-            logger.info("Feed %s обработан: items=%d, updated=%d, errors=%d",
-                        code, len(items), updated, errors)
+            logger.info(
+                "Feed %s обработан: items=%d, updated=%d, errors=%d",
+                code,
+                len(items),
+                updated,
+                errors,
+            )
 
         # 3) Экспорт готовой таблицы в JSON и запуск процессинга
         export_path = await export_catalog_mapping_to_json_and_process(
