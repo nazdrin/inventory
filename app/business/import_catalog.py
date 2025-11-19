@@ -543,42 +543,92 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
                 continue
 
             items = _to_items(raw)
-            updated = 0
             errors = 0
 
-            # Одна сессия и одна транзакция на всего поставщика
-            async with get_async_db() as session:
-                for payload in items:
-                    try:
-                        if not isinstance(payload, dict):
-                            errors += 1
-                            continue
-                        norm = {
-                            "id": str(payload.get("id", "") or "").strip(),
-                            "name": str(payload.get("name", "") or "").strip(),
-                            "barcode": str(payload.get("barcode", "") or "").strip(),
-                        }
-                        if not norm["barcode"]:
-                            errors += 1
-                            continue
-
-                        res = await write_supplier_data_by_barcode(
-                            norm,
-                            name_column=name_col,
-                            code_column=code_col,
-                            session=session,
-                        )
-                        updated += int(res.get("updated", 0) or 0)
-                    except Exception as item_err:
+            # Готовим данные для bulk‑обновления по поставщику:
+            bulk_rows = []
+            for payload in items:
+                try:
+                    if not isinstance(payload, dict):
                         errors += 1
-                        logger.exception("Ошибка обновления позиции (code=%s): %s", code, item_err)
+                        continue
 
-                # Коммитим все обновления по поставщику одним разом
-                await session.commit()
+                    ext_id = str(payload.get("id", "") or "").strip()
+                    ext_name = str(payload.get("name", "") or "").strip()
+                    barcode = str(payload.get("barcode", "") or "").strip()
+
+                    if not barcode:
+                        # Без штрихкода обновить нечего
+                        errors += 1
+                        continue
+
+                    # Пустые строки превращаем в None, чтобы не перетирать существующие значения
+                    name_val = ext_name or None
+                    code_val = ext_id or None
+
+                    if name_val is None and code_val is None:
+                        # Нечего писать в D‑колонки
+                        errors += 1
+                        continue
+
+                    bulk_rows.append(
+                        {
+                            "barcode": barcode,
+                            "name": name_val,
+                            "code": code_val,
+                        }
+                    )
+                except Exception as norm_err:
+                    errors += 1
+                    logger.exception("Ошибка нормализации позиции (code=%s): %s", code, norm_err)
+
+            # Если после фильтрации записей не осталось — просто фиксируем статистику
+            if not bulk_rows:
+                feeds_agg[code] = {"items": len(items), "updated": 0, "errors": errors}
+                logger.info(
+                    "Feed %s обработан (bulk): items=%d, updated=%d, errors=%d (нет валидных строк для обновления)",
+                    code,
+                    len(items),
+                    0,
+                    errors,
+                )
+                continue
+
+            # Выполняем один bulk‑UPDATE по поставщику.
+            # Используем json_array_elements для разворота массива JSON в CTE,
+            # а имена колонок подставляем из заранее провалидированных name_col / code_col.
+            updated = 0
+            try:
+                async with get_async_db() as session:
+                    data_json = json.dumps(bulk_rows, ensure_ascii=False)
+
+                    sql = f"""
+                    WITH s AS (
+                        SELECT
+                            elem->>'barcode' AS barcode,
+                            elem->>'name'    AS name,
+                            elem->>'code'    AS code
+                        FROM json_array_elements((:data)::json) AS elem
+                    )
+                    UPDATE {CatalogMapping.__tablename__} AS cm
+                    SET
+                        "{name_col}" = COALESCE(s.name, cm."{name_col}"),
+                        "{code_col}" = COALESCE(s.code, cm."{code_col}")
+                    FROM s
+                    WHERE cm."Barcode" = s.barcode
+                    """
+                    result = await session.execute(text(sql), {"data": data_json})
+                    await session.commit()
+                    updated = result.rowcount or 0
+            except Exception as bulk_err:
+                logger.exception("Bulk‑обновление для code=%s завершилось ошибкой: %s", code, bulk_err)
+                # В случае ошибки считаем, что все подготовленные строки не обновились
+                errors += len(bulk_rows)
+                updated = 0
 
             feeds_agg[code] = {"items": len(items), "updated": updated, "errors": errors}
             logger.info(
-                "Feed %s обработан: items=%d, updated=%d, errors=%d",
+                "Feed %s обработан (bulk): items=%d, updated=%d, errors=%d",
                 code,
                 len(items),
                 updated,
