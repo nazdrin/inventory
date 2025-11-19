@@ -144,26 +144,39 @@ async def map_supplier_codes(
     Возвращаем [{"product_code": <ID>, "qty": ..., "price_retail": ..., "price_opt": ...}, ...]
     """
     mapped: List[dict] = []
-    column_name = f'Code_{supplier_code}'  # например "Code_D1"
+    column_name = f'Code_{supplier_code}'
 
+    # 1. собираем все уникальные коды поставщика
+    codes_set = {it.get("code_sup") for it in items if it.get("code_sup")}
+    if not codes_set:
+        return []
+
+    # 2. одним запросом вытягиваем все соответствия
+    sql = text(f'''
+        SELECT "{CATALOG_MAPPING_ID_COL}" AS id,
+               "{column_name}" AS code_sup
+        FROM catalog_mapping
+        WHERE "{column_name}" = ANY(:codes)
+    ''')
+    res = await session.execute(sql, {"codes": list(codes_set)})
+    rows = res.fetchall()
+
+    # 3. строим dict code_sup -> ID
+    code_to_id: Dict[str, str] = {}
+    for r in rows:
+        m = r._mapping
+        cs = str(m["code_sup"])
+        pid = str(m["id"])
+        code_to_id[cs] = pid
+
+    # 4. собираем результирующий список, сохраняя логику и порядок
     for it in items:
         code_sup = it.get("code_sup")
         if not code_sup:
             continue
-
-        sql = text(f'''
-            SELECT "{CATALOG_MAPPING_ID_COL}"
-            FROM catalog_mapping
-            WHERE "{column_name}" = :code_sup
-            LIMIT 1
-        ''')
-        res = await session.execute(sql, {"code_sup": code_sup})
-        row = res.first()
-        if not row:
-            #logger.info("Mapping not found: supplier=%s code_sup=%s", supplier_code, code_sup)
+        product_code = code_to_id.get(str(code_sup))
+        if not product_code:
             continue
-
-        product_code = str(row[0])  # master-код (ваш ID)
         mapped.append({
             "product_code": product_code,
             "qty": int(it.get("qty") or 0),
