@@ -756,9 +756,9 @@ async def build_salesdrive_payload(
         "rozetka_delivery": _build_rozetka_block(d),
         # Новые UTM-поля вместо prodex24*
         "utmSourceFull": code_val,   # был supplier_name в comment_text
-        "utmSource": supplier_name or "",         # был prodex24source
-        "utmMedium": str(branch or ""),                        # заполняется при необходимости
-        "utmCampaign": "",                 # был code_val в comment_text
+        "utmSource": str(branch or ""),         # был prodex24source
+        "utmMedium": supplier_name or "",                        # заполняется при необходимости
+        "utmCampaign": supplier_name or "",                  # был code_val в comment_text
         "utmContent": "",
         "utmTerm": "",
         "utmPage": "",

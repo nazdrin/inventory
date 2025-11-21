@@ -18,7 +18,7 @@ logger = logging.getLogger("salesdrive")
 logger.setLevel(logging.INFO)
 
 # === Справочники ===
-STATUS_MAP = {9: 4, 10: 4, 4: 4, 5: 6, 6: 7}
+STATUS_MAP = {2: 4, 3: 4, 4: 4, 5: 6, 6: 7}
 CANCEL_REASON = {
     # поддержка как строк, так и кодов (пример: 24 -> "Відмова споживача")
     "Відмова споживача": 1,
