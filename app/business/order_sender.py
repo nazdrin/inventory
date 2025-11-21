@@ -725,15 +725,15 @@ async def build_salesdrive_payload(
     )
 
     #form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
-        # --- Сборка комментария: code (если есть) + (supplier_changed_note or supplier_name)
-# --- Сборка комментария: code (если есть) + (supplier_changed_note or supplier_name)
+    # --- Новый блок: комментарий не содержит supplier_name и code_val, они идут в UTM-поля
     raw_code = order.get("code")
     code_val = str(raw_code).strip() if raw_code is not None else ""   # ← вот так безопасно
+
+    # Комментарий теперь не содержит supplier_name и code_val,
+    # они используются в UTM-полях ниже.
     comment_text = supplier_changed_note or supplier_name
-    if code_val:
-        comment_text = f"{code_val} | {comment_text}"
+
     payload = {
-        
         "getResultData": "1",
         "fName": fName,
         "lName": lName,
@@ -754,13 +754,14 @@ async def build_salesdrive_payload(
         "ukrposhta": _build_ukrposhta_block(d),
         "meest": _build_meest_block(d),
         "rozetka_delivery": _build_rozetka_block(d),
-        "prodex24source_full": "",
-        "prodex24source": str(branch or ""),
-        "prodex24medium": "",
-        "prodex24campaign": "",
-        "prodex24content": "",
-        "prodex24term": "",
-        "prodex24page": "",
+        # Новые UTM-поля вместо prodex24*
+        "utmSourceFull": code_val,   # был supplier_name в comment_text
+        "utmSource": supplier_name or "",         # был prodex24source
+        "utmMedium": str(branch or ""),                        # заполняется при необходимости
+        "utmCampaign": "",                 # был code_val в comment_text
+        "utmContent": "",
+        "utmTerm": "",
+        "utmPage": "",
     }
     return payload
 
