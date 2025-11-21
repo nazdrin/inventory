@@ -731,7 +731,7 @@ async def build_salesdrive_payload(
 
     # Комментарий теперь не содержит supplier_name и code_val,
     # они используются в UTM-полях ниже.
-    comment_text = supplier_changed_note or ""
+    comment_text = supplier_changed_note or supplier_name
 
     payload = {
         "getResultData": "1",
@@ -755,10 +755,10 @@ async def build_salesdrive_payload(
         "meest": _build_meest_block(d),
         "rozetka_delivery": _build_rozetka_block(d),
         # Новые UTM-поля вместо prodex24*
-        "utmSourceFull": supplier_name or "",   # был supplier_name в comment_text
-        "utmSource": str(branch or ""),         # был prodex24source
-        "utmMedium": "",                        # заполняется при необходимости
-        "utmCampaign": code_val,                 # был code_val в comment_text
+        "utmSourceFull": code_val,   # был supplier_name в comment_text
+        "utmSource": supplier_name or "",         # был prodex24source
+        "utmMedium": str(branch or ""),                        # заполняется при необходимости
+        "utmCampaign": "",                 # был code_val в comment_text
         "utmContent": "",
         "utmTerm": "",
         "utmPage": "",
