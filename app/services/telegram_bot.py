@@ -56,7 +56,7 @@ async def notify_user(branch: str, codes: list):
         if branch_entry and branch_entry.id_telegram:
             user_ids = [uid for uid in branch_entry.id_telegram if uid and uid.isdigit()]  # Фильтруем неверные данные
             orders_list = "\n".join(f"{i+1}. {code}" for i, code in enumerate(codes))
-            message_text = f"✅ *Нове(і) замовлення!* \n\n📌 *Номер:* \n\n{orders_list}"
+            message_text = f"✅ *Нове замовлення!* \n\n📌 *Номер:* \n\n{orders_list}"
             # Отправляем сообщение всем пользователям
             for user_id in user_ids:
                 await bot.send_message(chat_id=int(user_id), text=message_text, parse_mode="Markdown")
