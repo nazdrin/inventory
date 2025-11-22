@@ -315,12 +315,13 @@ async def parse_feed_stock_to_json(
         if price_rrp_raw is None:
             price_rrp_raw = _get_text(offer, ["price"])
         price_retail = _to_float(price_rrp_raw)
+        price_retail_int = int(price_retail)
 
         rows.append(
             {
                 "code_sup": str(vendor_code).strip(),
                 "qty": qty,
-                "price_retail": price_retail,
+                "price_retail": price_retail_int,
                 "price_opt": 0,
             }
         )
