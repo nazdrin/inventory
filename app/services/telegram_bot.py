@@ -71,6 +71,8 @@ async def notify_call_request(
     fName: str,
     lName: str,
     phone: str,
+    product_name: str,
+    order_date: str,
 ):
     """
     Отправляет уведомление в Telegram о том, что нужно позвонить клиенту.
@@ -82,6 +84,8 @@ async def notify_call_request(
     :param fName: имя клиента
     :param lName: фамилия клиента
     :param phone: номер телефона клиента
+    :param product_name: название товара (или список товаров строкой)
+    :param order_date: дата заказа
     """
     # Пауза перед отправкой сообщения, длительность берём из .env (TELEGRAM_CALL_DELAY_SECONDS)
     if CALL_DELAY_SECONDS > 0:
@@ -99,13 +103,17 @@ async def notify_call_request(
             return
 
         message_text = (
-            f"Нужно позвонить: номер заявки {id} "
-            f"на сумму {paymentAmount} "
-            f"от {fName} - {lName}, номер телефона {phone}."
+            "📞 Нужно позвонить клиенту\n\n"
+            f"👤 Клиент: *{fName} {lName}*\n"
+            f"📱 Телефон: {phone}\n\n"
+            f"📝 Номер заявки: {id}\n"
+            f"💰 Товар:\n{product_name}\n"
+            f"💵 Сумма: {paymentAmount}\n"
+            f"📅 Дата заказа: {order_date}"
         )
 
         for user_id in user_ids:
-            await bot.send_message(chat_id=int(user_id), text=message_text)
+            await bot.send_message(chat_id=int(user_id), text=message_text, parse_mode="Markdown")
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
