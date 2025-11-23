@@ -85,7 +85,8 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             else:
                                                 print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")
 
-                                        if status in [2, 4, 4.1]:
+                                        # Для формата Business не выполняем проверку статусов у продавца
+                                        if enterprise.data_format != "Business" and status in [2, 4, 4.1]:
                                             status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
                                             if status_checker:
                                                 await status_checker(order, enterprise_code, branch)
