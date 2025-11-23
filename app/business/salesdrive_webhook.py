@@ -88,6 +88,21 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
     utm_source = data.get("utmSource")  # branch берём из utmSource
     products = data.get("products") or []
 
+    # Список товаров (каждый товар отдельной строкой)
+    product_lines: List[str] = []
+    if products and isinstance(products, list):
+        for i, p in enumerate(products, start=1):
+            if not isinstance(p, dict):
+                continue
+            name = p.get("name") or p.get("documentName") or ""
+            qty = p.get("amount") or 1
+            if name:
+                product_lines.append(f"{i}. {name} (x{qty})")
+    product_name = "\n".join(product_lines)
+
+    # Дата заказа (как строка, из поля orderTime)
+    order_date = str(data.get("orderTime") or "")
+
     # === Уведомление о необходимости звонка (statusId = 9) ===
     if status_in == 9:
         branch = str(utm_source) if utm_source is not None else ""
@@ -115,6 +130,8 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
                 fName=f_name,
                 lName=l_name,
                 phone=str(phone) if phone is not None else "",
+                product_name=product_name,
+                order_date=order_date,
             )
             logger.info(
                 "📞 Отправлено уведомление о звонке: externalId=%s, branch=%s, amount=%s, fName=%s, lName=%s, phone=%s",
