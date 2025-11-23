@@ -386,7 +386,24 @@ async def process_supplier(
         logger.warning("Supplier %s: empty 'city' field; skipping.", code)
         return
 
-    # 5.5 цикл по городам и товарам
+    # 5.5 bulk-загрузка цен конкурентов по (product_code, city)
+    product_codes_set = {str(it["product_code"]) for it in mapped if it.get("product_code")}
+    comp_map: Dict[tuple[str, str], Decimal] = {}
+    if product_codes_set:
+        comp_q = (
+            select(CompetitorPrice.code, CompetitorPrice.city, CompetitorPrice.competitor_price)
+            .where(
+                CompetitorPrice.code.in_(product_codes_set),
+                CompetitorPrice.city.in_(cities)
+            )
+        )
+        res = await session.execute(comp_q)
+        for code_val, city_val, price_val in res.fetchall():
+            if price_val is None:
+                continue
+            comp_map[(str(code_val), city_val)] = _to_decimal(price_val)
+
+    # 5.6 цикл по городам и товарам
     for city in cities:
         logger.info("Supplier %s / city %s / items %d", code, city, len(mapped))
         for it in mapped:
@@ -395,7 +412,7 @@ async def process_supplier(
             rr = it.get("price_retail")
             po = it.get("price_opt")
 
-            competitor = await fetch_competitor_price(session, product_code, city)
+            competitor = comp_map.get((product_code, city))
             price = compute_price_for_item(
                 competitor_price=competitor,
                 is_rrp=is_rrp,
