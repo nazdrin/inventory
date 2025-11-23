@@ -13,6 +13,7 @@ from app.database import get_async_db, EnterpriseSettings
 from app.models import MappingBranch
 from app.services.order_sender import send_orders_to_tabletki
 from app.services.send_TTN import send_ttn  # async def send_ttn(session, id, enterprise_code, ttn, deliveryServiceAlias, phoneNumber)
+from app.services.telegram_bot import notify_call_request
 
 logger = logging.getLogger("salesdrive")
 logger.setLevel(logging.INFO)
@@ -85,6 +86,46 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
     external_id = str(data.get("externalId") or "")
     utm_source = data.get("utmSource")  # branch берём из utmSource
     products = data.get("products") or []
+
+    # === Уведомление о необходимости звонка (statusId = 9) ===
+    if status_in == 9:
+        branch = str(utm_source) if utm_source is not None else ""
+        raw_payment = data.get("paymentAmount")
+        try:
+            payment_amount = float(raw_payment) if raw_payment is not None else 0.0
+        except (TypeError, ValueError):
+            payment_amount = 0.0
+
+        contacts = data.get("contacts") or []
+        f_name = ""
+        l_name = ""
+        phone = None
+        if contacts and isinstance(contacts, list):
+            first_contact = contacts[0] or {}
+            f_name = first_contact.get("fName") or ""
+            l_name = first_contact.get("lName") or ""
+            phone = first_contact.get("phone") or ""
+
+        try:
+            await notify_call_request(
+                branch=branch,
+                id=external_id,
+                paymentAmount=payment_amount,
+                fName=f_name,
+                lName=l_name,
+                phone=str(phone) if phone is not None else "",
+            )
+            logger.info(
+                "📞 Отправлено уведомление о звонке: externalId=%s, branch=%s, amount=%s, fName=%s, lName=%s, phone=%s",
+                external_id,
+                branch,
+                payment_amount,
+                f_name,
+                l_name,
+                phone,
+            )
+        except Exception as e:
+            logger.exception("❌ Ошибка при вызове notify_call_request: %s", e)
 
     order_obj = {
         "id": external_id,

@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CALL_DELAY_SECONDS = float(os.getenv("TELEGRAM_CALL_DELAY_SECONDS", "0"))
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -60,6 +61,51 @@ async def notify_user(branch: str, codes: list):
             # Отправляем сообщение всем пользователям
             for user_id in user_ids:
                 await bot.send_message(chat_id=int(user_id), text=message_text, parse_mode="Markdown")
+
+
+# New function: notify_call_request
+async def notify_call_request(
+    branch: str,
+    id: str,
+    paymentAmount: float,
+    fName: str,
+    lName: str,
+    phone: str,
+):
+    """
+    Отправляет уведомление в Telegram о том, что нужно позвонить клиенту.
+    Функция может вызываться из стороннего сервиса.
+
+    :param branch: серийный номер аптеки/магазина
+    :param id: номер заявки
+    :param paymentAmount: сумма заказа
+    :param fName: имя клиента
+    :param lName: фамилия клиента
+    :param phone: номер телефона клиента
+    """
+    # Пауза перед отправкой сообщения, длительность берём из .env (TELEGRAM_CALL_DELAY_SECONDS)
+    if CALL_DELAY_SECONDS > 0:
+        await asyncio.sleep(CALL_DELAY_SECONDS)
+
+    async with get_async_db() as session:
+        branch_entry = await session.get(MappingBranch, branch)
+
+        if not branch_entry or not branch_entry.id_telegram:
+            return
+
+        # Фильтруем неверные значения ID
+        user_ids = [uid for uid in branch_entry.id_telegram if uid and uid.isdigit()]
+        if not user_ids:
+            return
+
+        message_text = (
+            f"Нужно позвонить: номер заявки {id} "
+            f"на сумму {paymentAmount} "
+            f"от {fName} - {lName}, номер телефона {phone}."
+        )
+
+        for user_id in user_ids:
+            await bot.send_message(chat_id=int(user_id), text=message_text)
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
