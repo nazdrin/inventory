@@ -84,6 +84,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
     mapped_status: int = STATUS_MAP.get(status_in, status_in)
 
     external_id = str(data.get("externalId") or "")
+    order_id = str(data.get("id") or "")
     utm_source = data.get("utmSource")  # branch берём из utmSource
     products = data.get("products") or []
 
@@ -109,7 +110,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
         try:
             await notify_call_request(
                 branch=branch,
-                id=external_id,
+                id=order_id,
                 paymentAmount=payment_amount,
                 fName=f_name,
                 lName=l_name,
