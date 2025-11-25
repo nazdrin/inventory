@@ -27,6 +27,7 @@ try:
     from app.business.feed_biotus import parse_feed_catalog_to_json as parse_feed_D1
     from app.business.feed_dsn import parse_dsn_catalog_to_json as parse_feed_D2
     from app.business.feed_proteinplus import parse_feed_catalog_to_json as parse_feed_D3
+    from app.business.feed_dobavki import parse_d4_feed_to_json as parse_feed_D4
 except Exception:
     parse_feed_D1 = None  # если модуля нет — пропустим D1
 
@@ -34,7 +35,8 @@ PARSER_REGISTRY: Dict[str, Any] = {
     "D1": parse_feed_D1,
     # Добавите сюда остальные, например:
     "D2": parse_feed_D2,
-    "D3": parse_feed_D3,
+    "D3": parse_feed_D3, 
+    "D4": parse_feed_D4,
 }
 
 
