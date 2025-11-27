@@ -647,6 +647,25 @@ async def _collect_all_supplier_candidates(session: AsyncSession) -> List[str]:
 # СБОРКА PAYLOAD ДЛЯ SALESDRIVE
 # -------------------------------
 
+
+# Helper to format goods name with quantity if qty > 1
+def _format_goods_name_with_qty(row: OrderRow) -> str:
+    """
+    Возвращает название товара с пометкой, если количество > 1.
+    Пример: '🔴x3 | Магний B6'
+    """
+    try:
+        qty_int = int(row.qty)
+    except (ValueError, TypeError):
+        return row.goodsName
+
+    if qty_int <= 1:
+        return row.goodsName
+
+    # Цветной ярлычок + количество перед названием
+    return f"🔴x{qty_int} | {row.goodsName}"
+
+
 async def _build_products_block(
     session: AsyncSession,
     rows: List[OrderRow],
@@ -656,6 +675,7 @@ async def _build_products_block(
 ) -> List[Dict[str, Any]]:
     products = []
     for r in rows:
+        display_name = _format_goods_name_with_qty(r)
         sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
         # Fetch barcode, supplier item code, and supplier item name
         barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(session, r.goodsCode, supplier_code)
@@ -669,10 +689,21 @@ async def _build_products_block(
             parts.append(str(supplier_item_code))
         description = ", ".join(parts)
 
+        # Добавляем ярлык количества в description, чтобы он был виден даже если SalesDrive
+        # в списке заявок использует именно описание товара, а не поле name.
+        try:
+            qty_int = int(r.qty)
+        except (ValueError, TypeError):
+            qty_int = 0
+
+        if qty_int > 1:
+            qty_label = f"🔴x{qty_int}"
+            description = f"{qty_label} | {description}" if description else qty_label
+
         products.append(
             {
                 "id": r.goodsCode,
-                "name": r.goodsName,
+                "name": display_name,
                 "costPerItem": str(r.price),  # исх. цена позиции
                 "amount": str(r.qty),
                 "description": description,
