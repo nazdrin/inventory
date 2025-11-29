@@ -19,7 +19,7 @@ logger = logging.getLogger("salesdrive")
 logger.setLevel(logging.INFO)
 
 # === Справочники ===
-STATUS_MAP = {2: 4, 3: 4, 4: 4, 5: 6, 6: 7, 10: 4}
+STATUS_MAP = {2: 4, 3: 4, 4: 4, 5: 6, 6: 7, 10: 4, 16: 4}
 CANCEL_REASON = {
     # поддержка как строк, так и кодов (пример: 24 -> "Відмова споживача")
     "Відмова споживача": 1,
@@ -167,7 +167,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
         tabletki_login, tabletki_password = creds
 
         # === Отправка подтверждения / отказа ===
-        if status_in in (4, 10):
+        if status_in in (4, 10, 16):
             # подтверждение
             try:
                 await send_orders_to_tabletki(
