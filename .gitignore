@@ -37,3 +37,4 @@ input_raw/272/raw_stock.json
 # raw inputs
 input_raw/**
 .gitattributes
+competitors_min_price.py
