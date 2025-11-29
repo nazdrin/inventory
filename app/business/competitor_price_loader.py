@@ -14,7 +14,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select, text, delete
 
 # === ВАШИ ИМПОРТЫ И ИНФРА ===
 from app.database import get_async_db  # должен отдавать AsyncSession
@@ -213,13 +213,29 @@ async def run():
 
     total_rows = 0
     async with get_async_db() as session:
+        # Города, которые уже есть в БД
+        result = await session.execute(select(CompetitorPrice.city).distinct())
+        existing_cities = {row[0] for row in result if row[0] is not None}
+        processed_cities = set()
+
         for f in supported:
+            city = os.path.splitext(os.path.basename(f["name"]))[0].strip()
+            processed_cities.add(city)
+
             try:
                 b = _download_file_as_bytes(service, f["id"])
                 rows = _parse_table(b, f["name"])
+
+                # Перед загрузкой новых данных полностью очищаем город
+                await session.execute(
+                    delete(CompetitorPrice).where(CompetitorPrice.city == city)
+                )
+                await session.commit()
+
                 if not rows:
-                    logger.info(f"{f['name']}: нет валидных строк")
+                    logger.info(f"{f['name']}: нет валидных строк, данные по городу {city} очищены")
                     continue
+
                 cnt = await upsert_competitor_prices(session, rows)
                 total_rows += cnt
                 logger.info(f"{f['name']}: загружено {cnt} записей")
@@ -227,6 +243,17 @@ async def run():
                 logger.exception("DB upsert failed")  # оставь как есть
                 logger.error("Exc type=%s; msg=%s", type(e).__name__, str(e))
 
+        # Удаляем данные по городам, для которых раньше были записи, но сейчас файлов нет
+        cities_to_clear = existing_cities - processed_cities
+        if cities_to_clear:
+            await session.execute(
+                delete(CompetitorPrice).where(CompetitorPrice.city.in_(list(cities_to_clear)))
+            )
+            await session.commit()
+            logger.info(
+                "Удалены данные по городам без файлов: %s",
+                ", ".join(sorted(cities_to_clear)),
+            )
 
     logger.info(f"Готово. Всего загружено записей: {total_rows}")
 
