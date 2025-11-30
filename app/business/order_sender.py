@@ -24,23 +24,6 @@ from app.models import Offer, DropshipEnterprise, CatalogMapping, EnterpriseSett
 import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
-# Маппинг branch → город для utmSource
-BRANCH_CITY_MAP = {
-    "59677": "Kyiv",
-    "59766": "Ivano-Frankivsk",
-    "59770": "Kremenchuk",
-    "59791": "Lviv",
-}
-
-def _branch_to_city(branch: Optional[str]) -> str:
-    """
-    Возвращает название города по коду branch.
-    Если кода нет в словаре, возвращает исходный код.
-    """
-    if not branch:
-        return ""
-    code = str(branch)
-    return BRANCH_CITY_MAP.get(code, code)
 logger = logging.getLogger(__name__)
 
 def _notify_business(msg: str) -> None:
@@ -805,7 +788,7 @@ async def build_salesdrive_payload(
         "rozetka_delivery": _build_rozetka_block(d),
         # Новые UTM-поля вместо prodex24*
         "utmSourceFull": code_val,   # был supplier_name в comment_text
-        "utmSource": _branch_to_city(branch),   # передаём город по коду branch (или сам код, если нет в словаре)
+        "utmSource": str(branch or ""),         # передаём только код branch
         "utmMedium": supplier_name or "",                        # заполняется при необходимости
         "utmCampaign": supplier_name or "",                  # был code_val в comment_text
         "utmContent": "",
