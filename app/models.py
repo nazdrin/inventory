@@ -193,6 +193,28 @@ class CatalogMapping(Base):
     Code_D9  = Column(String, nullable=True, server_default=text("''"))
     Code_D10 = Column(String, nullable=True, server_default=text("''"))
 
+    Name_D11 = Column(String, nullable=True, server_default=text("''"))
+    Name_D12 = Column(String, nullable=True, server_default=text("''"))
+    Name_D13 = Column(String, nullable=True, server_default=text("''"))
+    Name_D14 = Column(String, nullable=True, server_default=text("''"))
+    Name_D15 = Column(String, nullable=True, server_default=text("''"))
+    Name_D16 = Column(String, nullable=True, server_default=text("''"))
+    Name_D17 = Column(String, nullable=True, server_default=text("''"))
+    Name_D18 = Column(String, nullable=True, server_default=text("''"))
+    Name_D19 = Column(String, nullable=True, server_default=text("''"))
+    Name_D20 = Column(String, nullable=True, server_default=text("''"))
+
+    Code_D11 = Column(String, nullable=True, server_default=text("''"))
+    Code_D12 = Column(String, nullable=True, server_default=text("''"))
+    Code_D13 = Column(String, nullable=True, server_default=text("''"))
+    Code_D14 = Column(String, nullable=True, server_default=text("''"))
+    Code_D15 = Column(String, nullable=True, server_default=text("''"))
+    Code_D16 = Column(String, nullable=True, server_default=text("''"))
+    Code_D17 = Column(String, nullable=True, server_default=text("''"))
+    Code_D18 = Column(String, nullable=True, server_default=text("''"))
+    Code_D19 = Column(String, nullable=True, server_default=text("''"))
+    Code_D20 = Column(String, nullable=True, server_default=text("''"))
+
 class DropshipEnterprise(Base, TimestampMixin):
     __tablename__ = "dropship_enterprises"
 
@@ -247,17 +269,22 @@ class Offer(Base):
     supplier_code = Column(String, nullable=False, index=True, doc="Код/назва постачальника")
     city          = Column(String, nullable=False, index=True, doc="Місто")
     price         = Column(Numeric(12, 2), nullable=False, doc="Ціна у валюті currency")
+
+    # Оптовая цена (опционально для совместимости)
+    wholesale_price = Column(
+        Numeric(12, 2),
+        nullable=True,
+        doc="Оптовая цена"
+    )
+
     stock         = Column(Integer, nullable=False, default=0, doc="Доступний залишок ≥0")
     updated_at    = Column(DateTime(timezone=True), nullable=False,
                            server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        # одна актуальна запис на звʼязку (товар, постачальник, місто)
         UniqueConstraint("product_code", "supplier_code", "city",
                          name="uq_offers_product_supplier_city"),
-        # під основні запити (мінімальна ціна по місту/товару)
         Index("ix_offers_city_product_price", "city", "product_code", "price"),
-        # частковий індекс: швидкі фільтри по доступних
         Index("ix_offers_city_stock_pos", "city",
               postgresql_where=text("stock > 0")),
     )
