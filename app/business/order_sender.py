@@ -24,7 +24,16 @@ from app.models import Offer, DropshipEnterprise, CatalogMapping, EnterpriseSett
 import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
+
 logger = logging.getLogger(__name__)
+
+# Маппинг branch (серийный номер аптеки) → город
+BRANCH_CITY_MAP = {
+    "59677": "Kyiv",
+    "59766": "Ivano-Frankivsk",
+    "59770": "Kremenchuk",
+    "59791": "Lviv",
+}
 
 def _notify_business(msg: str) -> None:
     try:
@@ -652,19 +661,9 @@ async def _collect_all_supplier_candidates(session: AsyncSession) -> List[str]:
 # Helper to format goods name with quantity if qty > 1
 def _format_goods_name_with_qty(row: OrderRow) -> str:
     """
-    Возвращает название товара с пометкой, если количество > 1.
-    Пример: '🔴x3 | Магний B6'
+    Возвращает только название товара (без количества и значков).
     """
-    try:
-        qty_int = int(row.qty)
-    except (ValueError, TypeError):
-        return row.goodsName
-
-    if qty_int <= 1:
-        return row.goodsName
-
-    # Цветной ярлычок + количество перед названием
-    return f"🔴x{qty_int} | {row.goodsName}"
+    return row.goodsName
 
 
 async def _build_products_block(
@@ -689,17 +688,6 @@ async def _build_products_block(
         if supplier_item_code:
             parts.append(str(supplier_item_code))
         description = ", ".join(parts)
-
-        # Добавляем ярлык количества в description, чтобы он был виден даже если SalesDrive
-        # в списке заявок использует именно описание товара, а не поле name.
-        try:
-            qty_int = int(r.qty)
-        except (ValueError, TypeError):
-            qty_int = 0
-
-        if qty_int > 1:
-            qty_label = f"🔴x{qty_int}"
-            description = f"{qty_label} | {description}" if description else qty_label
 
         products.append(
             {
@@ -765,6 +753,12 @@ async def build_salesdrive_payload(
     # они используются в UTM-полях ниже.
     comment_text = supplier_changed_note or supplier_name
 
+    # Общее количество единиц товара в заказе
+    try:
+        total_qty = sum(int(r.qty) for r in rows)
+    except (ValueError, TypeError):
+        total_qty = 0
+
     payload = {
         "getResultData": "1",
         "fName": fName,
@@ -786,14 +780,13 @@ async def build_salesdrive_payload(
         "ukrposhta": _build_ukrposhta_block(d),
         "meest": _build_meest_block(d),
         "rozetka_delivery": _build_rozetka_block(d),
-        # Новые UTM-поля вместо prodex24*
-        "utmSourceFull": code_val,   # был supplier_name в comment_text
-        "utmSource": str(branch or ""),         # передаём только код branch
-        "utmMedium": supplier_name or "",                        # заполняется при необходимости
-        "utmCampaign": supplier_name or "",                  # был code_val в comment_text
-        "utmContent": "",
-        "utmTerm": "",
-        "utmPage": "",
+        # Новые поля для интеграции с SalesDrive
+        "city": BRANCH_CITY_MAP.get(str(branch), str(branch or "")),
+        "branch": str(branch or ""),              # серийный номер аптеки
+        "tabletkiOrder": code_val,               # номер заказа Tabletki.ua (бывший utmSourceFull)
+        "supplier": supplier_name or "",         # поставщик (бывший utmMedium/utmCampaign)
+        # qtyOrder: значок-предупреждение, если суммарное количество > 1
+        "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
     }
     return payload
 
