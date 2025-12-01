@@ -29,7 +29,7 @@ CANCEL_REASON = {
 DELIVERY_MAP = {"novaposhta": "NP", "ukrposhta": "UP"}  # ключи в нижнем регистре без пробелов
 
 async def _get_enterprise_code_by_branch(session: AsyncSession, branch_value: Any) -> Optional[str]:
-    """Возвращает enterprise_code по значению branch (берём из data.utmSource вебхука)."""
+    """Возвращает enterprise_code по значению branch (берём из data.branch вебхука, ранее из data.utmSource)."""
     if branch_value is None:
         return None
     branch_str = str(branch_value)
@@ -85,7 +85,10 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
 
     external_id = str(data.get("externalId") or "")
     order_id = str(data.get("id") or "")
-    utm_source = data.get("utmSource")  # branch берём из utmSource
+    # branch теперь берём из нового поля data["branch"], при отсутствии — из устаревшего utmSource
+    branch_value = data.get("branch")
+    if branch_value is None:
+        branch_value = data.get("utmSource")
     products = data.get("products") or []
 
     # Список товаров (каждый товар отдельной строкой)
@@ -105,7 +108,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
 
     # === Уведомление о необходимости звонка (statusId = 9) ===
     if status_in == 9:
-        branch = str(utm_source) if utm_source is not None else ""
+        branch = str(branch_value) if branch_value is not None else ""
         raw_payment = data.get("paymentAmount")
         try:
             payment_amount = float(raw_payment) if raw_payment is not None else 0.0
@@ -148,16 +151,16 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
     order_obj = {
         "id": external_id,
         "statusID": mapped_status,
-        "branchID": str(utm_source) if utm_source is not None else "",
+        "branchID": str(branch_value) if branch_value is not None else "",
         "rows": _build_order_rows(products),
     }
     orders: List[Dict[str, Any]] = [order_obj]
 
     async with get_async_db() as session:
-        # enterprise_code ищем по utmSource
-        enterprise_code = await _get_enterprise_code_by_branch(session, utm_source)
+        # enterprise_code ищем по branch (новое поле заказа; для совместимости может прийти из utmSource)
+        enterprise_code = await _get_enterprise_code_by_branch(session, branch_value)
         if not enterprise_code:
-            logger.error("⛔ enterprise_code не найден по utmSource=%s в MappingBranch", utm_source)
+            logger.error("⛔ enterprise_code не найден по branch=%s в MappingBranch", branch_value)
             return
 
         creds = await _get_tabletki_credentials(session, enterprise_code)
