@@ -583,6 +583,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
 # ЛОГИКА ОПРЕДЕЛЕНИЯ ПОСТАВЩИКА ДЛЯ MULTI-ITEM
 # ------------------------------------------------
 
+
 async def _try_pick_single_supplier_by_exact_prices(
     session: AsyncSession, rows: List[OrderRow]
 ) -> Optional[str]:
@@ -599,6 +600,54 @@ async def _try_pick_single_supplier_by_exact_prices(
     if len(set(picked)) == 1:
         return picked[0]
     return None
+
+# === NEW: Detect multi-supplier exact match ("мікс") ===
+async def _detect_multi_supplier_exact_match(
+    session: AsyncSession,
+    rows: List[OrderRow],
+) -> Optional[List[Tuple[OrderRow, str]]]:
+    """
+    Детектируем кейс, когда КАЖДАЯ позиция имеет точное совпадение по цене,
+    но поставщики для разных позиций могут отличаться.
+
+    Возвращаем список пар (строка заказа, supplier_code) или None,
+    если хотя бы для одной строки совпадение не найдено или все строки
+    относятся к одному и тому же поставщику.
+    """
+    mapping: List[Tuple[OrderRow, str]] = []
+    suppliers: List[str] = []
+
+    for r in rows:
+        sc = await _fetch_supplier_by_price(session, r.goodsCode, r.price)
+        if not sc:
+            return None
+        mapping.append((r, sc))
+        suppliers.append(sc)
+
+    if len(set(suppliers)) <= 1:
+        # либо один поставщик, либо пусто — это не "мікс"
+        return None
+
+    return mapping
+
+
+def _make_mixed_suppliers_comment(rows_with_suppliers: List[Tuple[OrderRow, str]]) -> str:
+    """
+    Формирует комментарий для кейса, когда позиции соответствуют ценам разных поставщиков.
+    """
+    suppliers = sorted({sc for _, sc in rows_with_suppliers})
+    supplier_list = ", ".join(suppliers) if suppliers else ""
+    parts = [
+        f"{r.goodsName} — {str(r.price)} ({sc})"
+        for r, sc in rows_with_suppliers
+    ]
+    details = "; ".join(parts)
+    base = (
+        "Увага: у замовленні товари з цінами, що відповідають різним постачальникам"
+    )
+    if supplier_list:
+        base += f" ({supplier_list})"
+    return f"{base}. Потрібна ручна перевірка. Деталі: {details}"
 
 
 async def _try_pick_alternative_supplier_by_total_cap(
@@ -669,16 +718,26 @@ def _format_goods_name_with_qty(row: OrderRow) -> str:
 async def _build_products_block(
     session: AsyncSession,
     rows: List[OrderRow],
-    supplier_code: str,
+    supplier_code: Optional[str],
     supplier_name: str,
     supplier_changed_note: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     products = []
     for r in rows:
         display_name = _format_goods_name_with_qty(r)
-        sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
-        # Fetch barcode, supplier item code, and supplier item name
-        barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(session, r.goodsCode, supplier_code)
+
+        sku: Optional[str] = None
+        barcode: Optional[str] = None
+        supplier_item_code: Optional[str] = None
+        supplier_item_name: Optional[str] = None
+
+        if supplier_code:
+            sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
+            # Fetch barcode, supplier item code, and supplier item name
+            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(
+                session, r.goodsCode, supplier_code
+            )
+
         # Build description string: supplier name, barcode, supplier code (if present), comma-separated
         parts: list[str] = []
         if supplier_item_name:
@@ -724,9 +783,10 @@ async def build_salesdrive_payload(
     order: Dict[str, Any],
     enterprise_code: str,
     rows: List[OrderRow],
-    supplier_code: str,
+    supplier_code: Optional[str],
     supplier_name: str,
-    branch: Optional[str] = None, 
+    branch: Optional[str] = None,
+    comment_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     d = _delivery_dict(order)
     fName, lName, mName = _extract_name_parts(order, d)
@@ -749,9 +809,11 @@ async def build_salesdrive_payload(
     raw_code = order.get("code")
     code_val = str(raw_code).strip() if raw_code is not None else ""   # ← вот так безопасно
 
-    # Комментарий теперь не содержит supplier_name и code_val,
-    # они используются в UTM-полях ниже.
-    comment_text = supplier_changed_note or supplier_name
+    # Комментарий: либо переданный явно, либо сформированный по изменению постачальника, либо просто имя постачальника
+    if comment_override:
+        comment_text = comment_override
+    else:
+        comment_text = supplier_changed_note or supplier_name
 
     # Общее количество единиц товара в заказе
     try:
@@ -884,7 +946,37 @@ async def process_and_send_order(
         # 1) Пробуем единого поставщика по точным ценам
         supplier_code = await _try_pick_single_supplier_by_exact_prices(session, rows)
 
-        # 2) Иначе — альтернатива по сумме (выбор по суммарному остатку, затем по priority)
+        # 2) Если точного единого поставщика нет — пробуем детектировать мікс:
+        #    каждая позиция имеет точное совпадение по цене, но у разных постачальників.
+        if not supplier_code:
+            mixed_mapping = await _detect_multi_supplier_exact_match(session, rows)
+            if mixed_mapping:
+                # Формируем комментарий с акцентом на різних постачальників
+                mixed_comment = _make_mixed_suppliers_comment(mixed_mapping)
+                supplier_name = "Різні постачальники"
+
+                try:
+                    send_notification(
+                        f"⚠️ Змішане замовлення (різні постачальники) | id={order.get('id')} | enterprise={enterprise_code}",
+                        "Business",
+                    )
+                except Exception:
+                    logger.exception("Не удалось отправить уведомление про змішане замовлення")
+
+                payload = await build_salesdrive_payload(
+                    session=session,
+                    order=order,
+                    enterprise_code=enterprise_code,
+                    rows=rows,
+                    supplier_code=None,
+                    supplier_name=supplier_name,
+                    branch=branch,
+                    comment_override=mixed_comment,
+                )
+                await _send_to_salesdrive(payload, api_key)
+                return
+
+        # 3) Иначе — альтернатива по сумме (выбор по суммарному остатку, затем по priority)
         if not supplier_code:
             candidates = await _collect_all_supplier_candidates(session)
             alt = await _try_pick_alternative_supplier_by_total_cap(session, rows, candidates)
