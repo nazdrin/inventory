@@ -85,9 +85,19 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
             logger.info("📨 Ответ от SalesDrive: %s", response.text)
             response.raise_for_status()
         except httpx.RequestError as e:
-            logger.error("❌ Ошибка подключения к SalesDrive: %s", str(e))
+            err_msg = f"❌ Помилка підключення до SalesDrive: {e}"
+            logger.error(err_msg)
+            try:
+                send_notification(err_msg, "Business")
+            except Exception:
+                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (RequestError)")
         except httpx.HTTPStatusError as e:
-            logger.error("❌ Ошибка HTTP от SalesDrive: %s — %s", e.response.status_code, e.response.text)
+            err_msg = f"❌ HTTP-помилка від SalesDrive: {e.response.status_code} — {e.response.text}"
+            logger.error(err_msg)
+            try:
+                send_notification(err_msg, "Business")
+            except Exception:
+                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (HTTPStatusError)")
 
 # --- HELPER для обновления заявки в SalesDrive через /api/order/update/
 async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
@@ -946,14 +956,15 @@ async def process_and_send_order(
     async with get_async_db() as session:
         api_key = await _get_salesdrive_api_key(session, enterprise_code)
         if not api_key:
+            # Нет API-ключа SalesDrive — уведомляем, но отказ не формируем.
+            # Заказ останется для повторной отправки при следующем запуске, когда ключ будет добавлен.
             try:
                 send_notification(
-                    f"🚫Відмова: немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
+                    f"❌ Немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
                     "Business",
                 )
             except Exception:
                 logger.exception("Не удалось отправить уведомление об отсутствии API-ключа")
-            await _initiate_refusal_stub(order, "❌ Отсутствует API-ключ для SalesDrive", enterprise_code)
             return
 
         # === SINGLE-ITEM ===
