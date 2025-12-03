@@ -25,7 +25,11 @@ import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
 
+
 logger = logging.getLogger(__name__)
+
+# Глобальный допуск по цене для поиска поставщика
+PRICE_TOLERANCE = Decimal("0.10")
 
 # Маппинг branch (серийный номер аптеки) → город
 BRANCH_CITY_MAP = {
@@ -81,9 +85,19 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
             logger.info("📨 Ответ от SalesDrive: %s", response.text)
             response.raise_for_status()
         except httpx.RequestError as e:
-            logger.error("❌ Ошибка подключения к SalesDrive: %s", str(e))
+            err_msg = f"❌ Помилка підключення до SalesDrive: {e}"
+            logger.error(err_msg)
+            try:
+                send_notification(err_msg, "Business")
+            except Exception:
+                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (RequestError)")
         except httpx.HTTPStatusError as e:
-            logger.error("❌ Ошибка HTTP от SalesDrive: %s — %s", e.response.status_code, e.response.text)
+            err_msg = f"❌ HTTP-помилка від SalesDrive: {e.response.status_code} — {e.response.text}"
+            logger.error(err_msg)
+            try:
+                send_notification(err_msg, "Business")
+            except Exception:
+                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (HTTPStatusError)")
 
 # --- HELPER для обновления заявки в SalesDrive через /api/order/update/
 async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
@@ -297,6 +311,53 @@ async def _fetch_supplier_price(
     )
     res = await session.execute(q)
     return res.scalar_one_or_none()
+
+
+# === NEW: поиск поставщиков по допуску и ближайшей цене ===
+from typing import List, Tuple, Optional
+
+async def _find_suppliers_within_tolerance(
+    session: AsyncSession,
+    product_code: str,
+    order_price: Decimal,
+    tolerance: Decimal = PRICE_TOLERANCE,
+) -> List[Tuple[str, Decimal]]:
+    """
+    Возвращает список (supplier_code, supplier_price) для товара, где
+    |price - order_price| <= tolerance, отсортированный по модулю разницы.
+    """
+    q = select(Offer.supplier_code, Offer.price).where(Offer.product_code == str(product_code))
+    res = await session.execute(q)
+    rows = res.all()
+    matches: List[Tuple[str, Decimal]] = []
+    for sc, p in rows:
+        p_dec = _as_decimal(p)
+        if abs(p_dec - order_price) <= tolerance:
+            matches.append((str(sc), p_dec))
+    matches.sort(key=lambda x: (abs(x[1] - order_price), x[1]))
+    return matches
+
+
+async def _find_nearest_supplier_by_price(
+    session: AsyncSession,
+    product_code: str,
+    order_price: Decimal,
+) -> Optional[Tuple[str, Decimal]]:
+    """
+    Возвращает (supplier_code, supplier_price) для поставщика с ценой,
+    наиболее близкой к order_price (без ограничения по допуску).
+    """
+    q = select(Offer.supplier_code, Offer.price).where(Offer.product_code == str(product_code))
+    res = await session.execute(q)
+    rows = res.all()
+    if not rows:
+        return None
+    candidates: List[Tuple[str, Decimal]] = []
+    for sc, p in rows:
+        p_dec = _as_decimal(p)
+        candidates.append((str(sc), p_dec))
+    candidates.sort(key=lambda x: (abs(x[1] - order_price), x[1]))
+    return candidates[0] if candidates else None
 
 
 
@@ -583,6 +644,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
 # ЛОГИКА ОПРЕДЕЛЕНИЯ ПОСТАВЩИКА ДЛЯ MULTI-ITEM
 # ------------------------------------------------
 
+
 async def _try_pick_single_supplier_by_exact_prices(
     session: AsyncSession, rows: List[OrderRow]
 ) -> Optional[str]:
@@ -599,6 +661,54 @@ async def _try_pick_single_supplier_by_exact_prices(
     if len(set(picked)) == 1:
         return picked[0]
     return None
+
+# === NEW: Detect multi-supplier exact match ("мікс") ===
+async def _detect_multi_supplier_exact_match(
+    session: AsyncSession,
+    rows: List[OrderRow],
+) -> Optional[List[Tuple[OrderRow, str]]]:
+    """
+    Детектируем кейс, когда КАЖДАЯ позиция имеет точное совпадение по цене,
+    но поставщики для разных позиций могут отличаться.
+
+    Возвращаем список пар (строка заказа, supplier_code) или None,
+    если хотя бы для одной строки совпадение не найдено или все строки
+    относятся к одному и тому же поставщику.
+    """
+    mapping: List[Tuple[OrderRow, str]] = []
+    suppliers: List[str] = []
+
+    for r in rows:
+        sc = await _fetch_supplier_by_price(session, r.goodsCode, r.price)
+        if not sc:
+            return None
+        mapping.append((r, sc))
+        suppliers.append(sc)
+
+    if len(set(suppliers)) <= 1:
+        # либо один поставщик, либо пусто — это не "мікс"
+        return None
+
+    return mapping
+
+
+def _make_mixed_suppliers_comment(rows_with_suppliers: List[Tuple[OrderRow, str]]) -> str:
+    """
+    Формирует комментарий для кейса, когда позиции соответствуют ценам разных поставщиков.
+    """
+    suppliers = sorted({sc for _, sc in rows_with_suppliers})
+    supplier_list = ", ".join(suppliers) if suppliers else ""
+    parts = [
+        f"{r.goodsName} — {str(r.price)} ({sc})"
+        for r, sc in rows_with_suppliers
+    ]
+    details = "; ".join(parts)
+    base = (
+        "Увага: у замовленні товари з цінами, що відповідають різним постачальникам"
+    )
+    if supplier_list:
+        base += f" ({supplier_list})"
+    return f"{base}. Потрібна ручна перевірка. Деталі: {details}"
 
 
 async def _try_pick_alternative_supplier_by_total_cap(
@@ -669,16 +779,26 @@ def _format_goods_name_with_qty(row: OrderRow) -> str:
 async def _build_products_block(
     session: AsyncSession,
     rows: List[OrderRow],
-    supplier_code: str,
+    supplier_code: Optional[str],
     supplier_name: str,
     supplier_changed_note: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     products = []
     for r in rows:
         display_name = _format_goods_name_with_qty(r)
-        sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
-        # Fetch barcode, supplier item code, and supplier item name
-        barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(session, r.goodsCode, supplier_code)
+
+        sku: Optional[str] = None
+        barcode: Optional[str] = None
+        supplier_item_code: Optional[str] = None
+        supplier_item_name: Optional[str] = None
+
+        if supplier_code:
+            sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
+            # Fetch barcode, supplier item code, and supplier item name
+            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(
+                session, r.goodsCode, supplier_code
+            )
+
         # Build description string: supplier name, barcode, supplier code (if present), comma-separated
         parts: list[str] = []
         if supplier_item_name:
@@ -724,9 +844,10 @@ async def build_salesdrive_payload(
     order: Dict[str, Any],
     enterprise_code: str,
     rows: List[OrderRow],
-    supplier_code: str,
+    supplier_code: Optional[str],
     supplier_name: str,
-    branch: Optional[str] = None, 
+    branch: Optional[str] = None,
+    comment_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     d = _delivery_dict(order)
     fName, lName, mName = _extract_name_parts(order, d)
@@ -749,9 +870,11 @@ async def build_salesdrive_payload(
     raw_code = order.get("code")
     code_val = str(raw_code).strip() if raw_code is not None else ""   # ← вот так безопасно
 
-    # Комментарий теперь не содержит supplier_name и code_val,
-    # они используются в UTM-полях ниже.
-    comment_text = supplier_changed_note or supplier_name
+    # Комментарий: либо переданный явно, либо сформированный по изменению постачальника, либо просто имя постачальника
+    if comment_override:
+        comment_text = comment_override
+    else:
+        comment_text = supplier_changed_note or supplier_name
 
     # Общее количество единиц товара в заказе
     try:
@@ -804,15 +927,15 @@ async def process_and_send_order(
     Логика:
       - Нормализация rows; отказ при пустых строках (уведомляем "Business").
       - Получение api_key SalesDrive; отказ при отсутствии (уведомляем "Business").
-      - SINGLE-ITEM (_pick_supplier_for_single_item):
-          1) Если есть цена ровно как в заказе — берём этого поставщика (цена остаётся как в заказе).
-          2) Иначе, если все цены ниже — берём поставщика с max(profit_percent) и снижаем r.price.
-          3) Иначе — допускаем цены <= order_price + 0.10; если нет — отказ (уведомляем).
+      - SINGLE-ITEM:
+          1) Если есть поставщик с ценой в допуске 10 копеек — берём его (comment = название поставщика).
+          2) Если нет — ищем ближайшего по цене (comment = ⚠️ с предупреждением и разницей в цене).
+          3) Если вообще нет офферов — comment = ⚠️ не найдено, supplier пустой.
       - MULTI-ITEM:
-          * Пытаемся найти единого поставщика по точным ценам (_try_pick_single_supplier_by_exact_prices).
-          * Иначе — альтернатива по сумме (_try_pick_alternative_supplier_by_total_cap).
-          * Если поставщик найден — перезаписываем r.price на цены из БД выбранного поставщика.
-          * Формируем payload и отправляем в SalesDrive.
+          4) Если у всех позиций найден поставщик по цене с допуском 10 копеек и он един для всех — supplier = название, comment = название.
+          5) Если у всех позиций найдены разные поставщики с допуском — supplier пустой, comment = ⚠️ с перечислением товаров и их постачальників.
+          6) Если есть позиции без поставщика в допуске — supplier пустой, comment = ⚠️ с деталями по найденным/ненайденным.
+      - После формирования payload — отправка в SalesDrive.
     """
     supplier_code: Optional[str] = None  # защитная инициализация
 
@@ -833,47 +956,61 @@ async def process_and_send_order(
     async with get_async_db() as session:
         api_key = await _get_salesdrive_api_key(session, enterprise_code)
         if not api_key:
+            # Нет API-ключа SalesDrive — уведомляем, но отказ не формируем.
+            # Заказ останется для повторной отправки при следующем запуске, когда ключ будет добавлен.
             try:
                 send_notification(
-                    f"🚫Відмова: немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
+                    f"❌ Немає API ключа SalesDrive | id={order.get('id')} | enterprise={enterprise_code}",
                     "Business",
                 )
             except Exception:
                 logger.exception("Не удалось отправить уведомление об отсутствии API-ключа")
-            await _initiate_refusal_stub(order, "❌ Отсутствует API-ключ для SalesDrive", enterprise_code)
             return
 
         # === SINGLE-ITEM ===
         if len(rows) == 1:
             r = rows[0]
 
-            pick = await _pick_supplier_for_single_item(session, r.goodsCode, r.price)
-            if not pick:
-                try:
-                    send_notification(
-                        f"🚫Відмова: не знайдено постачальника (допуск +0.10) | id={order.get('id')} | enterprise={enterprise_code}",
-                        "Business",
+            comment_override: Optional[str] = None
+
+            # 1–3. Поиск поставщика по логике допуска / ближайшей цены / полного отсутствия
+            matches = await _find_suppliers_within_tolerance(session, r.goodsCode, r.price)
+            if matches:
+                # 1) Есть поставщик по цене с допуском 10 копеек — берём первого (самый близкий)
+                supplier_code = matches[0][0]
+                supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
+                # comment и supplier = название поставщика
+                comment_override = supplier_name
+            else:
+                # 2) Нет поставщика в допуске 10 копеек — ищем ближайшего по цене
+                nearest = await _find_nearest_supplier_by_price(session, r.goodsCode, r.price)
+                if nearest:
+                    supplier_code, supplier_price = nearest
+                    supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
+                    # supplier заполняем, в comment предупреждение
+                    comment_override = (
+                        "⚠️ Ціна постачальника відрізняється від ціни в замовленні: "
+                        f"постачальник {supplier_name}, ціна постачальника {supplier_price}, "
+                        f"ціна в замовленні {r.price}."
                     )
-                except Exception:
-                    logger.exception("Не удалось отправить уведомление об отсутствии поставщика (single)")
-                await _initiate_refusal_stub(
-                    order,
-                    "Не найден подходящий поставщик (учтён допуск +0.10)",
-                    enterprise_code,
-                )
-                return
-
-            supplier_code, supplier_price, price_went_down = pick
-            supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-
-            # Если у выбранного поставщика цена ниже — применяем её и помечаем
-            if price_went_down:
-                order["_supplier_changed"] = True
-                order["_price_went_down"] = True
-                r.price = supplier_price  # в SalesDrive уйдёт сниженная цена
+                else:
+                    # 3) Вообще нет офферов этого товара — supplier пустой, comment с предупреждением
+                    supplier_code = None
+                    supplier_name = ""
+                    comment_override = (
+                        "⚠️ Не знайдено постачальника для товару: "
+                        f"{r.goodsName} (код {r.goodsCode}, ціна {r.price})."
+                    )
 
             payload = await build_salesdrive_payload(
-                session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
+                session,
+                order,
+                enterprise_code,
+                rows,
+                supplier_code,
+                supplier_name,
+                branch=branch,
+                comment_override=comment_override,
             )
             await _send_to_salesdrive(payload, api_key)
             # После отправки заказа — обработать отказы из Reserve API и обновить заявки в SalesDrive
@@ -881,53 +1018,83 @@ async def process_and_send_order(
             return
 
         # === MULTI-ITEM ===
-        # 1) Пробуем единого поставщика по точным ценам
-        supplier_code = await _try_pick_single_supplier_by_exact_prices(session, rows)
+        # Для каждой позиции ищем поставщика по цене с допуском 10 копеек
+        rows_with_supplier: List[Tuple[OrderRow, str, Decimal]] = []  # row, supplier_code, supplier_price
+        rows_without_supplier: List[OrderRow] = []
 
-        # 2) Иначе — альтернатива по сумме (выбор по суммарному остатку, затем по priority)
-        if not supplier_code:
-            candidates = await _collect_all_supplier_candidates(session)
-            alt = await _try_pick_alternative_supplier_by_total_cap(session, rows, candidates)
-            if alt:
-                supplier_code = alt
-                order["_supplier_changed"] = True
-            else:
-                try:
-                    send_notification(
-                        f"🚫Відмова: не підібрано єдиного постачальника під суму | id={order.get('id')} | enterprise={enterprise_code}",
-                        "Business",
-                    )
-                except Exception:
-                    logger.exception("Не удалось отправить уведомление (multi, не подобрали по сумме)")
-                await _initiate_refusal_stub(
-                    order,
-                    "Не удалось подобрать единого поставщика под сумму заказа",
-                    enterprise_code,
-                )
-                return
-
-        # Страховка (на всякий случай)
-        if not supplier_code:
-            try:
-                send_notification(
-                    f"🚫Відмова: внутрішня помилка вибору постачальника | id={order.get('id')} | enterprise={enterprise_code}",
-                    "Business",
-                )
-            except Exception:
-                logger.exception("Не удалось отправить уведомление (multi, supplier_code is None)")
-            await _initiate_refusal_stub(order, "Внутренняя ошибка: не выбран поставщик", enterprise_code)
-            return
-
-        # Теперь, когда выбран поставщик, перезаписываем цены строк на цены из БД выбранного поставщика
         for r in rows:
-            db_price = await _fetch_supplier_price(session, supplier_code, r.goodsCode)
-            if db_price is not None:
-                r.price = _as_decimal(db_price)
+            matches = await _find_suppliers_within_tolerance(session, r.goodsCode, r.price)
+            if matches:
+                sc, sp = matches[0]
+                rows_with_supplier.append((r, sc, sp))
+            else:
+                rows_without_supplier.append(r)
 
-        supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
+        comment_override: Optional[str] = None
+
+        if rows_with_supplier and not rows_without_supplier:
+            # У всех товаров найден поставщик в допуске
+            unique_codes = sorted({sc for _, sc, _ in rows_with_supplier})
+            if len(unique_codes) == 1:
+                # 4) Единый поставщик по цене с допуском 10 копеек
+                supplier_code = unique_codes[0]
+                supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
+                # comment и supplier = название поставщика
+                comment_override = supplier_name
+            else:
+                # 5) Для товаров найдены разные поставщики с допуском — supplier пустой,
+                # в comment перечисляем товары и их постачальників
+                supplier_code = None
+                supplier_name = ""
+                # мапа код поставщика -> имя
+                name_map: Dict[str, str] = {}
+                for _, sc, _ in rows_with_supplier:
+                    if sc not in name_map:
+                        name_map[sc] = (await _fetch_supplier_name(session, sc)) or sc
+                parts = [
+                    f"{r.goodsName} — {name_map[sc]}"
+                    for (r, sc, _) in rows_with_supplier
+                ]
+                comment_override = "⚠️ Для товарів знайдені різні постачальники: " + "; ".join(parts)
+        else:
+            # Есть товары без поставщика в допуске (или вообще никому не нашли)
+            supplier_code = None
+            supplier_name = ""
+            found_parts: List[str] = []
+            missing_parts: List[str] = []
+
+            if rows_with_supplier:
+                name_map: Dict[str, str] = {}
+                for _, sc, _ in rows_with_supplier:
+                    if sc not in name_map:
+                        name_map[sc] = (await _fetch_supplier_name(session, sc)) or sc
+                for r, sc, _ in rows_with_supplier:
+                    found_parts.append(f"{r.goodsName} — {name_map[sc]}")
+
+            if rows_without_supplier:
+                for r in rows_without_supplier:
+                    missing_parts.append(f"{r.goodsName} — постачальник не знайдений")
+
+            text_chunks: List[str] = []
+            if found_parts:
+                text_chunks.append("товари з знайденими постачальниками: " + "; ".join(found_parts))
+            if missing_parts:
+                text_chunks.append("товари без постачальника: " + "; ".join(missing_parts))
+
+            if text_chunks:
+                comment_override = "⚠️ " + " | ".join(text_chunks)
+            else:
+                comment_override = "⚠️ Не знайдено постачальників для товарів у замовленні."
 
         payload = await build_salesdrive_payload(
-            session, order, enterprise_code, rows, supplier_code, supplier_name, branch=branch
+            session,
+            order,
+            enterprise_code,
+            rows,
+            supplier_code,
+            supplier_name,
+            branch=branch,
+            comment_override=comment_override,
         )
         await _send_to_salesdrive(payload, api_key)
         # После отправки заказа — обработать отказы из Reserve API и обновить заявки в SalesDrive
