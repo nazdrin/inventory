@@ -287,7 +287,8 @@ async def parse_d4_stock_to_json(
         qty = _parse_qty(row.get(COL_QTY))
         usd_price = _to_float(row.get(COL_PRICE_USD))
 
-        price_retail_raw = usd_price * rate * (1.0 + markup)
+        # price_retail_raw = usd_price * rate * (1.0 + markup)  # теперь цена в файле уже в гривне, поэтому курс rate не используется
+        price_retail_raw = usd_price * (1.0 + markup)
         # Округляем до целых гривен вниз
         price_retail = math.floor(price_retail_raw)
 
