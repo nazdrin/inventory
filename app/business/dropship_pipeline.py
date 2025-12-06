@@ -22,6 +22,7 @@ from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
 from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
+from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -80,6 +81,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D2": parse_dsn_stock_to_json,
     "D3": parse_feed_D3,
     "D4": parse_feed_D4,
+    "D5": parse_feed_D5,
 }
 
 # --------------------------------------------------------------------------------------
