@@ -349,6 +349,10 @@ async def parse_feed_stock_to_json(
         available_raw = (offer.get("available") or "").strip().lower()
         qty = 1 if available_raw == "true" else 0
 
+        # Игнорируем позиции с нулевым или отрицательным остатком
+        if qty <= 0:
+            continue
+
         # price -> price_retail
         price_raw = _get_text(offer, ["price"])
         price_retail = _to_float(price_raw)
