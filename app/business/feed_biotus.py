@@ -231,6 +231,10 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
         price_raw = _get_text(node, ["price"]) or node.get("price")
 
         qty = _to_int(qty_raw)
+        # Игнорируем позиции с нулевым или отрицательным остатком
+        if qty <= 0:
+            continue
+
         price_retail = _to_float(price_raw)
 
         rows.append({

@@ -209,6 +209,11 @@ async def parse_d5_stock_to_json(*, code: str = "D5", timeout: int = 30) -> str:
             continue
 
         qty = _d5_extract_qty(item)
+
+        # Игнорируем позиции с нулевым или отрицательным остатком
+        if qty <= 0:
+            continue
+
         price_retail = _d5_extract_price_retail(item)
         price_opt = _d5_extract_price_opt(item)
 

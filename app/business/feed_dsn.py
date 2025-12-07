@@ -203,6 +203,11 @@ async def parse_dsn_stock_to_json(*, code: str = "D2", timeout: int = 30) -> str
             continue
 
         qty = _dsn_extract_qty(offer)
+        # Игнорируем позиции с нулевым або від'ємним залишком
+        if qty <= 0:
+            continue
+        
+
         price_retail = _dsn_extract_price_retail(offer)
 
         rows.append({
