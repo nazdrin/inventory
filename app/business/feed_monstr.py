@@ -1,4 +1,3 @@
-# d3_feed_parser.py
 from __future__ import annotations
 
 import asyncio
@@ -24,10 +23,13 @@ from googleapiclient.http import MediaIoBaseDownload
 # Excel
 from openpyxl import load_workbook
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ XML/ФИДА D3 ===
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ XML/ФИДА D5 ===
 
 
 def _get_text(el: ET.Element, candidates: List[str]) -> Optional[str]:
@@ -52,11 +54,16 @@ def _to_float(val: Optional[str]) -> float:
         return 0.0
 
 
-async def _get_feed_url_by_code(code: str = "D3") -> Optional[str]:
+async def _get_feed_url_by_code(code: str = "D5") -> Optional[str]:
     """Достаёт feed_url из dropship_enterprises по значению поля code."""
     async with get_async_db() as session:
         res = await session.execute(
-            text("SELECT feed_url FROM dropship_enterprises WHERE code = :code LIMIT 1"),
+            text(
+                "SELECT feed_url "
+                "FROM dropship_enterprises "
+                "WHERE code = :code "
+                "LIMIT 1"
+            ),
             {"code": code},
         )
         return res.scalar_one_or_none()
@@ -106,7 +113,7 @@ def _collect_offer_nodes(root: ET.Element) -> List[ET.Element]:
     return offers
 
 
-# === GOOGLE DRIVE / EXCEL ДЛЯ КАТАЛОГА ===
+# === GOOGLE DRIVE / EXCEL ДЛЯ КАТАЛОГА D5 ===
 
 
 async def _connect_to_google_drive():
@@ -176,18 +183,29 @@ async def _download_file_bytes(drive_service, file_id: str) -> bytes:
         raise
 
 
-def _get_d3_folder_id() -> str:
+async def _get_gdrive_folder_id_by_code(code: str) -> str:
     """
-    Берёт ID папки с Excel для каталога из .env.
-    Ожидается переменная D3_CATALOG_FOLDER_ID.
+    Берёт ID папки с Excel для каталога из таблицы dropship_enterprises.gdrive_folder.
     """
-    folder_id = os.getenv("D3_CATALOG_FOLDER_ID")
+    async with get_async_db() as session:
+        res = await session.execute(
+            text(
+                "SELECT gdrive_folder "
+                "FROM dropship_enterprises "
+                "WHERE code = :code "
+                "LIMIT 1"
+            ),
+            {"code": code},
+        )
+        folder_id = res.scalar_one_or_none()
+
     if not folder_id:
-        msg = "Не задана переменная окружения D3_CATALOG_FOLDER_ID"
+        msg = f"Не найден gdrive_folder в dropship_enterprises для code='{code}'"
         logger.error(msg)
         send_notification(msg, "Разработчик")
         raise RuntimeError(msg)
-    return folder_id
+
+    return str(folder_id)
 
 
 def _parse_catalog_excel_bytes(data: bytes) -> List[Dict[str, str]]:
@@ -195,16 +213,20 @@ def _parse_catalog_excel_bytes(data: bytes) -> List[Dict[str, str]]:
     Парсит Excel-файл из bytes и возвращает список:
     [{"id": ..., "name": ..., "barcode": ...}, ...]
     Маппинг:
-      Артикул    -> id
+      Артикул      -> id
       Номенклатура -> name
-      Штрихкод   -> barcode
+      Штрихкод     -> barcode
     """
     wb = load_workbook(io.BytesIO(data), data_only=True)
     sheet = wb.active
 
-    # Считаем, что первая строка — заголовки
+    # Первая строка — заголовки
     header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
-    headers = {str(value).strip(): idx for idx, value in enumerate(header_row) if value is not None}
+    headers = {
+        str(value).strip(): idx
+        for idx, value in enumerate(header_row)
+        if value is not None
+    }
 
     required_cols = ["Артикул", "Номенклатура", "Штрихкод"]
     for col in required_cols:
@@ -234,25 +256,26 @@ def _parse_catalog_excel_bytes(data: bytes) -> List[Dict[str, str]]:
             }
         )
 
-    logger.info("Каталог (Excel D3): собрано позиций: %d", len(items))
+    logger.info("Каталог (Excel D5): собрано позиций: %d", len(items))
     return items
 
 
-# === ОСНОВНЫЕ ФУНКЦИИ ===
+# === ОСНОВНЫЕ ФУНКЦИИ D5 ===
 
 
 async def parse_feed_catalog_to_json(
     *,
-    code: str = "D3",  # для единообразия интерфейса, тут не используется для получения данных
+    code: str = "D5",
     timeout: int = 30,  # не используется, но оставлен для совместимости
 ) -> str:
     """
-    Каталог для D3:
-    берём ОДИН Excel файл из папки на Google Drive (ID папки — D3_CATALOG_FOLDER_ID),
-    читаем столбцы:
-      Артикул -> id
+    Каталог для D5:
+    берём ОДИН Excel файл из папки на Google Drive.
+    ID папки берётся из dropship_enterprises.gdrive_folder по code.
+    Читаем столбцы:
+      Артикул      -> id
       Номенклатура -> name
-      Штрихкод -> barcode
+      Штрихкод     -> barcode
     Возвращаем JSON со списком:
     [
       {"id": "<Артикул>", "name": "<Номенклатура>", "barcode": "<Штрихкод>"},
@@ -261,16 +284,16 @@ async def parse_feed_catalog_to_json(
     """
     try:
         drive_service = await _connect_to_google_drive()
-        folder_id = _get_d3_folder_id()
+        folder_id = await _get_gdrive_folder_id_by_code(code)
         file_meta = await _fetch_single_file_metadata(drive_service, folder_id)
         file_id = file_meta["id"]
         file_name = file_meta.get("name")
-        logger.info("Найден файл каталога для D3: %s (%s)", file_name, file_id)
+        logger.info("Найден файл каталога для %s: %s (%s)", code, file_name, file_id)
 
         file_bytes = await _download_file_bytes(drive_service, file_id)
         items = _parse_catalog_excel_bytes(file_bytes)
     except Exception as e:
-        msg = f"Ошибка обработки каталога D3 из Google Drive: {e}"
+        msg = f"Ошибка обработки каталога {code} из Google Drive: {e}"
         logger.exception(msg)
         send_notification(msg, "Разработчик")
         return "[]"
@@ -280,21 +303,32 @@ async def parse_feed_catalog_to_json(
 
 async def parse_feed_stock_to_json(
     *,
-    code: str = "D3",
+    code: str = "D5",
     timeout: int = 30,
 ) -> str:
     """
-    Сток для D3: возвращает JSON со списком
+    Сток для D5: возвращает JSON со списком
     [
       {"code_sup": "<vendorCode>", "qty": <0|1>, "price_retail": <float>, "price_opt": 0},
       ...
     ]
 
     Маппинг:
-      - vendorCode     -> code_sup
-      - in_stock="true" -> qty=1, иначе 0
-      - priceRRP       -> price_retail (если нет, используем price)
-      - price_opt      -> 0
+      - vendorCode          -> code_sup
+      - available="true"    -> qty=1, иначе 0
+      - price               -> price_retail
+      - price_opt           -> 0
+
+    Пример входного XML:
+      <offer id="39" group_id="4712433" available="true">
+        <url>...</url>
+        <oldprice>1995</oldprice>
+        <price>1795</price>
+        ...
+        <vendorCode>OPN-02956</vendorCode>
+        <vendor>Optimum Nutrition</vendor>
+        <name><![CDATA[ ON Gold Standard 100% Whey Protein 900 грам (EU), Банан ]]></name>
+      </offer>
     """
     root = await _load_feed_root(code=code, timeout=timeout)
     if root is None:
@@ -303,22 +337,25 @@ async def parse_feed_stock_to_json(
     rows: List[Dict[str, Any]] = []
 
     for offer in _collect_offer_nodes(root):
-        vendor_code = _get_text(offer, ["vendorCode"]) or offer.get("vendorCode")
+        # vendorCode — дочерний тег или атрибут (на всякий случай поддержим оба)
+        vendor_code = (
+            _get_text(offer, ["vendorCode"]) or offer.get("vendorCode")
+        )
         if not vendor_code:
             # Без vendorCode — пропускаем
             continue
 
-        in_stock_raw = (offer.get("in_stock") or "").strip().lower()
-        qty = 1 if in_stock_raw == "true" else 0
+        # available="true" -> qty = 1, иначе 0
+        available_raw = (offer.get("available") or "").strip().lower()
+        qty = 1 if available_raw == "true" else 0
 
         # Игнорируем позиции с нулевым или отрицательным остатком
         if qty <= 0:
             continue
 
-        price_rrp_raw = _get_text(offer, ["priceRRP"])
-        if price_rrp_raw is None:
-            price_rrp_raw = _get_text(offer, ["price"])
-        price_retail = _to_float(price_rrp_raw)
+        # price -> price_retail
+        price_raw = _get_text(offer, ["price"])
+        price_retail = _to_float(price_raw)
         price_retail_int = int(price_retail)
 
         rows.append(
@@ -330,19 +367,19 @@ async def parse_feed_stock_to_json(
             }
         )
 
-    logger.info("Сток D3: собрано позиций (code=%s): %d", code, len(rows))
+    logger.info("Сток %s: собрано позиций: %d", code, len(rows))
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
 async def parse_feed_to_json(
     *,
     mode: Literal["catalog", "stock"] = "catalog",
-    code: str = "D3",
+    code: str = "D5",
     timeout: int = 30,
 ) -> str:
     """
-    Унифицированная обёртка для D3.
-    mode = 'catalog' -> Excel с Google Drive
+    Унифицированная обёртка для D5.
+    mode = 'catalog' -> Excel с Google Drive (папка из dropship_enterprises.gdrive_folder)
     mode = 'stock'   -> XML фид по dropship_enterprises.code
     """
     if mode == "catalog":
@@ -358,10 +395,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description=(
-            "Парсер поставщика D3: режимы 'catalog' (Excel с Google Drive) "
+            "Парсер поставщика D5: режимы 'catalog' (Excel с Google Drive, "
+            "папка из dropship_enterprises.gdrive_folder) "
             "и 'stock' (остатки/цены из XML фида). "
-            "URL фида берётся из БД по dropship_enterprises.code, "
-            "ID папки для Excel — из D3_CATALOG_FOLDER_ID"
+            "URL фида берётся из БД по dropship_enterprises.code"
         )
     )
     parser.add_argument(
@@ -372,8 +409,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--code",
-        default="D3",
-        help="значение поля code в dropship_enterprises (для стока, по умолчанию D3)",
+        default="D5",
+        help="значение поля code в dropship_enterprises (по умолчанию D5)",
     )
     parser.add_argument(
         "--timeout",
@@ -383,5 +420,11 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    out = asyncio.run(parse_feed_to_json(mode=args.mode, code=args.code, timeout=args.timeout))
+    out = asyncio.run(
+        parse_feed_to_json(
+            mode=args.mode,
+            code=args.code,
+            timeout=args.timeout,
+        )
+    )
     print(out)

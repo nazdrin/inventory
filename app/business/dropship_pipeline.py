@@ -22,6 +22,7 @@ from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
 from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
+from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -80,6 +81,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D2": parse_dsn_stock_to_json,
     "D3": parse_feed_D3,
     "D4": parse_feed_D4,
+    "D5": parse_feed_D5,
 }
 
 # --------------------------------------------------------------------------------------
@@ -220,27 +222,33 @@ def compute_price_for_item(
 ) -> Decimal:
     """
     Алгоритм:
-      base = competitor*0.99 (если есть) иначе price_retail (если >0) иначе price_opt
-      если is_rrp -> не ниже price_retail
-      нижний порог:
-        - wholesale:  rr * (1 - profit + minmk)
-        - retail:     po * (1 + minmk)
-      итог = max(base, RRP, floor), округление до копейки
+      - Если включен флаг РРЦ (is_rrp=True) и задана розничная цена (price_retail),
+        то используем ЖЁСТКУЮ РРЦ: итоговая цена всегда равна price_retail (округлённой),
+        полностью игнорируя конкурентов и пороги маржи.
+      - Если флаг РРЦ не установлен, работаем по прежней логике:
+        base = competitor*0.99 (если есть) иначе price_retail (если >0) иначе price_opt
+        нижний порог:
+          - wholesale:  rr * (1 - profit + minmk)
+          - retail:     po * (1 + minmk)
+        итог = max(base, floor), округление до копейки
     """
     rr = _to_decimal(price_retail)
     po = _to_decimal(price_opt)
     profit = _as_share(profit_percent)
-    minmk  = _as_share(min_markup_threshold)
+    minmk = _as_share(min_markup_threshold)
 
+    # ЖЁСТКАЯ РРЦ: если флаг включён и есть розничная цена,
+    # то полностью игнорируем конкурентную цену и пороги маржи.
+    if is_rrp and rr > 0:
+        return _round_money(rr)
+
+    # Дальше — логика для НЕ-RRP товаров (как раньше, но без учёта флага is_rrp)
     if competitor_price is not None:
         candidate = competitor_price * Decimal("0.99")
     else:
         candidate = rr if rr > 0 else po
 
     price = candidate
-
-    if is_rrp and rr > 0:
-        price = max(price, rr)
 
     floor = Decimal("0")
     if is_wholesale:

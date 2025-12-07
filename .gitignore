@@ -38,3 +38,8 @@ input_raw/272/raw_stock.json
 input_raw/**
 .gitattributes
 competitors_min_price.py
+monsterlab_export.py
+offers_export.py
+monster_matcher.py
+catalog_mapping_export.py
+competitors_min_price.py
