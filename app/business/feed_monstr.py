@@ -69,6 +69,32 @@ async def _get_feed_url_by_code(code: str = "D5") -> Optional[str]:
         return res.scalar_one_or_none()
 
 
+async def _get_retail_markup_by_code(code: str) -> float:
+    """Возвращает retail_markup (в процентах) из dropship_enterprises по значению поля code.
+
+    Если значение не найдено или невалидно, возвращает 0.0.
+    """
+    async with get_async_db() as session:
+        res = await session.execute(
+            text(
+                "SELECT retail_markup "
+                "FROM dropship_enterprises "
+                "WHERE code = :code "
+                "LIMIT 1"
+            ),
+            {"code": code},
+        )
+        value = res.scalar_one_or_none()
+
+    if value is None:
+        return 0.0
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 async def _load_feed_root(*, code: str, timeout: int) -> Optional[ET.Element]:
     """
     Получение XML фида:
@@ -334,6 +360,18 @@ async def parse_feed_stock_to_json(
     if root is None:
         return "[]"
 
+    # Наценка для розницы из dropship_enterprises.retail_markup (в процентах)
+    try:
+        retail_markup = await _get_retail_markup_by_code(code)
+    except Exception as e:
+        msg = f"Ошибка получения retail_markup для code='{code}': {e}"
+        logger.exception(msg)
+        send_notification(msg, "Разработчик")
+        retail_markup = 0.0
+
+    # Коэффициент: 1 + retail_markup/100, например при 10% будет 1.10
+    retail_coef = 1.0 + (retail_markup / 100.0 if retail_markup else 0.0)
+
     rows: List[Dict[str, Any]] = []
 
     for offer in _collect_offer_nodes(root):
@@ -353,10 +391,13 @@ async def parse_feed_stock_to_json(
         if qty <= 0:
             continue
 
-        # price -> price_retail
         price_raw = _get_text(offer, ["price"])
         price_retail = _to_float(price_raw)
-        price_retail_int = int(price_retail)
+
+        # Применяем наценку для розницы: price_retail * (1 + retail_markup/100)
+        # retail_markup хранится в БД как число в процентах (например, 10 -> 10%).
+        adjusted_price = price_retail * retail_coef if price_retail > 0 else 0.0
+        price_retail_int = int(adjusted_price)
 
         rows.append(
             {
