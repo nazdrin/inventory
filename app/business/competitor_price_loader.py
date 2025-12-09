@@ -71,6 +71,30 @@ def _download_file_as_bytes(service, file_id: str) -> bytes:
 CODE_CANDIDATES = ["Код товара Tabletki.ua", "code", "Код", "Артикул", "productId"]
 PRICE_CANDIDATES = ["Цена", "price", "Price"]
 
+def _normalize_code(code_raw) -> str:
+    """
+    Нормализует код товара:
+    - убирает .0 в конце (как из float 1000161.0, так и из строки "1000161.0")
+    - возвращает пустую строку, если кода нет или он NaN.
+    """
+    if code_raw is None:
+        return ""
+    # если пришло как float из Excel
+    if isinstance(code_raw, float):
+        if pd.isna(code_raw):
+            return ""
+        # целые значения типа 1000161.0 превращаем в "1000161"
+        if code_raw.is_integer():
+            return str(int(code_raw))
+        # на всякий случай убираем хвост ".0" или лишние нули
+        return str(code_raw).rstrip("0").rstrip(".")
+
+    s = str(code_raw).strip()
+    # если код пришёл строкой вида "1000161.0" — обрезаем ".0"
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
 def _pick_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     cols = {c.lower(): c for c in df.columns}
     for cand in candidates:
@@ -132,7 +156,10 @@ def _parse_table(b: bytes, filename: str) -> List[Tuple[str, str, Decimal]]:
         if code_raw is None or (isinstance(code_raw, float) and pd.isna(code_raw)):
             continue
 
-        code = str(code_raw).strip()
+        code = _normalize_code(code_raw)
+        if not code:
+            continue
+
         price = _as_decimal(price_raw)
         if not price:
             continue
@@ -140,7 +167,7 @@ def _parse_table(b: bytes, filename: str) -> List[Tuple[str, str, Decimal]]:
         out.append((code, city, price))
     seen = set()
     for _, row in df.iterrows():
-        code = str(row.get(code_col)).strip() if row.get(code_col) is not None else ""
+        code = _normalize_code(row.get(code_col))
         price = _as_decimal(row.get(price_col))
         if not code or price is None:
             continue
