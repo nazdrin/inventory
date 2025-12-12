@@ -93,42 +93,42 @@ async def _load_feed_root(*, code: str, timeout: int) -> Optional[ET.Element]:
 
 # ===== Вспомогательные функции для D5 =====
 
-def _d5_collect_items(root: ET.Element) -> List[ET.Element]:
+def _d6_collect_items(root: ET.Element) -> List[ET.Element]:
     """Товары в узлах <item> внутри <items>."""
     return root.findall(".//item")
 
 
-def _d5_extract_art(item: ET.Element) -> Optional[str]:
+def _d6_extract_art(item: ET.Element) -> Optional[str]:
     """id/code_sup для D5: <art>."""
     art = _get_text(item, ["art"])
     return art.strip() if art else None
 
 
-def _d5_extract_full_name(item: ET.Element) -> Optional[str]:
+def _d6_extract_full_name(item: ET.Element) -> Optional[str]:
     """Название для D5: <full_name>."""
     name = _get_text(item, ["full_name"])
     return " ".join(name.split()) if name else None
 
 
-def _d5_extract_qty(item: ET.Element) -> int:
+def _d6_extract_qty(item: ET.Element) -> int:
     """Количество: <pcs>."""
     pcs_raw = _get_text(item, ["pcs"])
     return _to_int(pcs_raw)
 
 
-def _d5_extract_price_retail(item: ET.Element) -> float:
+def _d6_extract_price_retail(item: ET.Element) -> float:
     """Розничная цена: <price_Roz>."""
     price_raw = _get_text(item, ["price_Roz", "price_roz"])
     return _to_float(price_raw)
 
 
-def _d5_extract_price_opt(item: ET.Element) -> float:
+def _d6_extract_price_opt(item: ET.Element) -> float:
     """Оптовая цена: <price_Opt> (учитываем возможную опечатку <price_0pt>)."""
     price_raw = _get_text(item, ["price_Opt", "price_0pt", "price_opt"])
     return _to_float(price_raw)
 
 
-async def _d5_pick_barcode_for_item(session, item: ET.Element) -> str:
+async def _d6_pick_barcode_for_item(session, item: ET.Element) -> str:
     """Выбор штрихкода по правилам Barcode/Barcodes."""
     barcodes: List[str] = []
 
@@ -165,7 +165,7 @@ async def _d5_pick_barcode_for_item(session, item: ET.Element) -> str:
 
 # ===== Парсер каталога D5 =====
 
-async def parse_d5_catalog_to_json(*, code: str = "D5", timeout: int = 30) -> str:
+async def parse_d6_catalog_to_json(*, code: str = "D6", timeout: int = 30) -> str:
     """Каталог (D5) → JSON."""
     root = await _load_feed_root(code=code, timeout=timeout)
     if root is None:
@@ -174,14 +174,14 @@ async def parse_d5_catalog_to_json(*, code: str = "D5", timeout: int = 30) -> st
     items_json: List[Dict[str, str]] = []
 
     async with get_async_db() as session:
-        for item in _d5_collect_items(root):
-            art = _d5_extract_art(item)
-            name = _d5_extract_full_name(item)
+        for item in _d6_collect_items(root):
+            art = _d6_extract_art(item)
+            name = _d6_extract_full_name(item)
 
             if not (art and name):
                 continue
 
-            barcode = await _d5_pick_barcode_for_item(session, item)
+            barcode = await _d6_pick_barcode_for_item(session, item)
 
             items_json.append({
                 "id": art,
@@ -189,13 +189,13 @@ async def parse_d5_catalog_to_json(*, code: str = "D5", timeout: int = 30) -> st
                 "barcode": barcode,
             })
 
-    logger.info("D5 каталог: собрано позиций (code=%s): %d", code, len(items_json))
+    logger.info("D6 каталог: собрано позиций (code=%s): %d", code, len(items_json))
     return json.dumps(items_json, ensure_ascii=False, indent=2)
 
 
-# ===== Парсер стока D5 =====
+# ===== Парсер стока D6 =====
 
-async def parse_d5_stock_to_json(*, code: str = "D5", timeout: int = 30) -> str:
+async def parse_d6_stock_to_json(*, code: str = "D6", timeout: int = 30) -> str:
     """Сток (D5) → JSON."""
     root = await _load_feed_root(code=code, timeout=timeout)
     if root is None:
@@ -203,19 +203,19 @@ async def parse_d5_stock_to_json(*, code: str = "D5", timeout: int = 30) -> str:
 
     rows: List[Dict[str, object]] = []
 
-    for item in _d5_collect_items(root):
-        art = _d5_extract_art(item)
+    for item in _d6_collect_items(root):
+        art = _d6_extract_art(item)
         if not art:
             continue
 
-        qty = _d5_extract_qty(item)
+        qty = _d6_extract_qty(item)
 
         # Игнорируем позиции с нулевым или отрицательным остатком
         if qty <= 0:
             continue
 
-        price_retail = _d5_extract_price_retail(item)
-        price_opt = _d5_extract_price_opt(item)
+        price_retail = _d6_extract_price_retail(item)
+        price_opt = _d6_extract_price_opt(item)
 
         rows.append({
             "code_sup": art,
@@ -224,23 +224,23 @@ async def parse_d5_stock_to_json(*, code: str = "D5", timeout: int = 30) -> str:
             "price_opt": price_opt,
         })
 
-    logger.info("D5 сток: собрано позиций (code=%s): %d", code, len(rows))
+    logger.info("D6 сток: собрано позиций (code=%s): %d", code, len(rows))
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
 # ===== Унифицированная обёртка =====
 
-async def parse_d5_feed_to_json(
+async def parse_d6_feed_to_json(
     *,
     mode: Literal["catalog", "stock"] = "catalog",
-    code: str = "D5",
+    code: str = "D6",
     timeout: int = 30,
 ) -> str:
-    """Унифицированная обёртка для поставщика D5."""
+    """Унифицированная обёртка для поставщика D6."""
     if mode == "catalog":
-        return await parse_d5_catalog_to_json(code=code, timeout=timeout)
+        return await parse_d6_catalog_to_json(code=code, timeout=timeout)
     elif mode == "stock":
-        return await parse_d5_stock_to_json(code=code, timeout=timeout)
+        return await parse_d6_stock_to_json(code=code, timeout=timeout)
     else:
         raise ValueError("mode must be 'catalog' or 'stock'")
 
@@ -254,10 +254,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--mode", choices=["catalog", "stock"], default="catalog",
                         help="Режим: catalog | stock (по умолчанию catalog)")
-    parser.add_argument("--code", default="D5",
-                        help="значение поля code в dropship_enterprises (по умолчанию D5)")
+    parser.add_argument("--code", default="D6",
+                        help="значение поля code в dropship_enterprises (по умолчанию D6)")
     parser.add_argument("--timeout", type=int, default=30, help="таймаут HTTP-запроса, сек.")
 
     args = parser.parse_args()
-    out = asyncio.run(parse_d5_feed_to_json(mode=args.mode, code=args.code, timeout=args.timeout))
+    out = asyncio.run(parse_d6_feed_to_json(mode=args.mode, code=args.code, timeout=args.timeout))
     print(out)
