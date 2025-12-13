@@ -1,9 +1,10 @@
-# feed_sportatlet.py (D5)
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Literal
 
 import httpx
@@ -49,6 +50,48 @@ def _to_float(val: Optional[str]) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _parse_delivery_date(val: Optional[str]) -> Optional[date]:
+    """Парсит дату вида 'DD.MM.YYYY' в date. Если не удалось — None."""
+    if not val:
+        return None
+    s = str(val).strip()
+    try:
+        return datetime.strptime(s, "%d.%m.%Y").date()
+    except Exception:
+        return None
+
+
+def _next_business_day_cutoff(today: date) -> date:
+    """Возвращает максимально допустимую дату отправки относительно today (Киев).
+
+    - Пн–Чт: today + 1 день
+    - Пт: следующий понедельник (today + 3)
+    - Сб: следующий понедельник (today + 2)
+    - Вс: следующий понедельник (today + 1)
+    """
+    wd = today.weekday()  # Mon=0 ... Sun=6
+    if wd <= 3:  # Mon-Thu
+        return today + timedelta(days=1)
+    if wd == 4:  # Fri
+        return today + timedelta(days=3)
+    if wd == 5:  # Sat
+        return today + timedelta(days=2)
+    # Sun
+    return today + timedelta(days=1)
+
+
+def _is_allowed_delivery_date(delivery_dt: date, today: date) -> bool:
+    """Правило:
+    Дата отправки должна попадать в диапазон [today .. cutoff], где cutoff = next_business_day_cutoff(today).
+
+    Пример:
+    - Если сегодня Пт, то допускаются Пт, Сб, Вс, Пн (но не Вт)
+    - Если сегодня Сб, то допускаются Сб, Вс, Пн (но не Вт)
+    """
+    cutoff = _next_business_day_cutoff(today)
+    return today <= delivery_dt <= cutoff
 
 
 async def _get_feed_url_by_code(code: str) -> Optional[str]:
@@ -204,6 +247,19 @@ async def parse_d6_stock_to_json(*, code: str = "D6", timeout: int = 30) -> str:
     rows: List[Dict[str, object]] = []
 
     for item in _d6_collect_items(root):
+        # Фильтр по дате отправки (берём только ближайшие допустимые будни)
+        kyiv_today = datetime.now(ZoneInfo("Europe/Kyiv")).date()
+        delivery_raw = _get_text(item, ["delivery_date"])
+        delivery_dt = _parse_delivery_date(delivery_raw)
+
+        # Если даты нет или она некорректна — не грузим в сток
+        if delivery_dt is None:
+            continue
+
+        # Дата отправки должна быть в допустимом окне: сегодня..cutoff (Пт включает Сб/Вс/Пн)
+        if not _is_allowed_delivery_date(delivery_dt, kyiv_today):
+            continue
+
         art = _d6_extract_art(item)
         if not art:
             continue
