@@ -781,7 +781,8 @@ async def _build_products_block(
     rows: List[OrderRow],
     supplier_code: Optional[str],
     supplier_name: str,
-    supplier_changed_note: Optional[str] = None
+    supplier_changed_note: Optional[str] = None,
+    row_supplier_map: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     products = []
     for r in rows:
@@ -792,17 +793,31 @@ async def _build_products_block(
         supplier_item_code: Optional[str] = None
         supplier_item_name: Optional[str] = None
 
-        if supplier_code:
-            sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, supplier_code)
-            # Fetch barcode, supplier item code, and supplier item name
-            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(
-                session, r.goodsCode, supplier_code
-            )
+        # ВАЖНО: если в заказе несколько поставщиков, supplier_code на уровне заказа будет None.
+        # Тогда берём поставщика для конкретной строки из row_supplier_map.
+        effective_supplier_code: Optional[str] = supplier_code
+        if not effective_supplier_code and row_supplier_map:
+            effective_supplier_code = row_supplier_map.get(str(r.goodsCode))
 
-        # Build description string: supplier name, barcode, supplier code (if present), comma-separated
+        effective_supplier_name: Optional[str] = None
+        if effective_supplier_code:
+            # SKU/Barcode/Code/Name тянем по поставщику конкретной строки
+            sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, effective_supplier_code)
+            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(
+                session, r.goodsCode, effective_supplier_code
+            )
+            # Имя поставщика тоже подтягиваем (для отображения в description)
+            effective_supplier_name = (await _fetch_supplier_name(session, effective_supplier_code)) or effective_supplier_code
+
         parts: list[str] = []
+        # Сохраняем supplier_item_name первым (как и раньше), если он есть
         if supplier_item_name:
             parts.append(str(supplier_item_name))
+        # Для кейса multi-supplier добавляем имя и код поставщика в description
+        if effective_supplier_name:
+            parts.append(str(effective_supplier_name))
+        if effective_supplier_code:
+            parts.append(str(effective_supplier_code))
         if barcode:
             parts.append(str(barcode))
         if supplier_item_code:
@@ -861,8 +876,16 @@ async def build_salesdrive_payload(
         extra_note = "Ціна постачальника нижча за ціну в замовленні: застосовано нижчу ціну."
         supplier_changed_note = (supplier_changed_note + " | " + extra_note) if supplier_changed_note else extra_note
 
+    # Для multi-supplier кейса процессор может положить в order карту поставщиков по строкам
+    row_supplier_map = order.get("_row_supplier_map") if isinstance(order.get("_row_supplier_map"), dict) else None
+
     products = await _build_products_block(
-        session, rows, supplier_code, supplier_name, supplier_changed_note
+        session,
+        rows,
+        supplier_code,
+        supplier_name,
+        supplier_changed_note,
+        row_supplier_map=row_supplier_map,
     )
 
     #form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
@@ -1029,6 +1052,10 @@ async def process_and_send_order(
                 rows_with_supplier.append((r, sc, sp))
             else:
                 rows_without_supplier.append(r)
+
+        # Карта: goodsCode -> supplier_code (по строкам). Используется для формирования description
+        # даже когда весь заказ является "мікс" (supplier_code=None на уровне заказа).
+        order["_row_supplier_map"] = {str(r.goodsCode): str(sc) for (r, sc, _sp) in rows_with_supplier}
 
         comment_override: Optional[str] = None
 
