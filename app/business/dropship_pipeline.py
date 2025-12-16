@@ -268,6 +268,7 @@ def compute_price_for_item(
 # --------------------------------------------------------------------------------------
 # 4) UPSERT в offers
 # --------------------------------------------------------------------------------------
+from typing import Optional
 async def upsert_offer(
     session: AsyncSession,
     *,
@@ -275,6 +276,7 @@ async def upsert_offer(
     supplier_code: str,
     city: str,
     price: Decimal,
+    wholesale_price: Optional[Decimal] = None,
     stock: int,
 ) -> None:
     """
@@ -285,11 +287,13 @@ async def upsert_offer(
         supplier_code=supplier_code,
         city=city,
         price=price,
+        wholesale_price=wholesale_price,
         stock=stock,
     ).on_conflict_do_update(
         constraint="uq_offers_product_supplier_city",
         set_={
             "price": price,
+            "wholesale_price": wholesale_price,
             "stock": stock,
         }
     )
@@ -435,12 +439,20 @@ async def process_supplier(
                 min_markup_threshold=min_markup_threshold,
             )
 
+            # Сохраняем price_opt в offers.wholesale_price (если пришло)
+            wholesale_price = None
+            if po is not None:
+                wp = _to_decimal(po)
+                if wp > 0:
+                    wholesale_price = _round_money(wp)
+
             await upsert_offer(
                 session,
                 product_code=product_code,
                 supplier_code=code,
                 city=city,
                 price=price,
+                wholesale_price=wholesale_price,
                 stock=qty,
             )
 
