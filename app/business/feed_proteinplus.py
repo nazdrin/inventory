@@ -286,7 +286,7 @@ async def parse_feed_stock_to_json(
     """
     Сток для D3: возвращает JSON со списком
     [
-      {"code_sup": "<vendorCode>", "qty": <0|1>, "price_retail": <float>, "price_opt": 0},
+      {"code_sup": "<vendorCode>", "qty": <0|1>, "price_retail": <float>, "price_opt": <float>},
       ...
     ]
 
@@ -294,7 +294,7 @@ async def parse_feed_stock_to_json(
       - vendorCode     -> code_sup
       - in_stock="true" -> qty=1, иначе 0
       - priceRRP       -> price_retail (если нет, используем price)
-      - price_opt      -> 0
+      - vendorPrice    -> price_opt (если нет — 0)
     """
     root = await _load_feed_root(code=code, timeout=timeout)
     if root is None:
@@ -321,12 +321,15 @@ async def parse_feed_stock_to_json(
         price_retail = _to_float(price_rrp_raw)
         price_retail_int = int(price_retail)
 
+        vendor_price_raw = _get_text(offer, ["vendorPrice"]) or offer.get("vendorPrice")
+        price_opt = round(_to_float(vendor_price_raw), 2)
+
         rows.append(
             {
                 "code_sup": str(vendor_code).strip(),
                 "qty": qty,
                 "price_retail": price_retail_int,
-                "price_opt": 0,
+                "price_opt": price_opt,
             }
         )
 

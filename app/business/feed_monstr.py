@@ -95,6 +95,45 @@ async def _get_retail_markup_by_code(code: str) -> float:
         return 0.0
 
 
+async def _get_profit_percent_by_code(code: str) -> float:
+    """Возвращает profit_percent из dropship_enterprises по code.
+
+    В БД значение хранится как проценты (например, 10), возвращаем долю (0.1).
+    Если не найдено или невалидно — 0.0.
+    """
+    async with get_async_db() as session:
+        res = await session.execute(
+            text(
+                "SELECT profit_percent "
+                "FROM dropship_enterprises "
+                "WHERE code = :code "
+                "LIMIT 1"
+            ),
+            {"code": code},
+        )
+        value = res.scalar_one_or_none()
+
+    if value is None:
+        return 0.0
+
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+    # 10 -> 0.1
+    if val > 1:
+        val = val / 100.0
+
+    # нормализация
+    if val < 0:
+        val = 0.0
+    if val > 1:
+        val = 1.0
+
+    return val
+
+
 async def _load_feed_root(*, code: str, timeout: int) -> Optional[ET.Element]:
     """
     Получение XML фида:
@@ -342,8 +381,9 @@ async def parse_feed_stock_to_json(
     Маппинг:
       - vendorCode          -> code_sup
       - available="true"    -> qty=1, иначе 0
-      - price               -> price_retail
-      - price_opt           -> 0
+      - price               -> base_price
+      - price_opt           -> base_price * (1 - profit_percent)
+      - price_retail        -> price_opt * (1 + retail_markup/100)
 
     Пример входного XML:
       <offer id="39" group_id="4712433" available="true">
@@ -369,6 +409,15 @@ async def parse_feed_stock_to_json(
         send_notification(msg, "Разработчик")
         retail_markup = 0.0
 
+    # Профит (процент) из dropship_enterprises.profit_percent (например 10 -> 0.1)
+    try:
+        profit = await _get_profit_percent_by_code(code)
+    except Exception as e:
+        msg = f"Ошибка получения profit_percent для code='{code}': {e}"
+        logger.exception(msg)
+        send_notification(msg, "Разработчик")
+        profit = 0.0
+
     # Коэффициент: 1 + retail_markup/100, например при 10% будет 1.10
     retail_coef = 1.0 + (retail_markup / 100.0 if retail_markup else 0.0)
 
@@ -392,11 +441,19 @@ async def parse_feed_stock_to_json(
             continue
 
         price_raw = _get_text(offer, ["price"])
-        price_retail = _to_float(price_raw)
+        base_price = _to_float(price_raw)
 
-        # Применяем наценку для розницы: price_retail * (1 + retail_markup/100)
-        # retail_markup хранится в БД как число в процентах (например, 10 -> 10%).
-        adjusted_price = price_retail * retail_coef if price_retail > 0 else 0.0
+        # Оптовая цена: price_opt = base_price * (1 - profit)
+        # profit хранится в БД как проценты (например 10), выше преобразовано в долю (0.1)
+        price_opt = base_price / (1.0 + profit) if base_price > 0 else 0.0
+        if price_opt < 0:
+            price_opt = 0.0
+
+        # Розница: adjusted_price = price_opt * (1 + retail_markup/100)
+        adjusted_price = price_opt * retail_coef if price_opt > 0 else 0.0
+
+        # В текущем формате стока используем целые грн
+        price_opt_int = int(price_opt)
         price_retail_int = int(adjusted_price)
 
         rows.append(
@@ -404,7 +461,7 @@ async def parse_feed_stock_to_json(
                 "code_sup": str(vendor_code).strip(),
                 "qty": qty,
                 "price_retail": price_retail_int,
-                "price_opt": 0,
+                "price_opt": price_opt_int,
             }
         )
 
