@@ -242,7 +242,7 @@ async def parse_dsn_stock_to_json(*, code: str = "D2", timeout: int = 30) -> str
 
         price_retail = _dsn_extract_price_retail(offer)
 
-        price_opt = price_retail * (1.0 - retail_markup)
+        price_opt = price_retail / (1.0 + retail_markup)
         if price_opt < 0:
             price_opt = 0.0
 

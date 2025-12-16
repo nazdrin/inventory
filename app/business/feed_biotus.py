@@ -270,7 +270,7 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
 
         price_retail = _to_float(price_raw)
 
-        price_opt = price_retail * (1.0 - retail_markup)
+        price_opt = price_retail /(1.0 + retail_markup)
         # На всякий случай не уходим в минус
         if price_opt < 0:
             price_opt = 0.0

@@ -445,7 +445,7 @@ async def parse_feed_stock_to_json(
 
         # Оптовая цена: price_opt = base_price * (1 - profit)
         # profit хранится в БД как проценты (например 10), выше преобразовано в долю (0.1)
-        price_opt = base_price * (1.0 - profit) if base_price > 0 else 0.0
+        price_opt = base_price / (1.0 + profit) if base_price > 0 else 0.0
         if price_opt < 0:
             price_opt = 0.0
 
