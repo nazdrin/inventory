@@ -252,24 +252,23 @@ async def parse_d4_stock_to_json(
       {
         "code_sup": "<Артикул>",
         "qty": <int>,
-        "price_retail": <float>,
-        "price_opt": 0
+        "price_opt": Ціна зі знижкою (оптова ціна з фіду, грн),
+        "price_retail": price_opt * (1 + retail_markup)
       }
     ]
 
-    price_retail = Ціна зі знижкою (USD) * gdrive_folder (курс) * (1 + retail_markup)
-    price_opt = 0
+    price_opt = Ціна зі знижкою (оптова ціна з фіду, грн)
+    price_retail = price_opt * (1 + retail_markup)
     """
     rows = await _load_sheet_rows(code=code, timeout=timeout)
     if rows is None:
         return "[]"
 
-    # курс и наценку берём из БД
-    _, rate, markup = await _get_feed_settings_by_code(code)
-    if rate is None or markup is None:
+    # наценку берём из БД (курс для D4 больше не используется)
+    _, _, markup = await _get_feed_settings_by_code(code)
+    if markup is None:
         msg = (
-            f"Для code='{code}' не заданы корректные gdrive_folder (курс) "
-            f"и/или retail_markup в dropship_enterprises"
+            f"Для code='{code}' не задан корректный retail_markup в dropship_enterprises"
         )
         logger.error(msg)
         send_notification(msg, "Розробник")
@@ -285,18 +284,22 @@ async def parse_d4_stock_to_json(
             continue
 
         qty = _parse_qty(row.get(COL_QTY))
-        usd_price = _to_float(row.get(COL_PRICE_USD))
+        wholesale_raw = _to_float(row.get(COL_PRICE_USD))
 
-        # price_retail_raw = usd_price * rate * (1.0 + markup)  # теперь цена в файле уже в гривне, поэтому курс rate не используется
-        price_retail_raw = usd_price * (1.0 + markup)
-        # Округляем до целых гривен вниз
-        price_retail = math.floor(price_retail_raw)
+        # COL_PRICE_USD ("Ціна зі знижкою") — це оптова ціна з фіду (грн)
+        price_opt = round(wholesale_raw, 2)
+        if price_opt < 0:
+            price_opt = 0.0
+
+        # Роздріб рахуємо від опту + націнка
+        price_retail_raw = price_opt * (1.0 + markup)
+        price_retail = round(price_retail_raw, 2)
 
         rows_out.append({
             "code_sup": sku,
             "qty": qty,
             "price_retail": price_retail,
-            "price_opt": 0,
+            "price_opt": price_opt,
         })
 
     logger.info("D4 сток: собрано позиций (code=%s): %d", code, len(rows_out))
