@@ -212,58 +212,184 @@ async def fetch_competitor_price(session: AsyncSession, product_code: str, city:
     row = res.first()
     return _to_decimal(row[0]) if row else None
 
+
+# --- Новый хелпер: получение правил ценообразования предприятия ---
+async def fetch_enterprise_pricing_rules(session: AsyncSession, enterprise_code: str) -> tuple[Decimal, List[Decimal]]:
+    """
+    Читает из enterprise_settings по enterprise_code:
+      - store_serial (эталон/порог сравнения для порога, целое число процентов)
+      - google_drive_folder_id_rest (ценовые диапазоны, строка вида "400,1000,1500")
+
+    Возвращает:
+      (cap_percent, ranges_list)
+    где cap_percent — Decimal (проценты, например 20), ranges_list — [Decimal("400"), Decimal("1000"), ...]
+
+    ВАЖНО: enterprise_code — это код предприятия из аргумента run_pipeline (-e), а не код поставщика.
+    """
+    sql = text("""
+        SELECT store_serial, google_drive_folder_id_rest
+        FROM enterprise_settings
+        WHERE enterprise_code = :enterprise_code
+        LIMIT 1
+    """)
+    res = await session.execute(sql, {"enterprise_code": enterprise_code})
+    row = res.first()
+    if not row:
+        return Decimal("0"), []
+
+    store_serial = row[0]
+    ranges_raw = row[1]
+
+    # cap percent
+    try:
+        cap_percent = Decimal(str(store_serial)) if store_serial is not None else Decimal("0")
+    except Exception:
+        cap_percent = Decimal("0")
+
+    # parse ranges
+    ranges: List[Decimal] = []
+    if isinstance(ranges_raw, str) and ranges_raw.strip():
+        for part in ranges_raw.split(","):
+            p = part.strip()
+            if not p:
+                continue
+            try:
+                ranges.append(Decimal(p))
+            except Exception:
+                continue
+
+    # keep as-is order, but drop non-positive
+    ranges = [r for r in ranges if r > 0]
+    return cap_percent, ranges
+
+
+def clamp_threshold_percent(supplier_threshold_percent: Optional[float | Decimal], cap_percent: Decimal) -> Decimal:
+    """
+    Новая логика выбора порога (в процентах):
+      - если порог поставщика >= store_serial предприятия → берём порог поставщика
+      - иначе → берём store_serial предприятия
+
+    То есть по сути берём max(supplier_threshold_percent, store_serial).
+
+    Все значения считаем как проценты (целые), возвращаем проценты.
+    """
+    st = _to_decimal(supplier_threshold_percent)
+    if cap_percent and cap_percent > 0:
+        return st if st >= cap_percent else cap_percent
+    return st
+
+
+# --- Новая логика расчёта цены ---
 def compute_price_for_item(
     *,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
-    is_wholesale: bool,
     price_retail: Optional[float | Decimal],
     price_opt: Optional[float | Decimal],
-    profit_percent: Optional[float | Decimal],
-    min_markup_threshold: Optional[float | Decimal],
+    threshold_percent_effective: Optional[float | Decimal],
+    price_ranges: List[Decimal],
+    discount_min: Decimal = Decimal("0.001"),   # 0.1%
+    discount_max: Decimal = Decimal("0.01"),    # 1%
 ) -> Decimal:
     """
+    Новая логика (для НЕ-RRP):
+
+    Вход:
+      - rr: розничная цена
+      - po: оптовая цена
+      - competitor_price
+      - threshold_percent_effective: порог (в процентах или доле), уже с учётом cap (store_serial)
+      - price_ranges: ценовые диапазоны (например [400, 1000, 1500]) из enterprise_settings
+
     Алгоритм:
-      - Если включен флаг РРЦ (is_rrp=True) и задана розничная цена (price_retail),
-        то используем ЖЁСТКУЮ РРЦ: итоговая цена всегда равна price_retail (округлённой),
-        полностью игнорируя конкурентов и пороги маржи.
-      - Если флаг РРЦ не установлен, работаем по прежней логике:
-        base = competitor*0.99 (если есть) иначе price_retail (если >0) иначе price_opt
-        нижний порог:
-          - wholesale:  rr * (1 - profit + minmk)
-          - retail:     po * (1 + minmk)
-        итог = max(base, floor), округление до копейки
+      1) Если is_rrp=True и rr>0 → ЖЁСТКАЯ РРЦ: rr (округление до копейки)
+      2) Пороговая цена: po * (1 + threshold)
+      3) Цена под конкурента:
+           target = competitor_price * (1 - random_discount)
+           но разница с конкурентом должна быть минимум 2 грн и максимум 15 грн.
+      4) Итог:
+         - Цена под конкурента НЕ может быть выше rr.
+         - Если (есть конкурент) и (цена под конкурента >= пороговой) → берём цену под конкурента.
+         - Если цена под конкурента < пороговой →
+              если rr < first_range → rr
+              иначе → пороговая
+         - Если конкурента нет →
+              если rr < first_range → rr
+              иначе → пороговая
+
+    Примечание: если rr отсутствует/0, то в местах где rr требуется, берём пороговую.
     """
     rr = _to_decimal(price_retail)
     po = _to_decimal(price_opt)
-    profit = _as_share(profit_percent)
-    minmk = _as_share(min_markup_threshold)
 
-    # ЖЁСТКАЯ РРЦ: если флаг включён и есть розничная цена,
-    # то полностью игнорируем конкурентную цену и пороги маржи.
+    # 1) ЖЁСТКАЯ РРЦ
     if is_rrp and rr > 0:
         return _round_money(rr)
 
-    # Дальше — логика для НЕ-RRP товаров (как раньше, но без учёта флага is_rrp)
-    if competitor_price is not None:
-        candidate = competitor_price * Decimal("0.99")
-    else:
-        candidate = rr if rr > 0 else po
+    # 2) Эффективный порог
+    thr = _as_share(threshold_percent_effective)
+    threshold_price = Decimal("0")
+    if po > 0 and thr >= 0:
+        threshold_price = po * (Decimal("1") + thr)
 
-    price = candidate
+    # 3) Первый ценовой диапазон
+    first_range = price_ranges[0] if price_ranges else Decimal("0")
 
-    floor = Decimal("0")
-    if is_wholesale:
+    # 4) Цена под конкурента (если есть конкурент)
+    under_competitor: Optional[Decimal] = None
+    if competitor_price is not None and competitor_price > 0:
+        # random discount in [discount_min, discount_max]
+        disc = Decimal(str(__import__("random").uniform(float(discount_min), float(discount_max))))
+        candidate = competitor_price * (Decimal("1") - disc)
+
+        # clamp delta between 2 and 15 UAH
+        delta = competitor_price - candidate
+        if delta < Decimal("2"):
+            candidate = competitor_price - Decimal("2")
+        elif delta > Decimal("15"):
+            candidate = competitor_price - Decimal("15")
+
+        # safety: never above competitor
+        if candidate > competitor_price:
+            candidate = competitor_price
+
+        under_competitor = candidate
+
+    # 5) Ограничение: цена под конкурента не может быть выше rr
+    if under_competitor is not None and rr > 0:
+        under_competitor = min(under_competitor, rr)
+
+    # 6) Выбор итоговой цены
+    # Если нет rr и нет threshold_price — fallback в 0
+    def _fallback() -> Decimal:
         if rr > 0:
-            floor = rr * (Decimal("1") - profit + minmk)
-    else:
-        if po > 0:
-            floor = po * (Decimal("1") + minmk)
+            return rr
+        if threshold_price > 0:
+            return threshold_price
+        if under_competitor is not None and under_competitor > 0:
+            return under_competitor
+        return Decimal("0")
 
-    if floor > 0:
-        price = max(price, floor)
+    # Если конкурента нет — идём по диапазонам
+    if under_competitor is None:
+        if rr > 0 and first_range > 0 and rr < first_range:
+            return _round_money(rr)
+        if threshold_price > 0:
+            return _round_money(threshold_price)
+        return _round_money(_fallback())
 
-    return _round_money(price)
+    # Конкурент есть
+    if threshold_price > 0 and under_competitor >= threshold_price:
+        return _round_money(under_competitor)
+
+    # under_competitor < threshold_price
+    if rr > 0 and first_range > 0 and rr < first_range:
+        return _round_money(rr)
+
+    if threshold_price > 0:
+        return _round_money(threshold_price)
+
+    return _round_money(_fallback())
 
 # --------------------------------------------------------------------------------------
 # 4) UPSERT в offers
@@ -392,9 +518,20 @@ async def process_supplier(
 
     # 5.3 параметры ценообразования
     is_rrp = bool(ent.is_rrp)
-    is_wholesale = bool(ent.is_wholesale)
-    profit_percent = ent.profit_percent or 0
     min_markup_threshold = ent.min_markup_threshold or 0
+
+    # Правила предприятия (cap порога + ценовые диапазоны) берём по enterprise_code (аргумент пайплайна)
+    # Если enterprise_code не задан — cap=0 и диапазоны=[] (поведение: используем порог поставщика без cap, диапазоны не применяются).
+    cap_percent = Decimal("0")
+    price_ranges: List[Decimal] = []
+    if getattr(ent, "enterprise_code", None):
+        # если вдруг у DropshipEnterprise есть enterprise_code — используем его
+        cap_percent, price_ranges = await fetch_enterprise_pricing_rules(session, str(ent.enterprise_code))
+    # enterprise_code для пайплайна приходит извне, поэтому пробрасываем его через ent._pipeline_enterprise_code (см. ниже)
+    if hasattr(ent, "_pipeline_enterprise_code") and ent._pipeline_enterprise_code:
+        cap_percent, price_ranges = await fetch_enterprise_pricing_rules(session, str(ent._pipeline_enterprise_code))
+
+    effective_threshold_percent = clamp_threshold_percent(min_markup_threshold, cap_percent)
 
     # 5.4 города поставщика
     cities = _split_cities(ent.city or "")
@@ -432,11 +569,10 @@ async def process_supplier(
             price = compute_price_for_item(
                 competitor_price=competitor,
                 is_rrp=is_rrp,
-                is_wholesale=is_wholesale,
                 price_retail=rr,
                 price_opt=po,
-                profit_percent=profit_percent,
-                min_markup_threshold=min_markup_threshold,
+                threshold_percent_effective=effective_threshold_percent,
+                price_ranges=price_ranges,
             )
 
             # Сохраняем price_opt в offers.wholesale_price (если пришло)
@@ -611,6 +747,11 @@ async def run_pipeline(
 
         # 1) Обновляем offers по всем активным поставщикам
         suppliers = await fetch_active_enterprises(session)
+        # Пробрасываем enterprise_code пайплайна в ent, чтобы process_supplier мог читать enterprise_settings по нему
+        # (enterprise_code — код предприятия, НЕ код поставщика)
+        if enterprise_code:
+            for ent in suppliers:
+                setattr(ent, "_pipeline_enterprise_code", enterprise_code)
         if not suppliers:
             logger.info("No active dropship enterprises.")
         else:
