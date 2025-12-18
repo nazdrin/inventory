@@ -28,8 +28,16 @@ from app.services.order_sender import send_orders_to_tabletki
 
 logger = logging.getLogger(__name__)
 
+
 # Глобальный допуск по цене для поиска поставщика
 PRICE_TOLERANCE = Decimal("0.10")
+
+# Допуск по маржинальности: если retail_sum / wholesale_sum < 1.05 — не выбираем единого поставщика,
+# а оставляем/делаем разбиение по позициям (как в текущей реализации).
+MIN_RETAIL_WHOLESALE_RATIO_FOR_SINGLE = Decimal("1.05")
+
+# Для умного подбора (multi-item) используем наличие (Offer.stock) и оптовую цену (Offer.wholesale_price).
+# ВНИМАНИЕ: если поле wholesale_price называется иначе в вашей БД — поправьте в запросе ниже.
 
 # Маппинг branch (серийный номер аптеки) → город
 BRANCH_CITY_MAP = {
@@ -338,6 +346,7 @@ async def _find_suppliers_within_tolerance(
     return matches
 
 
+
 async def _find_nearest_supplier_by_price(
     session: AsyncSession,
     product_code: str,
@@ -358,6 +367,177 @@ async def _find_nearest_supplier_by_price(
         candidates.append((str(sc), p_dec))
     candidates.sort(key=lambda x: (abs(x[1] - order_price), x[1]))
     return candidates[0] if candidates else None
+
+
+# --- SMART multi-item helpers ---
+
+async def _prefetch_offers_for_products(
+    session: AsyncSession,
+    product_codes: List[str],
+) -> Dict[str, Dict[str, Dict[str, Decimal]]]:
+    """ 
+    Prefetch offers for a list of product codes.
+
+    Returns mapping:
+      offers[supplier_code][product_code] = {
+          "price": Decimal,
+          "wholesale_price": Decimal,
+          "stock": Decimal,
+      }
+
+    NOTE: expects columns Offer.price, Offer.wholesale_price, Offer.stock.
+    """
+    q = (
+        select(
+            Offer.supplier_code,
+            Offer.product_code,
+            Offer.price,
+            Offer.wholesale_price,
+            Offer.stock,
+        )
+        .where(Offer.product_code.in_([str(x) for x in product_codes]))
+    )
+    res = await session.execute(q)
+    rows = res.all()
+
+    out: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
+    for sc, pc, price, wprice, stock in rows:
+        sc_s = str(sc)
+        pc_s = str(pc)
+        out.setdefault(sc_s, {})
+        out[sc_s][pc_s] = {
+            "price": _as_decimal(price),
+            "wholesale_price": _as_decimal(wprice),
+            "stock": _as_decimal(stock),
+        }
+    return out
+
+
+def _supplier_can_fulfill_all(
+    rows: List[OrderRow],
+    supplier_code: str,
+    offers_map: Dict[str, Dict[str, Dict[str, Decimal]]],
+) -> bool:
+    """True if supplier has offers for ALL rows and stock >= qty for each row."""
+    by_supplier = offers_map.get(str(supplier_code)) or {}
+    for r in rows:
+        rec = by_supplier.get(str(r.goodsCode))
+        if not rec:
+            return False
+        if rec.get("stock", Decimal(0)) < _as_decimal(r.qty):
+            return False
+    return True
+
+
+def _calc_order_retail_sum(rows: List[OrderRow]) -> Decimal:
+    return sum((_as_decimal(r.price) * _as_decimal(r.qty) for r in rows), Decimal(0))
+
+
+def _calc_supplier_wholesale_sum(
+    rows: List[OrderRow],
+    supplier_code: str,
+    offers_map: Dict[str, Dict[str, Dict[str, Decimal]]],
+) -> Decimal:
+    by_supplier = offers_map.get(str(supplier_code)) or {}
+    total = Decimal(0)
+    for r in rows:
+        rec = by_supplier.get(str(r.goodsCode))
+        if not rec:
+            return Decimal("Infinity")
+        total += _as_decimal(rec.get("wholesale_price", 0)) * _as_decimal(r.qty)
+    return total
+
+
+def _pick_best_single_supplier_by_margin(
+    rows: List[OrderRow],
+    candidates: List[str],
+    offers_map: Dict[str, Dict[str, Dict[str, Decimal]]],
+) -> Optional[Tuple[str, Decimal, Decimal, Decimal]]:
+    """ 
+    Choose a single supplier among candidates maximizing:
+      retail_sum - wholesale_sum
+
+    Returns tuple:
+      (supplier_code, delta, retail_sum, wholesale_sum)
+    """
+    retail_sum = _calc_order_retail_sum(rows)
+    best: Optional[Tuple[str, Decimal, Decimal, Decimal]] = None
+
+    for sc in candidates:
+        wholesale_sum = _calc_supplier_wholesale_sum(rows, sc, offers_map)
+        if wholesale_sum == Decimal("Infinity"):
+            continue
+        delta = retail_sum - wholesale_sum
+        if best is None or delta > best[1]:
+            best = (str(sc), delta, retail_sum, wholesale_sum)
+
+    return best
+
+
+def _greedy_group_rows_min_suppliers(
+    rows: List[OrderRow],
+    offers_map: Dict[str, Dict[str, Dict[str, Decimal]]],
+) -> Dict[str, str]:
+    """ 
+    Greedy grouping to minimize number of suppliers.
+
+    Strategy:
+      - While there are remaining rows, pick supplier that can fulfill the largest number of remaining rows
+        (stock>=qty and offer exists). Tie-breaker: highest (retail_sum_subset - wholesale_sum_subset).
+      - Assign those rows to that supplier and remove from remaining.
+
+    Returns mapping: goodsCode -> supplier_code
+    """
+    remaining = list(rows)
+    mapping: Dict[str, str] = {}
+
+    # Pre-calc retail sum per row for tie-breaking
+    def subset_delta(sc: str, subset: List[OrderRow]) -> Decimal:
+        retail = sum((_as_decimal(r.price) * _as_decimal(r.qty) for r in subset), Decimal(0))
+        wholesale = Decimal(0)
+        by_supplier = offers_map.get(str(sc)) or {}
+        for r in subset:
+            rec = by_supplier.get(str(r.goodsCode))
+            if not rec:
+                return Decimal("-Infinity")
+            wholesale += _as_decimal(rec.get("wholesale_price", 0)) * _as_decimal(r.qty)
+        return retail - wholesale
+
+    supplier_codes = list(offers_map.keys())
+
+    while remaining:
+        best_sc: Optional[str] = None
+        best_cover: List[OrderRow] = []
+        best_score = Decimal("-Infinity")
+
+        for sc in supplier_codes:
+            by_supplier = offers_map.get(str(sc)) or {}
+            cover = [
+                r for r in remaining
+                if (str(r.goodsCode) in by_supplier)
+                and (by_supplier[str(r.goodsCode)].get("stock", Decimal(0)) >= _as_decimal(r.qty))
+            ]
+            if not cover:
+                continue
+
+            score = subset_delta(sc, cover)
+            # prefer larger cover; tie-breaker by delta
+            if (len(cover) > len(best_cover)) or (len(cover) == len(best_cover) and score > best_score):
+                best_sc = str(sc)
+                best_cover = cover
+                best_score = score
+
+        if not best_sc or not best_cover:
+            # cannot cover remaining with any supplier — stop
+            break
+
+        for r in best_cover:
+            mapping[str(r.goodsCode)] = best_sc
+        # remove assigned
+        assigned_codes = {str(r.goodsCode) for r in best_cover}
+        remaining = [r for r in remaining if str(r.goodsCode) not in assigned_codes]
+
+    return mapping
 
 
 
@@ -1056,6 +1236,106 @@ async def process_and_send_order(
         # Карта: goodsCode -> supplier_code (по строкам). Используется для формирования description
         # даже когда весь заказ является "мікс" (supplier_code=None на уровне заказа).
         order["_row_supplier_map"] = {str(r.goodsCode): str(sc) for (r, sc, _sp) in rows_with_supplier}
+
+        # --- SMART multi-item algorithm (единый поставщик по наличию и оптовой цене) ---
+        # Условия запуска:
+        #   - если НЕ найден единый поставщик по цене (в допуске) ИЛИ есть позиции без поставщика в допуске.
+        # Алгоритм:
+        #   1) Собираем поставщиков, которые могут отгрузить ВСЕ товары (stock>=qty по каждой позиции).
+        #   2) Среди них выбираем того, у кого (sum(retail) - sum(wholesale)) максимальна.
+        #   3) Если retail_sum / wholesale_sum < 1.05 — НЕ выбираем единого поставщика (мало маржи),
+        #      оставляем разбиение по позициям (текущая логика).
+        #   4) Если товаров > 2 и нет единого поставщика — пробуем разбить на группы, минимизируя число поставщиков.
+
+        try:
+            product_codes = [str(r.goodsCode) for r in rows]
+            offers_map = await _prefetch_offers_for_products(session, product_codes)
+        except Exception:
+            offers_map = {}
+
+        smart_single_supplier: Optional[Tuple[str, Decimal, Decimal, Decimal]] = None
+        if offers_map:
+            all_candidates = [sc for sc in offers_map.keys() if _supplier_can_fulfill_all(rows, sc, offers_map)]
+            if all_candidates:
+                smart_single_supplier = _pick_best_single_supplier_by_margin(rows, all_candidates, offers_map)
+
+        # Если нашли единого поставщика по наличию+оптовой цене — применяем, но с проверкой на минимальную маржинальность
+        if smart_single_supplier is not None:
+            sc, delta, retail_sum, wholesale_sum = smart_single_supplier
+            ratio_ok = True
+            if wholesale_sum and wholesale_sum != 0:
+                ratio = (retail_sum / wholesale_sum)
+                ratio_ok = ratio >= MIN_RETAIL_WHOLESALE_RATIO_FOR_SINGLE
+
+            if ratio_ok:
+                supplier_code = sc
+                supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
+                comment_override = (
+                    "⚠️ Єдиний постачальник підібраний за наявністю всіх товарів. "
+                    "Маржа зменшилась (використано оптові ціни). "
+                    f"Δ= {delta}, retail_sum= {retail_sum}, wholesale_sum= {wholesale_sum}."
+                )
+                payload = await build_salesdrive_payload(
+                    session,
+                    order,
+                    enterprise_code,
+                    rows,
+                    supplier_code,
+                    supplier_name,
+                    branch=branch,
+                    comment_override=comment_override,
+                )
+                await _send_to_salesdrive(payload, api_key)
+                return
+            else:
+                # маржа слишком мала — оставляем текущую модель разбиения
+                logger.info(
+                    "SMART single supplier rejected due to low ratio: retail/wholesale < %s",
+                    MIN_RETAIL_WHOLESALE_RATIO_FOR_SINGLE,
+                )
+
+        # Если товаров > 2 и нет единого поставщика — пробуем умное разбиение на группы
+        if len(rows) > 2 and offers_map:
+            grouped_map = _greedy_group_rows_min_suppliers(rows, offers_map)
+            # применяем только если покрыли все товары
+            if grouped_map and len(grouped_map) == len(rows):
+                # Перезапишем карту по строкам для description
+                order["_row_supplier_map"] = {str(r.goodsCode): grouped_map[str(r.goodsCode)] for r in rows}
+
+                # Формируем читабельный комментарий: группы по поставщикам
+                supplier_to_goods: Dict[str, List[str]] = {}
+                for r in rows:
+                    sc = grouped_map.get(str(r.goodsCode))
+                    supplier_to_goods.setdefault(str(sc), []).append(str(r.goodsName))
+
+                name_map: Dict[str, str] = {}
+                for sc in supplier_to_goods.keys():
+                    name_map[sc] = (await _fetch_supplier_name(session, sc)) or sc
+
+                groups_txt = "; ".join(
+                    [f"{name_map[sc]}: " + ", ".join(goods) for sc, goods in supplier_to_goods.items()]
+                )
+
+                supplier_code = None
+                supplier_name = ""
+                comment_override = (
+                    "⚠️ Не знайдено єдиного постачальника за ціною/наявністю. "
+                    "Замовлення розбито на мінімальну кількість постачальників: "
+                    + groups_txt
+                )
+
+                payload = await build_salesdrive_payload(
+                    session,
+                    order,
+                    enterprise_code,
+                    rows,
+                    supplier_code,
+                    supplier_name,
+                    branch=branch,
+                    comment_override=comment_override,
+                )
+                await _send_to_salesdrive(payload, api_key)
+                return
 
         comment_override: Optional[str] = None
 
