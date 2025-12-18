@@ -382,7 +382,7 @@ async def parse_feed_stock_to_json(
       - vendorCode          -> code_sup
       - available="true"    -> qty=1, иначе 0
       - price               -> base_price
-      - price_opt           -> base_price * (1 - profit_percent)
+      - price_opt           -> base_price / (1 + profit_percent)
       - price_retail        -> price_opt * (1 + retail_markup/100)
 
     Пример входного XML:
@@ -443,7 +443,7 @@ async def parse_feed_stock_to_json(
         price_raw = _get_text(offer, ["price"])
         base_price = _to_float(price_raw)
 
-        # Оптовая цена: price_opt = base_price * (1 - profit)
+        # Оптовая цена: price_opt = base_price / (1 + profit)
         # profit хранится в БД как проценты (например 10), выше преобразовано в долю (0.1)
         price_opt = base_price / (1.0 + profit) if base_price > 0 else 0.0
         if price_opt < 0:
