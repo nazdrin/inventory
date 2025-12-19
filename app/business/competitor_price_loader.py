@@ -1,6 +1,7 @@
 # app/business/competitor_price_loader.py
 import os
 import io
+import json
 import logging
 import asyncio
 from decimal import Decimal, InvalidOperation
@@ -67,120 +68,79 @@ def _download_file_as_bytes(service, file_id: str) -> bytes:
     buf.seek(0)
     return buf.read()
 
-# -------- Парсинг таблиц --------
-CODE_CANDIDATES = ["Код товара Tabletki.ua", "code", "Код", "Артикул", "productId"]
-PRICE_CANDIDATES = ["Цена", "price", "Price"]
+# -------- Парсинг входящего JSON --------
+# Ожидаемый формат: список объектов
+# [
+#   {"code": "1077608", "city": "Kyiv", "delivery_price": 470.0},
+#   {"code": "1077608", "city": "Lviv", "delivery_price": 470.0}
+# ]
+
+CODE_FIELD = "code"
+CITY_FIELD = "city"
+PRICE_FIELD = "delivery_price"
+
 
 def _normalize_code(code_raw) -> str:
-    """
-    Нормализует код товара:
-    - убирает .0 в конце (как из float 1000161.0, так и из строки "1000161.0")
-    - возвращает пустую строку, если кода нет или он NaN.
-    """
+    """Нормализует код товара и убирает хвост `.0`, если он пришёл из числовых типов."""
     if code_raw is None:
         return ""
-    # если пришло как float из Excel
+
+    # если пришло как float
     if isinstance(code_raw, float):
         if pd.isna(code_raw):
             return ""
-        # целые значения типа 1000161.0 превращаем в "1000161"
         if code_raw.is_integer():
             return str(int(code_raw))
-        # на всякий случай убираем хвост ".0" или лишние нули
         return str(code_raw).rstrip("0").rstrip(".")
 
     s = str(code_raw).strip()
-    # если код пришёл строкой вида "1000161.0" — обрезаем ".0"
+    if not s:
+        return ""
     if s.endswith(".0"):
         s = s[:-2]
     return s
 
-def _pick_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    cols = {c.lower(): c for c in df.columns}
-    for cand in candidates:
-        lc = cand.lower()
-        if lc in cols:
-            return cols[lc]
-    # fallback: частичный поиск
-    for c in df.columns:
-        lc_name = c.lower()
-        if any(lc_name == cand.lower() for cand in candidates):
-            return c
-    return None
 
 def _as_decimal(x) -> Optional[Decimal]:
     if x is None or (isinstance(x, float) and pd.isna(x)):
         return None
     try:
-        # заменим возможные запятые и пробелы
         if isinstance(x, str):
             x = x.replace(" ", "").replace(",", ".")
         return Decimal(str(x))
     except (InvalidOperation, ValueError):
         return None
 
-def _parse_table(b: bytes, filename: str) -> List[Tuple[str, str, Decimal]]:
-    """
-    Возвращает список (code, city, competitor_price).
-    Город берём из имени файла без расширения.
-    """
-    city = os.path.splitext(os.path.basename(filename))[0].strip()
-    # Определяем парсер по расширению
-    ext = os.path.splitext(filename)[1].lower()
-    if ext in (".xlsx", ".xls"):
-        df = pd.read_excel(io.BytesIO(b))
-    elif ext in (".csv",):
-        # пробуем ; затем ,
-        try:
-            df = pd.read_csv(io.BytesIO(b), encoding="utf-8", sep=";")
-        except Exception:
-            df = pd.read_csv(io.BytesIO(b), encoding="utf-8", sep=",")
-    else:
-        logger.warning(f"Пропуск файла {filename}: не поддерживаемый тип")
-        return []
 
-    if df.empty:
-        return []
+def _parse_delivery_json(b: bytes, filename: str) -> List[Tuple[str, str, Decimal]]:
+    """Возвращает список (code, city, competitor_price) из JSON."""
+    try:
+        payload = json.loads(b.decode("utf-8"))
+    except Exception:
+        # иногда сервисы сохраняют json в UTF-8 with BOM
+        payload = json.loads(b.decode("utf-8-sig"))
 
-    code_col = _pick_column(df, CODE_CANDIDATES)
-    price_col = _pick_column(df, PRICE_CANDIDATES)
-    if not code_col or not price_col:
-        logger.warning(f"Файл {filename}: не найдены колонки кода/цены. Найдено: {df.columns.tolist()}")
+    if not isinstance(payload, list):
+        logger.warning("Файл %s: ожидался JSON-массив (list), получили %s", filename, type(payload).__name__)
         return []
 
     out: List[Tuple[str, str, Decimal]] = []
-    for _, row in df.iterrows():
-        code_raw = row.get(code_col)
-        price_raw = row.get(price_col)
-
-        if code_raw is None or (isinstance(code_raw, float) and pd.isna(code_raw)):
+    for item in payload:
+        if not isinstance(item, dict):
             continue
 
-        code = _normalize_code(code_raw)
-        if not code:
-            continue
+        code = _normalize_code(item.get(CODE_FIELD))
+        city = str(item.get(CITY_FIELD) or "").strip()
+        price = _as_decimal(item.get(PRICE_FIELD))
 
-        price = _as_decimal(price_raw)
-        if not price:
+        if not code or not city or price is None:
             continue
 
         out.append((code, city, price))
-    seen = set()
-    for _, row in df.iterrows():
-        code = _normalize_code(row.get(code_col))
-        price = _as_decimal(row.get(price_col))
-        if not code or price is None:
-            continue
-        key = (code, city)
-        if key in seen:
-            logger.debug("Duplicate in file %s: (%s, %s)", filename, code, city)
-        seen.add(key)
-        out.append((code, city, price))
+
     return out
-    # return out
+
 from collections import OrderedDict
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from decimal import Decimal
 
 BATCH_SIZE = 1000
 
@@ -233,56 +193,67 @@ async def run():
     if not folder_id:
         raise EnvironmentError("Не задан COMPETITOR_GDRIVE_FOLDER_ID в .env")
 
+    # Имя файла в папке Google Drive (по умолчанию competitors_delivery_total.json)
+    delivery_filename = os.getenv("COMPETITOR_DELIVERY_JSON_NAME", "competitors_delivery_total.json")
+
     service = _connect_to_google_drive()
     files = _list_files_in_folder(service, folder_id)
-    supported = [f for f in files if os.path.splitext(f["name"])[1].lower() in (".xlsx", ".xls", ".csv")]
-    logger.info(f"Найдено файлов в папке: всего={len(files)}, поддерживаемых={len(supported)}")
+
+    # Ищем JSON по имени, если не нашли — берём первый попавшийся .json
+    json_files = [f for f in files if os.path.splitext(f["name"])[1].lower() == ".json"]
+    if not json_files:
+        raise FileNotFoundError("В папке Google Drive не найден ни один .json файл")
+
+    target = next((f for f in json_files if f["name"] == delivery_filename), None)
+    if target is None:
+        target = json_files[0]
+        logger.warning(
+            "Не найден файл %s — использую первый JSON из папки: %s",
+            delivery_filename,
+            target["name"],
+        )
+
+    logger.info("Читаю JSON файл: %s", target["name"])
+
+    b = _download_file_as_bytes(service, target["id"])
+    rows = _parse_delivery_json(b, target["name"])
+
+    if not rows:
+        logger.warning("%s: нет валидных строк — загрузка в БД пропущена", target["name"])
+        return
 
     total_rows = 0
+
+    # Список городов, присутствующих в JSON
+    processed_cities = {city for _, city, _ in rows}
+
     async with get_async_db() as session:
         # Города, которые уже есть в БД
         result = await session.execute(select(CompetitorPrice.city).distinct())
         existing_cities = {row[0] for row in result if row[0] is not None}
-        processed_cities = set()
 
-        for f in supported:
-            city = os.path.splitext(os.path.basename(f["name"]))[0].strip()
-            processed_cities.add(city)
+        # 1) Для каждого города из JSON — полностью очищаем город и загружаем его данные
+        for city in sorted(processed_cities):
+            city_rows = [(code, ct, price) for (code, ct, price) in rows if ct == city]
 
-            try:
-                b = _download_file_as_bytes(service, f["id"])
-                rows = _parse_table(b, f["name"])
+            await session.execute(delete(CompetitorPrice).where(CompetitorPrice.city == city))
+            await session.commit()
 
-                # Перед загрузкой новых данных полностью очищаем город
-                await session.execute(
-                    delete(CompetitorPrice).where(CompetitorPrice.city == city)
-                )
-                await session.commit()
+            cnt = await upsert_competitor_prices(session, city_rows)
+            total_rows += cnt
+            logger.info("%s: загружено %s записей", city, cnt)
 
-                if not rows:
-                    logger.info(f"{f['name']}: нет валидных строк, данные по городу {city} очищены")
-                    continue
-
-                cnt = await upsert_competitor_prices(session, rows)
-                total_rows += cnt
-                logger.info(f"{f['name']}: загружено {cnt} записей")
-            except Exception as e:
-                logger.exception("DB upsert failed")  # оставь как есть
-                logger.error("Exc type=%s; msg=%s", type(e).__name__, str(e))
-
-        # Удаляем данные по городам, для которых раньше были записи, но сейчас файлов нет
+        # 2) Удаляем данные по городам, которые были в БД, но отсутствуют в новом JSON
         cities_to_clear = existing_cities - processed_cities
         if cities_to_clear:
-            await session.execute(
-                delete(CompetitorPrice).where(CompetitorPrice.city.in_(list(cities_to_clear)))
-            )
+            await session.execute(delete(CompetitorPrice).where(CompetitorPrice.city.in_(list(cities_to_clear))))
             await session.commit()
             logger.info(
-                "Удалены данные по городам без файлов: %s",
+                "Удалены данные по городам без строк в JSON: %s",
                 ", ".join(sorted(cities_to_clear)),
             )
 
-    logger.info(f"Готово. Всего загружено записей: {total_rows}")
+    logger.info("Готово. Всего загружено записей: %s", total_rows)
 
 if __name__ == "__main__":
     asyncio.run(run())
