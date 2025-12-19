@@ -1,7 +1,7 @@
 import logging
 import os
 import io
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json  # ← добавь наверху файла
 import pandas as pd
 from dotenv import load_dotenv
@@ -55,8 +55,42 @@ BASE_FIELDS = ["ID", "Name", "Producer", "Guid", "Barcode", "Code_Tabletki"]
 UPSERT_CHUNK_SIZE = 5000
 
 # Допустимые колонки для записи данных поставщика
+
 NAME_D_COLUMNS = [f"Name_D{i}" for i in range(1, 11)]
 CODE_D_COLUMNS = [f"Code_D{i}" for i in range(1, 11)]
+
+
+# --- Варианты ШК для аккуратного матчинга с одним ведущим нулём ---
+def _barcode_variants(code: Optional[str]) -> List[str]:
+    """Возвращает варианты barcode для матчинга, учитывая ТОЛЬКО один ведущий '0'.
+
+    Кейсы:
+      - БД хранит '0' + barcode, поставщик прислал без '0'
+      - БД хранит без '0', поставщик прислал с одним ведущим '0'
+
+    Варианты генерируются ТОЛЬКО для цифровых строк, чтобы не ломать прочую логику.
+    """
+    if not code:
+        return []
+    s = str(code).strip()
+    if not s:
+        return []
+
+    variants = [s]
+    if s.isdigit():
+        if s.startswith("0") and len(s) > 1:
+            variants.append(s[1:])
+        else:
+            variants.append("0" + s)
+
+    # уникализируем, сохраняя порядок
+    seen = set()
+    out: List[str] = []
+    for v in variants:
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
 
 
 async def _get_active_supplier_codes() -> List[str]:
@@ -146,9 +180,14 @@ async def write_supplier_data_by_barcode(
     name_attr = getattr(CatalogMapping, name_column)
     code_attr = getattr(CatalogMapping, code_column)
 
+    # Матчим по barcode, учитывая вариант с одним ведущим нулём
+    barcode_candidates = _barcode_variants(barcode)
+    if not barcode_candidates:
+        raise ValueError("Пустой 'barcode' после очистки")
+
     stmt = (
         update(CatalogMapping)
-        .where(CatalogMapping.Barcode == barcode)
+        .where(CatalogMapping.Barcode.in_(barcode_candidates))
         .values(
             {
                 name_attr.key: values_to_set.get(name_column, None),
@@ -602,17 +641,42 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
                     sql = f"""
                     WITH s AS (
                         SELECT
-                            elem->>'barcode' AS barcode,
-                            elem->>'name'    AS name,
-                            elem->>'code'    AS code
+                            NULLIF(trim(elem->>'barcode'), '') AS barcode,
+                            NULLIF(trim(elem->>'name'),    '') AS name,
+                            NULLIF(trim(elem->>'code'),    '') AS code,
+                            CASE
+                                WHEN (elem->>'barcode') ~ '^[0-9]+$' THEN
+                                    CASE
+                                        WHEN left(elem->>'barcode', 1) = '0' AND length(elem->>'barcode') > 1
+                                            THEN substr(elem->>'barcode', 2)
+                                        ELSE '0' || (elem->>'barcode')
+                                    END
+                                ELSE NULL
+                            END AS barcode_alt
                         FROM json_array_elements((:data)::json) AS elem
+                    ),
+                    m AS (
+                        -- Выбираем строку CatalogMapping по точному совпадению ШК,
+                        -- иначе пробуем вариант с одним ведущим нулём.
+                        SELECT
+                            s.barcode,
+                            s.name,
+                            s.code,
+                            COALESCE(cm_exact."Barcode", cm_alt."Barcode") AS target_barcode
+                        FROM s
+                        LEFT JOIN {CatalogMapping.__tablename__} AS cm_exact
+                            ON cm_exact."Barcode" = s.barcode
+                        LEFT JOIN {CatalogMapping.__tablename__} AS cm_alt
+                            ON cm_alt."Barcode" = s.barcode_alt
+                           AND cm_exact."Barcode" IS NULL
+                        WHERE s.barcode IS NOT NULL
                     )
                     UPDATE {CatalogMapping.__tablename__} AS cm
                     SET
-                        "{name_col}" = COALESCE(s.name, cm."{name_col}"),
-                        "{code_col}" = COALESCE(s.code, cm."{code_col}")
-                    FROM s
-                    WHERE cm."Barcode" = s.barcode
+                        "{name_col}" = COALESCE(m.name, cm."{name_col}"),
+                        "{code_col}" = COALESCE(m.code, cm."{code_col}")
+                    FROM m
+                    WHERE cm."Barcode" = m.target_barcode
                     """
                     result = await session.execute(text(sql), {"data": data_json})
                     await session.commit()
