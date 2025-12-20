@@ -1,6 +1,7 @@
 # app/services/salesdrive_webhook.py
 from __future__ import annotations
 
+import os
 import re
 import logging
 from typing import Any, Dict, List, Optional
@@ -107,7 +108,8 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
     order_date = str(data.get("orderTime") or "")
 
     # === Уведомление о необходимости звонка (statusId = 9) ===
-    if status_in == 9:
+    # Включается только если явно задано ENABLE_CALL_REQUEST_NOTIFY=1
+    if status_in == 9 and os.getenv("ENABLE_CALL_REQUEST_NOTIFY", "0") == "1":
         branch = str(branch_value) if branch_value is not None else ""
         raw_payment = data.get("paymentAmount")
         try:
