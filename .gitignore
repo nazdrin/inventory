@@ -42,4 +42,6 @@ monsterlab_export.py
 offers_export.py
 monster_matcher.py
 catalog_mapping_export.py
+
+peek_feeds.py
 competitors_min_price.py
