@@ -5,6 +5,15 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import pandas as pd
+from dotenv import load_dotenv
+
+# Load .env automatically (so running from terminal doesn't require `source .env`)
+_ENV_PATH = Path(__file__).resolve().parent / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(_ENV_PATH)
+else:
+    # Fallback: try default behavior (current working directory)
+    load_dotenv()
 
 # Google Drive
 from google.oauth2 import service_account
