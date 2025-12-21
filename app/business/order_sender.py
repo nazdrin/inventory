@@ -1026,6 +1026,27 @@ def _make_supplier_changed_note(rows: List[OrderRow], supplier_name: Optional[st
         return f"Постачальник: {supplier_name}. {base}"
     return base
 
+# --- Multiline comment helpers ---
+def _format_multi_supplier_list(items: List[Tuple[str, str]]) -> str:
+    """items: list of (goods_name, supplier_name). Returns multiline comment."""
+    lines = ["⚠️ Для товарів знайдені різні постачальники:", ""]
+    for goods_name, supplier_name in items:
+        lines.append(f"⚪️ {goods_name} — {supplier_name}")
+    return "\n".join(lines)
+
+def _format_smart_single_supplier_comment(supplier_name: str, delta: Decimal, retail_sum: Decimal, wholesale_sum: Decimal) -> str:
+    return "\n".join(
+        [
+            "⚠️ Підібраний єдиний постачальник:",
+            "",
+            f"🔵 Постачальник: {supplier_name}",
+            "",
+            f"▫️ Нова маржа (Δ): {delta}",
+            f"▫️ Роздрібна сума: {retail_sum}",
+            f"▫️ Оптова сума: {wholesale_sum}",
+        ]
+    )
+
 def _extract_name_parts(order: Dict[str, Any], d: Dict[str, str]) -> Tuple[str, str, str]:
     # fName: Name, lName: LastName, mName: MiddleName
     f = d.get("Name") or order.get("customer") or ""
@@ -1270,10 +1291,11 @@ async def process_and_send_order(
             if ratio_ok:
                 supplier_code = sc
                 supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-                comment_override = (
-                    "⚠️ Єдиний постачальник підібраний за наявністю всіх товарів. "
-                    "Маржа зменшилась (використано оптові ціни). "
-                    f"Δ= {delta}, retail_sum= {retail_sum}, wholesale_sum= {wholesale_sum}."
+                comment_override = _format_smart_single_supplier_comment(
+                    supplier_name=supplier_name,
+                    delta=delta,
+                    retail_sum=retail_sum,
+                    wholesale_sum=wholesale_sum,
                 )
                 payload = await build_salesdrive_payload(
                     session,
@@ -1358,11 +1380,8 @@ async def process_and_send_order(
                 for _, sc, _ in rows_with_supplier:
                     if sc not in name_map:
                         name_map[sc] = (await _fetch_supplier_name(session, sc)) or sc
-                parts = [
-                    f"{r.goodsName} — {name_map[sc]}"
-                    for (r, sc, _) in rows_with_supplier
-                ]
-                comment_override = "⚠️ Для товарів знайдені різні постачальники: " + "; ".join(parts)
+                items = [(r.goodsName, name_map[sc]) for (r, sc, _) in rows_with_supplier]
+                comment_override = _format_multi_supplier_list(items)
         else:
             # Есть товары без поставщика в допуске (или вообще никому не нашли)
             supplier_code = None
@@ -1382,14 +1401,20 @@ async def process_and_send_order(
                 for r in rows_without_supplier:
                     missing_parts.append(f"{r.goodsName} — постачальник не знайдений")
 
-            text_chunks: List[str] = []
+            lines: List[str] = ["⚠️"]
             if found_parts:
-                text_chunks.append("товари з знайденими постачальниками: " + "; ".join(found_parts))
+                lines.append("Товари з знайденими постачальниками:")
+                for fp in found_parts:
+                    lines.append(f"⚪️ {fp}")
             if missing_parts:
-                text_chunks.append("товари без постачальника: " + "; ".join(missing_parts))
+                if found_parts:
+                    lines.append("")
+                lines.append("Товари без постачальника:")
+                for mp in missing_parts:
+                    lines.append(f"⚪️ {mp}")
 
-            if text_chunks:
-                comment_override = "⚠️ " + " | ".join(text_chunks)
+            if len(lines) > 1:
+                comment_override = "\n".join(lines)
             else:
                 comment_override = "⚠️ Не знайдено постачальників для товарів у замовленні."
 
