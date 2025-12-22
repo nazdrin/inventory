@@ -1047,6 +1047,25 @@ def _format_smart_single_supplier_comment(supplier_name: str, delta: Decimal, re
         ]
     )
 
+# Multiline comment for grouped-suppliers (greedy split)
+def _format_grouped_suppliers_comment(supplier_to_goods: Dict[str, List[str]], name_map: Dict[str, str]) -> str:
+    """Multiline comment for case when we split order into minimal number of suppliers."""
+    lines: List[str] = ["⚠️ Єдиного постачальника не знайдено", ""]
+
+    # Keep deterministic order: by supplier display name, then by supplier code
+    ordered = sorted(supplier_to_goods.items(), key=lambda kv: (name_map.get(kv[0], kv[0]), kv[0]))
+
+    for idx, (sc, goods_list) in enumerate(ordered):
+        supplier_label = name_map.get(sc, sc)
+        lines.append(f"🔵 {supplier_label}")
+        for g in goods_list:
+            lines.append(f"▫️ {g}")
+        # blank line between suppliers (not after the last one)
+        if idx != len(ordered) - 1:
+            lines.append("")
+
+    return "\n".join(lines)
+
 def _extract_name_parts(order: Dict[str, Any], d: Dict[str, str]) -> Tuple[str, str, str]:
     # fName: Name, lName: LastName, mName: MiddleName
     f = d.get("Name") or order.get("customer") or ""
@@ -1324,7 +1343,7 @@ async def process_and_send_order(
                 # Перезапишем карту по строкам для description
                 order["_row_supplier_map"] = {str(r.goodsCode): grouped_map[str(r.goodsCode)] for r in rows}
 
-                # Формируем читабельный комментарий: группы по поставщикам
+                # Формируем читабельный комментарий: группы по поставщикам (multiline)
                 supplier_to_goods: Dict[str, List[str]] = {}
                 for r in rows:
                     sc = grouped_map.get(str(r.goodsCode))
@@ -1334,17 +1353,9 @@ async def process_and_send_order(
                 for sc in supplier_to_goods.keys():
                     name_map[sc] = (await _fetch_supplier_name(session, sc)) or sc
 
-                groups_txt = "; ".join(
-                    [f"{name_map[sc]}: " + ", ".join(goods) for sc, goods in supplier_to_goods.items()]
-                )
-
                 supplier_code = None
                 supplier_name = ""
-                comment_override = (
-                    "⚠️ Не знайдено єдиного постачальника за ціною/наявністю. "
-                    "Замовлення розбито на мінімальну кількість постачальників: "
-                    + groups_txt
-                )
+                comment_override = _format_grouped_suppliers_comment(supplier_to_goods, name_map)
 
                 payload = await build_salesdrive_payload(
                     session,
