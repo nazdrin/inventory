@@ -70,8 +70,13 @@ def _extract_barcode(el: ET.Element) -> Optional[str]:
 
 
 def _dsn_extract_sku(offer: ET.Element) -> Optional[str]:
-    """DSN: SKU = атрибут offer@id."""
-    sku = offer.get("id") or _get_text(offer, ["id", "vendorCode"])  # fallback
+    """DSN: SKU = <vendorCode> (пріоритетно), інакше offer@id (fallback)."""
+    sku = (
+        _get_text(offer, ["vendorCode"])  # <vendorCode>...</vendorCode>
+        or offer.get("vendorCode")         # на випадок, якщо це атрибут
+        or offer.get("id")                 # offer@id
+        or _get_text(offer, ["id"])        # <id>...</id> як запасний варіант
+    )
     return str(sku).strip() if sku else None
 
 
