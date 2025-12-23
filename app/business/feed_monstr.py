@@ -27,7 +27,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
 logger = logging.getLogger(__name__)
+
+# === D5: внешний прайс оптовых цен (Excel) ===
+D5_WHOLESALE_XLSX_URL = "https://monsterlab.com.ua/content/export/70cca9450c0767d8ef664f0473037c60.xlsx"
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ XML/ФИДА D5 ===
 
@@ -325,6 +329,73 @@ def _parse_catalog_excel_bytes(data: bytes) -> List[Dict[str, str]]:
     return items
 
 
+# === D5: ОПТОВЫЕ ЦЕНЫ ИЗ ВНЕШНЕГО XLSX ===
+
+async def _download_xlsx_bytes(url: str, *, timeout: int = 30) -> bytes:
+    """Скачивает XLSX по URL и возвращает bytes."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as e:
+        msg = f"Ошибка загрузки XLSX прайса опта {url}: {e}"
+        logger.exception(msg)
+        send_notification(msg, "Разработчик")
+        raise
+
+
+def _parse_d5_wholesale_price_xlsx(data: bytes) -> Dict[str, float]:
+    """Парсит XLSX с оптовыми ценами и возвращает маппинг {Артикул: Оптова ціна}.
+
+    Ожидаемые колонки (как в файле MonsterLab):
+      - 'Артикул'
+      - 'Оптова ціна'
+
+    Значения цены приводятся к float (через `_to_float`).
+    Пустые/невалидные строки пропускаются.
+    """
+    wb = load_workbook(io.BytesIO(data), data_only=True)
+    sheet = wb.active
+
+    header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
+    headers: Dict[str, int] = {
+        str(value).strip(): idx
+        for idx, value in enumerate(header_row)
+        if value is not None and str(value).strip()
+    }
+
+    required_cols = ["Артикул", "Оптова ціна"]
+    for col in required_cols:
+        if col not in headers:
+            raise ValueError(f"В XLSX прайсе опта не найден обязательный столбец '{col}'")
+
+    idx_artikul = headers["Артикул"]
+    idx_price = headers["Оптова ціна"]
+
+    mapping: Dict[str, float] = {}
+
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        artikul = row[idx_artikul] if idx_artikul < len(row) else None
+        price_val = row[idx_price] if idx_price < len(row) else None
+        if not artikul:
+            continue
+
+        artikul_str = str(artikul).strip()
+        if not artikul_str:
+            continue
+
+        price = _to_float(str(price_val) if price_val is not None else None)
+        if price <= 0:
+            continue
+
+        mapping[artikul_str] = price
+
+    logger.info("Оптовый прайс D5: собрано цен: %d", len(mapping))
+    return mapping
+
+
 # === ОСНОВНЫЕ ФУНКЦИИ D5 ===
 
 
@@ -421,6 +492,15 @@ async def parse_feed_stock_to_json(
     # Коэффициент: 1 + retail_markup/100, например при 10% будет 1.10
     retail_coef = 1.0 + (retail_markup / 100.0 if retail_markup else 0.0)
 
+    # Внешний прайс оптовых цен (XLSX): Артикул -> Оптова ціна
+    wholesale_map: Dict[str, float] = {}
+    try:
+        xlsx_bytes = await _download_xlsx_bytes(D5_WHOLESALE_XLSX_URL, timeout=timeout)
+        wholesale_map = _parse_d5_wholesale_price_xlsx(xlsx_bytes)
+    except Exception:
+        # Если прайс не скачался/не распарсился — просто работаем по старому алгоритму
+        wholesale_map = {}
+
     rows: List[Dict[str, Any]] = []
 
     for offer in _collect_offer_nodes(root):
@@ -443,16 +523,33 @@ async def parse_feed_stock_to_json(
         price_raw = _get_text(offer, ["price"])
         base_price = _to_float(price_raw)
 
-        # Оптовая цена: price_opt = base_price / (1 + profit)
-        # profit хранится в БД как проценты (например 10), выше преобразовано в долю (0.1)
-        price_opt = base_price / (1.0 + profit) if base_price > 0 else 0.0
-        if price_opt < 0:
-            price_opt = 0.0
+        # --- 1) Считаем розничную цену по текущим правилам (как и раньше) ---
+        # Сначала получаем расчетную оптовую по старому алгоритму (fallback),
+        # а затем пересчитаем розницу из фактической оптовой.
+        fallback_price_opt = base_price / (1.0 + profit) if base_price > 0 else 0.0
+        if fallback_price_opt < 0:
+            fallback_price_opt = 0.0
 
-        # Розница: adjusted_price = price_opt * (1 + retail_markup/100)
-        adjusted_price = price_opt * retail_coef if price_opt > 0 else 0.0
+        # Розница считается от опта
+        fallback_price_retail = fallback_price_opt * retail_coef if fallback_price_opt > 0 else 0.0
 
         # В текущем формате стока используем целые грн
+        price_retail_int = int(fallback_price_retail)
+
+        # --- 2) Пробуем взять опт из XLSX по vendor_code (в XLSX это 'Артикул') ---
+        xlsx_opt = wholesale_map.get(str(vendor_code).strip())
+
+        # Правило:
+        # - если xlsx_opt есть и он НЕ больше price_retail -> используем его как price_opt
+        # - иначе используем fallback
+        if xlsx_opt is not None and xlsx_opt > 0 and xlsx_opt <= float(price_retail_int):
+            price_opt = float(xlsx_opt)
+        else:
+            price_opt = float(fallback_price_opt)
+
+        # Розницу пересчитываем уже от выбранной оптовой
+        adjusted_price = price_opt * retail_coef if price_opt > 0 else 0.0
+
         price_opt_int = int(price_opt)
         price_retail_int = int(adjusted_price)
 
