@@ -993,11 +993,8 @@ async def _build_products_block(
         # Сохраняем supplier_item_name первым (как и раньше), если он есть
         if supplier_item_name:
             parts.append(str(supplier_item_name))
-        # Для кейса multi-supplier добавляем имя и код поставщика в description
-        if effective_supplier_name:
-            parts.append(str(effective_supplier_name))
-        if effective_supplier_code:
-            parts.append(str(effective_supplier_code))
+        # ВАЖНО: убираем наименование поставщика и код поставщика из description
+        # Оставляем только данные товара у поставщика: название, штрих-код и код товара.
         if barcode:
             parts.append(str(barcode))
         if supplier_item_code:
