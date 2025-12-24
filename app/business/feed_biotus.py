@@ -136,6 +136,37 @@ async def _get_retail_markup_by_code(code: str = "D1") -> float:
     return val
 
 
+async def _get_profit_percent_by_code(code: str = "D1") -> float:
+    """Достаёт profit_percent (%) из dropship_enterprises по значению поля code.
+
+    В БД значение хранится как проценты (например, 25), возвращаем долю (0.25).
+    """
+    async with get_async_db() as session:
+        res = await session.execute(
+            text("SELECT profit_percent FROM dropship_enterprises WHERE code = :code LIMIT 1"),
+            {"code": code},
+        )
+        raw = res.scalar_one_or_none()
+
+    # profit_percent может быть None / строкой / числом
+    try:
+        val = float(raw)
+    except Exception:
+        val = 0.0
+
+    # 25 -> 0.25
+    if val > 1:
+        val = val / 100.0
+
+    # Нормализуем границы
+    if val < 0:
+        val = 0.0
+    if val > 1:
+        val = 1.0
+
+    return val
+
+
 async def _load_feed_root_from_url(feed_url: str, timeout: int) -> Optional[ET.Element]:
     """Загружает и парсит XML по переданному URL."""
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -249,7 +280,7 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
     if root is None:
         return "[]"
 
-    retail_markup = await _get_retail_markup_by_code(code)
+    profit_percent = await _get_profit_percent_by_code(code)
 
     rows: List[Dict[str, object]] = []
     for node in _collect_product_nodes(root):
@@ -270,7 +301,7 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
 
         price_retail = _to_float(price_raw)
 
-        price_opt = price_retail /(1.0 + retail_markup)
+        price_opt = price_retail / (1.0 + profit_percent)
         # На всякий случай не уходим в минус
         if price_opt < 0:
             price_opt = 0.0
