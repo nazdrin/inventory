@@ -141,6 +141,36 @@ async def _get_retail_markup_by_code(code: str = "D2") -> float:
     return val
 
 
+async def _get_profit_percent_by_code(code: str = "D2") -> float:
+    """Дістає profit_percent (%) із dropship_enterprises за значенням code.
+
+    У БД значення зберігається як відсотки (наприклад, 25), повертаємо частку (0.25).
+    """
+    async with get_async_db() as session:
+        res = await session.execute(
+            text("SELECT profit_percent FROM dropship_enterprises WHERE code = :code LIMIT 1"),
+            {"code": code},
+        )
+        raw = res.scalar_one_or_none()
+
+    try:
+        val = float(raw)
+    except Exception:
+        val = 0.0
+
+    # 25 -> 0.25
+    if val > 1:
+        val = val / 100.0
+
+    # Нормалізація
+    if val < 0:
+        val = 0.0
+    if val > 1:
+        val = 1.0
+
+    return val
+
+
 async def _load_feed_root(*, code: str, timeout: int) -> Optional[ET.Element]:
     """
     1) беремо feed_url з БД по code
@@ -231,7 +261,7 @@ async def parse_dsn_stock_to_json(*, code: str = "D2", timeout: int = 30) -> str
     if root is None:
         return "[]"
 
-    retail_markup = await _get_retail_markup_by_code(code)
+    profit_percent = await _get_profit_percent_by_code(code)
 
     rows: List[Dict[str, object]] = []
     for offer in _collect_offer_nodes(root):
@@ -247,7 +277,7 @@ async def parse_dsn_stock_to_json(*, code: str = "D2", timeout: int = 30) -> str
 
         price_retail = _dsn_extract_price_retail(offer)
 
-        price_opt = price_retail / (1.0 + retail_markup)
+        price_opt = price_retail / (1.0 + profit_percent)
         if price_opt < 0:
             price_opt = 0.0
 
