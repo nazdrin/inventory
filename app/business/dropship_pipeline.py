@@ -214,20 +214,18 @@ async def fetch_competitor_price(session: AsyncSession, product_code: str, city:
 
 
 # --- Новый хелпер: получение правил ценообразования предприятия ---
-async def fetch_enterprise_pricing_rules(session: AsyncSession, enterprise_code: str) -> tuple[Decimal, List[Decimal]]:
+async def fetch_enterprise_pricing_rules(session: AsyncSession, enterprise_code: str) -> List[Decimal]:
     """
     Читает из enterprise_settings по enterprise_code:
-      - store_serial (эталон/порог сравнения для порога, целое число процентов)
       - google_drive_folder_id_rest (ценовые диапазоны, строка вида "400,1000,1500")
 
     Возвращает:
-      (cap_percent, ranges_list)
-    где cap_percent — Decimal (проценты, например 20), ranges_list — [Decimal("400"), Decimal("1000"), ...]
+      ranges_list — [Decimal("400"), Decimal("1000"), ...]
 
     ВАЖНО: enterprise_code — это код предприятия из аргумента run_pipeline (-e), а не код поставщика.
     """
     sql = text("""
-        SELECT store_serial, google_drive_folder_id_rest
+        SELECT google_drive_folder_id_rest
         FROM enterprise_settings
         WHERE enterprise_code = :enterprise_code
         LIMIT 1
@@ -235,16 +233,9 @@ async def fetch_enterprise_pricing_rules(session: AsyncSession, enterprise_code:
     res = await session.execute(sql, {"enterprise_code": enterprise_code})
     row = res.first()
     if not row:
-        return Decimal("0"), []
+        return []
 
-    store_serial = row[0]
-    ranges_raw = row[1]
-
-    # cap percent
-    try:
-        cap_percent = Decimal(str(store_serial)) if store_serial is not None else Decimal("0")
-    except Exception:
-        cap_percent = Decimal("0")
+    ranges_raw = row[0]
 
     # parse ranges
     ranges: List[Decimal] = []
@@ -260,23 +251,9 @@ async def fetch_enterprise_pricing_rules(session: AsyncSession, enterprise_code:
 
     # keep as-is order, but drop non-positive
     ranges = [r for r in ranges if r > 0]
-    return cap_percent, ranges
+    return ranges
 
 
-def clamp_threshold_percent(supplier_threshold_percent: Optional[float | Decimal], cap_percent: Decimal) -> Decimal:
-    """
-    Новая логика выбора порога (в процентах):
-      - если порог поставщика >= store_serial предприятия → берём порог поставщика
-      - иначе → берём store_serial предприятия
-
-    То есть по сути берём max(supplier_threshold_percent, store_serial).
-
-    Все значения считаем как проценты (целые), возвращаем проценты.
-    """
-    st = _to_decimal(supplier_threshold_percent)
-    if cap_percent and cap_percent > 0:
-        return st if st >= cap_percent else cap_percent
-    return st
 
 
 # --- Новая логика расчёта цены ---
@@ -284,6 +261,8 @@ def compute_price_for_item(
     *,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
+    is_dumping: bool,
+    retail_markup: Optional[float | Decimal],
     price_retail: Optional[float | Decimal],
     price_opt: Optional[float | Decimal],
     threshold_percent_effective: Optional[float | Decimal],
@@ -325,6 +304,17 @@ def compute_price_for_item(
     # 1) ЖЁСТКАЯ РРЦ
     if is_rrp and rr > 0:
         return _round_money(rr)
+
+    # 1.1) ЖЁСТКИЙ "демпинг": price = price_opt * (1 + retail_markup)
+    # Приоритет ниже РРЦ, но выше режима конкурентов/порогов.
+    if is_dumping:
+        mu = _as_share(retail_markup)  # 25 -> 0.25; 0.25 -> 0.25; None -> 0
+        if po > 0:
+            return _round_money(po * (Decimal("1") + mu))
+        # Если оптовой нет — fallback на rr (если есть), иначе 0
+        if rr > 0:
+            return _round_money(rr)
+        return Decimal("0")
 
     # 2) Эффективный порог
     thr = _as_share(threshold_percent_effective)
@@ -518,20 +508,25 @@ async def process_supplier(
 
     # 5.3 параметры ценообразования
     is_rrp = bool(ent.is_rrp)
+
+    # Новый режим "демпинга" (временное поле): если включён, цена считается жёстко по формуле
+    # price = price_opt * (1 + retail_markup)
+    is_dumping = bool(getattr(ent, "use_feed_instead_of_gdrive", False))
+    retail_markup = getattr(ent, "retail_markup", None)
+
     min_markup_threshold = ent.min_markup_threshold or 0
 
-    # Правила предприятия (cap порога + ценовые диапазоны) берём по enterprise_code (аргумент пайплайна)
-    # Если enterprise_code не задан — cap=0 и диапазоны=[] (поведение: используем порог поставщика без cap, диапазоны не применяются).
-    cap_percent = Decimal("0")
+    # Правила предприятия (ценовые диапазоны) берём по enterprise_code (аргумент пайплайна)
     price_ranges: List[Decimal] = []
     if getattr(ent, "enterprise_code", None):
         # если вдруг у DropshipEnterprise есть enterprise_code — используем его
-        cap_percent, price_ranges = await fetch_enterprise_pricing_rules(session, str(ent.enterprise_code))
+        price_ranges = await fetch_enterprise_pricing_rules(session, str(ent.enterprise_code))
     # enterprise_code для пайплайна приходит извне, поэтому пробрасываем его через ent._pipeline_enterprise_code (см. ниже)
     if hasattr(ent, "_pipeline_enterprise_code") and ent._pipeline_enterprise_code:
-        cap_percent, price_ranges = await fetch_enterprise_pricing_rules(session, str(ent._pipeline_enterprise_code))
+        price_ranges = await fetch_enterprise_pricing_rules(session, str(ent._pipeline_enterprise_code))
 
-    effective_threshold_percent = clamp_threshold_percent(min_markup_threshold, cap_percent)
+    # Порог берём ТОЛЬКО из dropship_enterprises (без ограничения store_serial)
+    effective_threshold_percent = min_markup_threshold
 
     # 5.4 города поставщика
     cities = _split_cities(ent.city or "")
@@ -569,6 +564,8 @@ async def process_supplier(
             price = compute_price_for_item(
                 competitor_price=competitor,
                 is_rrp=is_rrp,
+                is_dumping=is_dumping,
+                retail_markup=retail_markup,
                 price_retail=rr,
                 price_opt=po,
                 threshold_percent_effective=effective_threshold_percent,
