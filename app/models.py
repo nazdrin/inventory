@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     Numeric,
     PrimaryKeyConstraint,
     CheckConstraint,
@@ -482,4 +483,67 @@ class BalancerOrderFacts(Base, TimestampMixin):
         CheckConstraint("mode IN ('TEST','LIVE')", name="ck_balancer_order_facts_mode"),
         CheckConstraint("sale_price >= 0", name="ck_balancer_order_facts_sale_nonneg"),
         CheckConstraint("cost >= 0", name="ck_balancer_order_facts_cost_nonneg"),
+    )
+
+
+# Состояние тестового графика балансировщика (чтобы TEST был воспроизводимым между перезапусками)
+class BalancerTestState(Base, TimestampMixin):
+    """Состояние тестового графика для конкретного дня/сегмента/диапазона.
+
+    Используется в режиме TEST при старте сегмента:
+      - берём current_porog как porog_used
+      - пересчитываем следующий current_porog по step и direction
+      - сохраняем обратно
+
+    Ключ состояния: (profile_name, city, supplier, segment_id, band_id, day_date).
+    """
+
+    __tablename__ = "balancer_test_state"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    profile_name = Column(String, nullable=False, index=True)
+    mode = Column(String, nullable=False, doc="Режим: TEST (оставляем поле для единообразия)")
+
+    city = Column(String, nullable=False, index=True)
+    supplier = Column(String, nullable=False, index=True)
+    segment_id = Column(String, nullable=False, index=True)
+    band_id = Column(String, nullable=False, index=True)
+
+    # Дата учёта (правило: дата старта сегмента, в т.ч. для ночных сегментов)
+    day_date = Column(Date, nullable=False, index=True)
+
+    # Состояние графика
+    current_porog = Column(Numeric(6, 4), nullable=False, doc="Текущий порог, который будет применён в сегменте")
+    step = Column(Numeric(6, 4), nullable=False, doc="Шаг изменения порога (например 0.01)")
+    min_porog = Column(Numeric(6, 4), nullable=False, doc="Нижняя граница (из min_porog_by_band)")
+    max_porog = Column(Numeric(6, 4), nullable=False, doc="Верхняя граница теста (например 0.25)")
+    direction = Column(SmallInteger, nullable=False, doc="Направление изменения: 1 или -1")
+
+    # Техническое
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_name",
+            "city",
+            "supplier",
+            "segment_id",
+            "band_id",
+            "day_date",
+            name="uq_balancer_test_state_key",
+        ),
+        Index(
+            "ix_balancer_test_state_scope",
+            "city",
+            "supplier",
+            "segment_id",
+            "band_id",
+            "day_date",
+        ),
+        CheckConstraint("mode IN ('TEST')", name="ck_balancer_test_state_mode"),
+        CheckConstraint("direction IN (1, -1)", name="ck_balancer_test_state_direction"),
+        CheckConstraint("current_porog >= min_porog", name="ck_balancer_test_state_porog_ge_min"),
+        CheckConstraint("current_porog <= max_porog", name="ck_balancer_test_state_porog_le_max"),
+        CheckConstraint("max_porog >= min_porog", name="ck_balancer_test_state_max_ge_min"),
     )
