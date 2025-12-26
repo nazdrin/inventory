@@ -321,6 +321,24 @@ async def _fetch_supplier_price(
     return res.scalar_one_or_none()
 
 
+# --- NEW: Оптова ціна (wholesale_price) товару у конкретного постачальника ---
+async def _fetch_supplier_wholesale_price(
+    session: AsyncSession, supplier_code: str, product_code: str
+) -> Optional[Decimal]:
+    """Оптова ціна (wholesale_price) товару у конкретного постачальника (з таблиці offers)."""
+    q = (
+        select(Offer.wholesale_price)
+        .where(
+            and_(
+                Offer.supplier_code == str(supplier_code),
+                Offer.product_code == str(product_code),
+            )
+        )
+        .limit(1)
+    )
+    res = await session.execute(q)
+    return res.scalar_one_or_none()
+
 # === NEW: поиск поставщиков по допуску и ближайшей цене ===
 from typing import List, Tuple, Optional
 
@@ -1105,6 +1123,27 @@ async def build_salesdrive_payload(
         row_supplier_map=row_supplier_map,
     )
 
+    # --- NEW: opt (тільки total: сума оптових цін з урахуванням qty) ---
+    row_supplier_map = order.get("_row_supplier_map") if isinstance(order.get("_row_supplier_map"), dict) else None
+
+    opt_total = Decimal(0)
+
+    for r in rows:
+        # визначаємо постачальника для конкретної позиції
+        effective_supplier_code: Optional[str] = supplier_code
+        if not effective_supplier_code and row_supplier_map:
+            effective_supplier_code = row_supplier_map.get(str(r.goodsCode))
+
+        w_price: Optional[Decimal] = None
+        if effective_supplier_code:
+            w_price = await _fetch_supplier_wholesale_price(session, effective_supplier_code, r.goodsCode)
+
+        w_dec = _as_decimal(w_price or 0)
+        opt_total += w_dec * _as_decimal(r.qty)
+
+    # В SalesDrive передаємо лише total
+    opt_text = str(opt_total)
+
     #form_key = await _get_enterprise_salesdrive_form(session, enterprise_code)
     # --- Новый блок: комментарий не содержит supplier_name и code_val, они идут в UTM-поля
     raw_code = order.get("code")
@@ -1148,6 +1187,7 @@ async def build_salesdrive_payload(
         "branch": str(branch or ""),              # серийный номер аптеки
         "tabletkiOrder": code_val,               # номер заказа Tabletki.ua (бывший utmSourceFull)
         "supplier": supplier_name or "",         # поставщик (бывший utmMedium/utmCampaign)
+        "opt": opt_text,                         # оптові ціни (wholesale_price) + total
         # qtyOrder: значок-предупреждение, если суммарное количество > 1
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
     }

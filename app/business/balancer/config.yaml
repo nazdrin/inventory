@@ -1,0 +1,159 @@
+balancer:
+  version: 1
+  is_active: true
+
+  # Профили позволяют параллельно держать часть поставщиков/городов в TEST,
+  # а часть — в LIVE. Каждый профиль независим.
+  profiles:
+    - name: kyiv_test_dsn
+      mode: TEST
+      scope:
+        cities:
+          - Kyiv
+        suppliers:
+          - D2
+
+      # Справочник (чисто для читаемости в логах/интерфейсах)
+      supplier_names:
+        D2: DSN
+
+      # Ценовые диапазоны (bands). band_id должен быть стабильным.
+      price_bands:
+        - band_id: B1
+          name: "lt_300"
+          min: 0
+          max: 300
+        - band_id: B2
+          name: "300_800"
+          min: 300
+          max: 800
+        - band_id: B3
+          name: "gte_800"
+          min: 800
+          max: null
+
+      # Минимальные пороги (ниже нельзя ни в тесте, ни в лайве)
+      min_porog_by_band:
+        B1: 0.15
+        B2: 0.13
+        B3: 0.11
+
+      # Настройки тестового перебора порогов
+      test_schedule:
+        step: 0.02                 # шаг 2%
+        max_porog_by_band:
+          B1: 0.25                  # 15%..25%
+          B2: 0.23                  # 13%..23%
+          B3: 0.20                  # 11%..20%
+        cycle_order: asc            # asc: min→max→min
+
+      # Временные сегменты
+      # type: WEEKDAY | WEEKEND | ALL
+      time_segments:
+        - segment_id: NIGHT
+          name: "Night"
+          start: "21:00"
+          end: "09:00"
+          type: ALL
+
+        - segment_id: WD_09_15
+          name: "Weekday Day1"
+          start: "09:00"
+          end: "15:00"
+          type: WEEKDAY
+
+        - segment_id: WD_15_21
+          name: "Weekday Day2"
+          start: "15:00"
+          end: "21:00"
+          type: WEEKDAY
+
+        - segment_id: WE_DAY
+          name: "Weekend Day"
+          start: "09:00"
+          end: "21:00"
+          type: WEEKEND
+
+      # Откуда забирать заказы и какие считать "успешными".
+      # ВНИМАНИЕ: значения статусов ниже — пример. Замени на реальные status_id из KeyCRM.
+      salesdrive:
+        timezone: "Europe/Kyiv"
+        statuses_in_scope: [4, 5, 6]   # пример: подтверждён/в работе/завершён
+        exclude_cancelled: true
+
+      thresholds:
+        min_orders_per_segment: 5
+
+
+    - name: kyiv_live_biotus
+      mode: LIVE
+      scope:
+        cities:
+          - Kyiv
+        suppliers:
+          - D1
+
+      supplier_names:
+        D1: Biotus
+
+      price_bands:
+        - band_id: B1
+          name: "lt_300"
+          min: 0
+          max: 300
+        - band_id: B2
+          name: "300_800"
+          min: 300
+          max: 800
+        - band_id: B3
+          name: "gte_800"
+          min: 800
+          max: null
+
+      min_porog_by_band:
+        B1: 0.15
+        B2: 0.13
+        B3: 0.11
+
+      # В LIVE профиле тестовый график не обязателен, но оставляем структуру на будущее.
+      # Сейчас LIVE будет брать porog из best_30d (во 2-3 этапах разработки).
+      test_schedule:
+        step: 0.02
+        max_porog_by_band:
+          B1: 0.25
+          B2: 0.23
+          B3: 0.20
+        cycle_order: asc
+
+      time_segments:
+        - segment_id: NIGHT
+          name: "Night"
+          start: "21:00"
+          end: "09:00"
+          type: ALL
+
+        - segment_id: WD_09_15
+          name: "Weekday Day1"
+          start: "09:00"
+          end: "15:00"
+          type: WEEKDAY
+
+        - segment_id: WD_15_21
+          name: "Weekday Day2"
+          start: "15:00"
+          end: "21:00"
+          type: WEEKDAY
+
+        - segment_id: WE_DAY
+          name: "Weekend Day"
+          start: "09:00"
+          end: "21:00"
+          type: WEEKEND
+
+      salesdrive:
+        timezone: "Europe/Kyiv"
+        statuses_in_scope: [4, 5, 6]   # пример: подтверждён/в работе/завершён
+        exclude_cancelled: true
+
+      thresholds:
+        min_orders_per_segment: 5

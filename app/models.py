@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Date,
     Float,
     ForeignKey,
     Index,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import declarative_base, declarative_mixin
+from sqlalchemy.dialects.postgresql import JSONB
 
 Base = declarative_base()
 
@@ -287,4 +289,197 @@ class Offer(Base):
         Index("ix_offers_city_product_price", "city", "product_code", "price"),
         Index("ix_offers_city_stock_pos", "city",
               postgresql_where=text("stock > 0")),
+    )
+
+
+# Журнал применённых политик балансировщика (что именно было передано в pricing engine на конкретный сегмент).
+class BalancerPolicyLog(Base, TimestampMixin):
+    """Журнал применённых политик балансировщика (что именно было передано в pricing engine на конкретный сегмент)."""
+
+    __tablename__ = "balancer_policy_log"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    # TEST / LIVE
+    mode = Column(String, nullable=False, doc="Режим балансировщика: TEST или LIVE")
+
+    # Версия/снимок конфига на момент применения (чтобы история была воспроизводимой)
+    config_version = Column(Integer, nullable=False, doc="Версия конфигурации балансировщика")
+    config_snapshot = Column(JSONB, nullable=True, doc="Снимок ключевых настроек конфига на момент применения")
+
+    # Контекст
+    city = Column(String, nullable=False, index=True, doc="Город (scope)")
+    supplier = Column(String, nullable=False, index=True, doc="Код поставщика (scope)")
+    segment_id = Column(String, nullable=False, index=True, doc="ID временного сегмента")
+    segment_start = Column(DateTime(timezone=True), nullable=False, doc="Фактическое начало сегмента")
+    segment_end = Column(DateTime(timezone=True), nullable=False, doc="Фактическое окончание сегмента")
+
+    # Payload политики
+    rules = Column(JSONB, nullable=False, doc="Правила: список объектов {band_id, porog}")
+    min_porog_by_band = Column(JSONB, nullable=False, doc="Минимальные пороги по диапазонам на момент применения")
+
+    # Почему применили именно так
+    reason = Column(String, nullable=False, doc="Причина: schedule/best_30d/challenger/fallback/cooldown_hold")
+    reason_details = Column(JSONB, nullable=True, doc="Детали причины (шаг графика, ожидания/факты и т.п.)")
+
+    # Технические поля
+    hash = Column(String, nullable=True, index=True, doc="Хэш для защиты от дублей при повторных запусках")
+    is_applied = Column(Boolean, nullable=False, server_default=text("true"), doc="Успешно ли политика была применена")
+
+    __table_args__ = (
+        Index("ix_balancer_policy_scope", "city", "supplier", "segment_id", "segment_start"),
+        CheckConstraint("mode IN ('TEST','LIVE')", name="ck_balancer_policy_log_mode"),
+    )
+
+
+# Агрегированная статистика по результатам одного временного сегмента
+class BalancerSegmentStats(Base, TimestampMixin):
+    """Агрегированная статистика по результатам одного временного сегмента.
+
+    Заполняется в конце сегмента (job EndSegment) и обязательно ссылается на policy_log_id,
+    чтобы можно было однозначно связать результат с применённой политикой.
+
+    Единица учёта: заказ (order_id). Доставку НЕ учитываем (sale_sum = сумма товаров).
+    """
+
+    __tablename__ = "balancer_segment_stats"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    # Контекст профиля/режима
+    profile_name = Column(String, nullable=False, index=True, doc="Имя профиля из конфигурации (например kyiv_test_dsn)")
+    mode = Column(String, nullable=False, doc="Режим: TEST или LIVE")
+
+    # Ссылка на применённую политику
+    policy_log_id = Column(BigInteger, ForeignKey("balancer_policy_log.id"), nullable=False, index=True)
+
+    # Scope
+    city = Column(String, nullable=False, index=True)
+    supplier = Column(String, nullable=False, index=True, doc="Код поставщика (например D1/D2)")
+
+    # Временной сегмент
+    segment_id = Column(String, nullable=False, index=True)
+    segment_start = Column(DateTime(timezone=True), nullable=False)
+    segment_end = Column(DateTime(timezone=True), nullable=False)
+
+    # Ценовой диапазон
+    band_id = Column(String, nullable=False, index=True)
+    band_min_price = Column(Numeric(12, 2), nullable=False, doc="Нижняя граница диапазона")
+    band_max_price = Column(Numeric(12, 2), nullable=True, doc="Верхняя граница диапазона (NULL = бесконечность)")
+
+    # Порог и минимальный порог
+    porog_used = Column(Numeric(6, 4), nullable=False, doc="Порог, применённый для этого band в сегменте")
+    min_porog = Column(Numeric(6, 4), nullable=False, doc="Минимальный порог для band (15/13/11%)")
+
+    # Метрики (доставка НЕ учитывается)
+    orders_count = Column(Integer, nullable=False, server_default=text("0"))
+    sale_sum = Column(Numeric(14, 2), nullable=False, server_default=text("0"), doc="Σ суммы товаров (без доставки)")
+    cost_sum = Column(Numeric(14, 2), nullable=False, server_default=text("0"), doc="Σ себестоимости")
+
+    profit_sum = Column(Numeric(14, 2), nullable=False, server_default=text("0"), doc="Σ (sale_sum - cost_sum)")
+    min_profit_sum = Column(Numeric(14, 2), nullable=False, server_default=text("0"), doc="Σ (sale_sum * min_porog)")
+    excess_profit_sum = Column(Numeric(14, 2), nullable=False, server_default=text("0"), doc="profit_sum - min_profit_sum")
+
+    excess_profit_per_order = Column(Numeric(14, 4), nullable=True, doc="excess_profit_sum / orders_count")
+
+    # Дневные показатели (для режима лимита/долей)
+    day_date = Column(Date, nullable=False, doc="День учёта (для ночных сегментов фиксируем правило: дата старта сегмента)")
+    day_total_orders = Column(Integer, nullable=True, doc="Всего заказов в день (по выбранной области учёта)")
+    segment_share = Column(Numeric(10, 6), nullable=True, doc="orders_count / day_total_orders")
+
+    # Качество выборки
+    orders_sample_ok = Column(Boolean, nullable=False, server_default=text("false"), doc="orders_count >= min_orders_per_segment")
+    note = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_balancer_seg_scope",
+            "city",
+            "supplier",
+            "segment_id",
+            "band_id",
+            "segment_start",
+        ),
+        CheckConstraint("mode IN ('TEST','LIVE')", name="ck_balancer_segment_stats_mode"),
+        CheckConstraint("porog_used >= min_porog", name="ck_balancer_seg_porog_ge_min"),
+        CheckConstraint("orders_count >= 0", name="ck_balancer_seg_orders_nonneg"),
+        CheckConstraint("sale_sum >= 0", name="ck_balancer_seg_sale_nonneg"),
+        CheckConstraint("cost_sum >= 0", name="ck_balancer_seg_cost_nonneg"),
+    )
+
+
+# Факты по каждому заказу, попавшему в расчёт сегмента.
+class BalancerOrderFacts(Base, TimestampMixin):
+    """Факты по каждому заказу, попавшему в расчёт сегмента.
+
+    Заполняется в конце сегмента (job EndSegment) после выгрузки заказов из SalesDrive.
+    Нужна для дебага/аудита: какие именно заказы попали в статистику и какие у них расчётные поля.
+
+    Единица учёта: заказ (order_id). Доставку НЕ учитываем (sale_price = сумма товаров).
+    """
+
+    __tablename__ = "balancer_order_facts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    # Ссылка на применённую политику
+    policy_log_id = Column(BigInteger, ForeignKey("balancer_policy_log.id"), nullable=False, index=True)
+
+    # Контекст профиля/режима
+    profile_name = Column(String, nullable=False, index=True, doc="Имя профиля из конфигурации")
+    mode = Column(String, nullable=False, doc="Режим: TEST или LIVE")
+
+    # Scope
+    city = Column(String, nullable=False, index=True)
+    supplier = Column(String, nullable=False, index=True, doc="Код поставщика (например D1/D2)")
+
+    # Временной сегмент
+    segment_id = Column(String, nullable=False, index=True)
+    segment_start = Column(DateTime(timezone=True), nullable=False)
+    segment_end = Column(DateTime(timezone=True), nullable=False)
+
+    # Идентификаторы заказа (SalesDrive)
+    order_id = Column(String, nullable=False, index=True, doc="ID заказа в SalesDrive")
+    order_number = Column(String, nullable=True, doc="Человекочитаемый номер заказа (если есть)")
+    status_id = Column(Integer, nullable=False, doc="Статус заказа, с которым он попал в выборку")
+    created_at_source = Column(DateTime(timezone=True), nullable=True, doc="Время создания заказа в источнике")
+
+    # Ценовой диапазон
+    band_id = Column(String, nullable=False, index=True)
+    band_min_price = Column(Numeric(12, 2), nullable=False)
+    band_max_price = Column(Numeric(12, 2), nullable=True)
+
+    # Цены/себестоимость (доставка НЕ учитывается)
+    sale_price = Column(Numeric(14, 2), nullable=False, doc="Сумма товаров в заказе (без доставки)")
+    cost = Column(Numeric(14, 2), nullable=False, doc="Себестоимость заказа")
+    profit = Column(Numeric(14, 2), nullable=False, doc="sale_price - cost")
+
+    # Порог и минимальный порог
+    porog_used = Column(Numeric(6, 4), nullable=False, doc="Порог, действовавший в сегменте для данного band")
+    min_porog = Column(Numeric(6, 4), nullable=False, doc="Минимальный порог для band")
+
+    # Расчётные поля
+    min_profit = Column(Numeric(14, 2), nullable=False, doc="sale_price * min_porog")
+    excess_profit = Column(Numeric(14, 2), nullable=False, doc="profit - min_profit")
+
+    # Качество/служебное
+    is_in_scope = Column(Boolean, nullable=False, server_default=text("true"), doc="Флаг: учтён ли заказ в расчёте")
+    note = Column(String, nullable=True)
+
+    # Сырой payload (часть заказа) для расследований
+    raw = Column(JSONB, nullable=True, doc="Сырой JSON заказа/полей из SalesDrive")
+
+    __table_args__ = (
+        UniqueConstraint("policy_log_id", "order_id", name="uq_balancer_order_facts_policy_order"),
+        Index(
+            "ix_balancer_order_facts_scope",
+            "city",
+            "supplier",
+            "segment_id",
+            "band_id",
+            "segment_start",
+        ),
+        CheckConstraint("mode IN ('TEST','LIVE')", name="ck_balancer_order_facts_mode"),
+        CheckConstraint("sale_price >= 0", name="ck_balancer_order_facts_sale_nonneg"),
+        CheckConstraint("cost >= 0", name="ck_balancer_order_facts_cost_nonneg"),
     )
