@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from typing import Any
+from decimal import Decimal
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+
+def _get_profile_from_snapshot(policy: Any) -> dict[str, Any] | None:
+    """
+    В policy.config_snapshot мы сохраняем cfg.balancer, где есть profiles.
+    Находим профиль по (mode, city, supplier).
+    """
+    snap = getattr(policy, "config_snapshot", None) or {}
+    profiles = snap.get("profiles", []) or []
+    for prof in profiles:
+        if str(prof.get("mode", "")).upper() != str(getattr(policy, "mode", "")).upper():
+            continue
+        scope = prof.get("scope", {}) or {}
+        if getattr(policy, "city", None) not in (scope.get("cities", []) or []):
+            continue
+        if getattr(policy, "supplier", None) not in (scope.get("suppliers", []) or []):
+            continue
+        return prof
+    return None
+
+
+def _resolve_band(price: Decimal, price_bands: list[dict[str, Any]]) -> tuple[str, Decimal, Decimal | None]:
+    """
+    Возвращает (band_id, band_min, band_max)
+    """
+    for b in price_bands:
+        b_min = Decimal(str(b.get("min", 0) or 0))
+        b_max_raw = b.get("max", None)
+        b_max = None if b_max_raw is None else Decimal(str(b_max_raw))
+        if price >= b_min and (b_max is None or price < b_max):
+            return str(b.get("band_id")), b_min, b_max
+
+    # fallback: если ничего не подошло — берем последнюю
+    last = price_bands[-1]
+    b_min = Decimal(str(last.get("min", 0) or 0))
+    b_max_raw = last.get("max", None)
+    b_max = None if b_max_raw is None else Decimal(str(b_max_raw))
+    return str(last.get("band_id")), b_min, b_max
+
+
+def _get_porog_for_band(rules: list[dict[str, Any]], band_id: str) -> Decimal:
+    for r in rules:
+        if str(r.get("band_id")) == str(band_id):
+            return Decimal(str(r.get("porog")))
+    # если вдруг правила не содержат band — тогда порог = min_porog (безопасно)
+    return Decimal("0")
+
+
+def _parse_salesdrive_dt(value: Any) -> datetime | None:
+    """
+    SalesDrive отдаёт время строкой вида 'YYYY-MM-DD HH:MM:SS'
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            return dt.replace(tzinfo=KYIV_TZ)
+        except Exception:
+            return None
+    return None
+
+
+def build_order_facts(policy: Any, order: dict[str, Any]) -> dict[str, Any]:
+    """
+    1) sale_sum = Σ(price * amount)
+    2) cost_sum = Σ(costPrice * amount) если costPrice есть у всех,
+       иначе cost_sum = opt (общая себестоимость заказа)
+    3) profit = sale_sum - cost_sum
+    4) min_profit = sale_sum * min_porog (по band)
+    5) excess_profit = profit - min_profit
+    """
+
+    profile = _get_profile_from_snapshot(policy) or {}
+    profile_name = profile.get("name") or profile.get("profile_name") or "unknown"
+
+    price_bands = profile.get("price_bands") or []
+    if not price_bands:
+        raise RuntimeError("price_bands is empty in config_snapshot profile (cannot resolve band)")
+
+    products = order.get("products", []) or []
+
+    sale_sum = Decimal("0")
+    cost_sum = Decimal("0")
+    missing_cost = False
+
+    for p in products:
+        qty = Decimal(str(p.get("amount", 0) or 0))
+        price = Decimal(str(p.get("price", 0) or 0))
+        sale_sum += price * qty
+
+        if p.get("costPrice") is None:
+            missing_cost = True
+        else:
+            cost = Decimal(str(p.get("costPrice", 0) or 0))
+            cost_sum += cost * qty
+
+    if missing_cost:
+        cost_sum = Decimal(str(order.get("opt", 0) or 0))
+
+    profit = sale_sum - cost_sum
+
+    band_id, band_min, band_max = _resolve_band(sale_sum, price_bands)
+
+    min_porog_map = getattr(policy, "min_porog_by_band", None) or {}
+    min_porog = Decimal(str(min_porog_map.get(band_id)))
+
+    rules = getattr(policy, "rules", None) or []
+    porog_used = _get_porog_for_band(rules, band_id)
+    if porog_used == Decimal("0"):
+        porog_used = min_porog
+
+    min_profit = sale_sum * min_porog
+    excess_profit = profit - min_profit
+
+    created_at_source = _parse_salesdrive_dt(order.get("orderTime"))
+
+    return {
+        "policy_log_id": policy.id,
+        "profile_name": profile_name,
+        "mode": policy.mode,
+        "city": policy.city,
+        "supplier": policy.supplier,
+        "segment_id": policy.segment_id,
+        "segment_start": policy.segment_start,
+        "segment_end": policy.segment_end,
+        "order_id": str(order.get("id")),
+        "order_number": order.get("tabletkiOrder"),
+        "status_id": int(order.get("statusId")),
+        "created_at_source": created_at_source,
+        "band_id": band_id,
+        "band_min_price": band_min,
+        "band_max_price": band_max,
+        "sale_price": sale_sum,
+        "cost": cost_sum,
+        "profit": profit,
+        "porog_used": porog_used,
+        "min_porog": min_porog,
+        "min_profit": min_profit,
+        "excess_profit": excess_profit,
+        "is_in_scope": True,
+        "note": None,
+        "raw": order,
+    }

@@ -40,7 +40,7 @@ balancer:
 
       # Настройки тестового перебора порогов
       test_schedule:
-        step: 0.02                 # шаг 2%
+        step: 0.01                 # шаг 2%
         max_porog_by_band:
           B1: 0.25                  # 15%..25%
           B2: 0.23                  # 13%..23%
@@ -78,7 +78,7 @@ balancer:
       # ВНИМАНИЕ: значения статусов ниже — пример. Замени на реальные status_id из KeyCRM.
       salesdrive:
         timezone: "Europe/Kyiv"
-        statuses_in_scope: [4, 5, 6]   # пример: подтверждён/в работе/завершён
+        statuses_in_scope: [1,9,16,4,19,18,10,11,12,14,15,13,5,6,7,17]   # пример: подтверждён/в работе/завершён
         exclude_cancelled: true
 
       thresholds:
@@ -118,7 +118,7 @@ balancer:
       # В LIVE профиле тестовый график не обязателен, но оставляем структуру на будущее.
       # Сейчас LIVE будет брать porog из best_30d (во 2-3 этапах разработки).
       test_schedule:
-        step: 0.02
+        step: 0.01
         max_porog_by_band:
           B1: 0.25
           B2: 0.23
@@ -152,7 +152,7 @@ balancer:
 
       salesdrive:
         timezone: "Europe/Kyiv"
-        statuses_in_scope: [4, 5, 6]   # пример: подтверждён/в работе/завершён
+        statuses_in_scope: [1,9,16,4,19,18,10,11,12,14,15,13,5,6,7,17]   # пример: подтверждён/в работе/завершён
         exclude_cancelled: true
 
       thresholds:
