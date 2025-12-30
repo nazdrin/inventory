@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
+import os
+
 from app.database import get_async_db
 from app.models import BalancerPolicyLog, BalancerOrderFacts, BalancerSegmentStats
 
@@ -85,11 +87,13 @@ def compute_policy_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-async def upsert_policy_log(payload: dict[str, Any]) -> BalancerPolicyLog:
+async def upsert_policy_log(payload: dict[str, Any]) -> tuple[BalancerPolicyLog, bool]:
     """Создаёт запись в balancer_policy_log, но не дублирует при повторном запуске.
 
-    Ищем по hash. Если нашли — возвращаем существующую запись.
-    Если нет — создаём новую.
+    Ищем по hash. Если нашли — возвращаем существующую запись и created=False.
+    Если нет — создаём новую и возвращаем created=True.
+
+    Важно: jobs.py ожидает распаковку `obj, created = await upsert_policy_log(payload)`.
     """
 
     payload = dict(payload)
@@ -101,13 +105,36 @@ async def upsert_policy_log(payload: dict[str, Any]) -> BalancerPolicyLog:
         res = await db.execute(q)
         existing = res.scalar_one_or_none()
         if existing is not None:
-            return existing
+            # If we re-run start_segment with the same hash, we still want to
+            # refresh mutable fields (e.g. reason/reason_details) because
+            # upstream normalization logic may have changed.
+            # NOTE: We do NOT change `hash`.
+            update_keys = (
+                "config_version",
+                "config_snapshot",
+                "city",
+                "supplier",
+                "segment_id",
+                "segment_start",
+                "segment_end",
+                "rules",
+                "min_porog_by_band",
+                "reason",
+                "reason_details",
+                "is_applied",
+            )
+            for k in update_keys:
+                if k in payload:
+                    setattr(existing, k, payload.get(k))
+            await db.commit()
+            await db.refresh(existing)
+            return existing, False
 
         obj = BalancerPolicyLog(**payload)
         db.add(obj)
         await db.commit()
         await db.refresh(obj)
-        return obj
+        return obj, True
 
 
 async def get_last_applied_policies() -> list[BalancerPolicyLog]:
@@ -118,20 +145,19 @@ async def get_last_applied_policies() -> list[BalancerPolicyLog]:
     """
 
     async with get_async_db() as db:
-        q = (
-            select(BalancerPolicyLog)
-            .where(BalancerPolicyLog.is_applied.is_(True))
-            .order_by(
-                BalancerPolicyLog.mode.asc(),
-                BalancerPolicyLog.city.asc(),
-                BalancerPolicyLog.supplier.asc(),
-                BalancerPolicyLog.segment_start.desc(),
-            )
-            .distinct(
-                BalancerPolicyLog.mode,
-                BalancerPolicyLog.city,
-                BalancerPolicyLog.supplier,
-            )
+        run_mode = os.getenv("BALANCER_RUN_MODE")
+        q = select(BalancerPolicyLog).where(BalancerPolicyLog.is_applied.is_(True))
+        if run_mode in ("LIVE", "TEST"):
+            q = q.where(BalancerPolicyLog.mode == run_mode)
+        q = q.order_by(
+            BalancerPolicyLog.mode.asc(),
+            BalancerPolicyLog.city.asc(),
+            BalancerPolicyLog.supplier.asc(),
+            BalancerPolicyLog.segment_start.desc(),
+        ).distinct(
+            BalancerPolicyLog.mode,
+            BalancerPolicyLog.city,
+            BalancerPolicyLog.supplier,
         )
         res = await db.execute(q)
         return list(res.scalars().all())

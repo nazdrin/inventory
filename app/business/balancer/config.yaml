@@ -5,16 +5,18 @@ balancer:
   # Профили позволяют параллельно держать часть поставщиков/городов в TEST,
   # а часть — в LIVE. Каждый профиль независим.
   profiles:
-    - name: kyiv_test_dsn
+    - name: kyiv_test_d1_d2
       mode: TEST
       scope:
         cities:
           - Kyiv
         suppliers:
+          - D1
           - D2
 
       # Справочник (чисто для читаемости в логах/интерфейсах)
       supplier_names:
+        D1: Biotus
         D2: DSN
 
       # Ценовые диапазоны (bands). band_id должен быть стабильным.
@@ -82,19 +84,19 @@ balancer:
         exclude_cancelled: true
 
       thresholds:
-        min_orders_per_segment: 5
+        min_orders_per_segment: 1
 
-
-    - name: kyiv_live_biotus
+    - name: Ivano-Frankivsk_live_d4
       mode: LIVE
       scope:
         cities:
-          - Kyiv
+      
+          - Ivano-Frankivsk
         suppliers:
-          - D1
+          - D4
 
       supplier_names:
-        D1: Biotus
+        D4: DOBAVKI.UA
 
       price_bands:
         - band_id: B1
@@ -115,17 +117,9 @@ balancer:
         B2: 0.13
         B3: 0.11
 
-      # В LIVE профиле тестовый график не обязателен, но оставляем структуру на будущее.
-      # Сейчас LIVE будет брать porog из best_30d (во 2-3 этапах разработки).
-      test_schedule:
-        step: 0.01
-        max_porog_by_band:
-          B1: 0.25
-          B2: 0.23
-          B3: 0.20
-        cycle_order: asc
-
       time_segments:
+        # NOTE: FULL_DAY placed first so it wins segment resolution (useful for diagnostics/testing).
+
         - segment_id: NIGHT
           name: "Night"
           start: "21:00"
@@ -152,8 +146,8 @@ balancer:
 
       salesdrive:
         timezone: "Europe/Kyiv"
-        statuses_in_scope: [1,9,16,4,19,18,10,11,12,14,15,13,5,6,7,17]   # пример: подтверждён/в работе/завершён
+        statuses_in_scope: [1,9,16,4,19,18,10,11,12,14,15,13,5,6,7,17]
         exclude_cancelled: true
 
       thresholds:
-        min_orders_per_segment: 5
+        min_orders_per_segment: 1
