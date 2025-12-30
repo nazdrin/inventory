@@ -78,6 +78,8 @@ async def build_test_policy_async(
     supplier: str,
     segment_id: str,
     day_date: date,
+    suppliers_in_profile: list[str] | None = None,
+    advance_state: bool = True,
 ) -> PolicyPayload:
     """Реальная TEST-политика на базе таблицы balancer_test_state.
 
@@ -99,6 +101,22 @@ async def build_test_policy_async(
         raise ValueError("test_schedule.step is required in profile for TEST mode")
 
     step = Decimal(str(step_f))
+
+    # Если профиль охватывает несколько поставщиков, состояние TEST-графика должно быть общим,
+    # иначе будет "переток" и некорректная статистика. Используем общий ключ supplier_state_key.
+    if suppliers_in_profile and len(suppliers_in_profile) > 1:
+        supplier_state_key = "|".join(sorted([str(s) for s in suppliers_in_profile]))
+    else:
+        supplier_state_key = supplier
+
+    # Если в профиле несколько поставщиков, состояние должен продвигать только один "лидер",
+    # иначе график будет сдвигаться несколько раз за один сегмент.
+    if suppliers_in_profile and len(suppliers_in_profile) > 1:
+        leader_supplier = sorted([str(s) for s in suppliers_in_profile])[0]
+        advance_state_effective = bool(advance_state) and (str(supplier) == leader_supplier)
+    else:
+        leader_supplier = None
+        advance_state_effective = bool(advance_state)
 
     # Детерминированный порядок band'ов
     band_ids = sorted(min_porog_by_band.keys())
@@ -123,7 +141,7 @@ async def build_test_policy_async(
             q = select(BalancerTestState).where(
                 BalancerTestState.profile_name == profile_name,
                 BalancerTestState.city == city,
-                BalancerTestState.supplier == supplier,
+                BalancerTestState.supplier == supplier_state_key,
                 BalancerTestState.segment_id == segment_id,
                 BalancerTestState.band_id == band_id,
                 BalancerTestState.day_date == day_date,
@@ -137,7 +155,7 @@ async def build_test_policy_async(
                     profile_name=profile_name,
                     mode="TEST",
                     city=city,
-                    supplier=supplier,
+                    supplier=supplier_state_key,
                     segment_id=segment_id,
                     band_id=band_id,
                     day_date=day_date,
@@ -164,18 +182,22 @@ async def build_test_policy_async(
 
             rules.append({"band_id": band_id, "porog": float(porog_used)})
 
-            # 4) Считаем следующий и сохраняем
-            direction = int(row.direction)
-            next_current, next_dir = _next_porog(porog_used, step, lo, hi, direction)
+            # 4) Считаем следующий и сохраняем (только если это "ведущий" вызов для группы)
+            if advance_state_effective:
+                direction = int(row.direction)
+                next_current, next_dir = _next_porog(porog_used, step, lo, hi, direction)
 
-            row.current_porog = float(next_current)
-            row.step = float(step)
-            row.min_porog = float(lo)
-            row.max_porog = float(hi)
-            row.direction = int(next_dir)
-            row.updated_at = now
+                row.current_porog = float(next_current)
+                row.step = float(step)
+                row.min_porog = float(lo)
+                row.max_porog = float(hi)
+                row.direction = int(next_dir)
+                row.updated_at = now
 
-        await db.commit()
+        if advance_state_effective:
+            await db.commit()
+        else:
+            await db.rollback()
 
     return PolicyPayload(
         rules=rules,
@@ -185,6 +207,11 @@ async def build_test_policy_async(
             "schedule": "test_schedule",
             "step": float(step),
             "day_date": day_date.isoformat(),
+            "supplier_state_key": supplier_state_key,
+            "advance_state_requested": bool(advance_state),
+            "advance_state_effective": advance_state_effective,
+            "advance_state": advance_state_effective,
+            "leader_supplier": leader_supplier,
         },
     )
 
@@ -197,42 +224,69 @@ async def build_live_policy_async(
     supplier: str,
     segment_id: str,
     day_date: date,
+    suppliers_in_profile: list[str] | None = None,
 ) -> PolicyPayload:
     """
     LIVE‑политика:
-    - пытаемся взять лучший porog за последние 30 дней (best_30d)
-    - если данных нет → используем min_porog_by_band
+    - first try LIVE best_30d
+    - else use TEST seed best_30d
+    - else fallback min_porog_by_band
     """
 
     min_porog_by_band = profile.get("min_porog_by_band", {})
     if not min_porog_by_band:
         raise ValueError("min_porog_by_band is required in profile")
 
-    best_map = await get_best_porog_30d(
-        mode="TEST",
+    # Если профиль охватывает несколько поставщиков, статистика best_30d должна быть общей
+    # (как и состояние графика в TEST). Поэтому используем общий ключ supplier_state_key.
+    if suppliers_in_profile and len(suppliers_in_profile) > 1:
+        supplier_state_key = "|".join(sorted([str(s) for s in suppliers_in_profile]))
+    else:
+        supplier_state_key = supplier
+
+    # 1) Prefer LIVE best_30d; if absent per-band, seed from TEST best_30d
+    best_live_map = await get_best_porog_30d(
+        mode="LIVE",
         city=city,
-        supplier=supplier,
+        supplier=supplier_state_key,
         segment_id=segment_id,
         day_date=day_date,
     )
-    # best_map: {band_id: porog}
+
+    best_test_seed_map = await get_best_porog_30d(
+        mode="TEST",
+        city=city,
+        supplier=supplier_state_key,
+        segment_id=segment_id,
+        day_date=day_date,
+    )
+
+    # В LIVE тоже ограничиваем порог сверху, если задан max_porog_by_band (обычно из test_schedule)
+    sched = profile.get("test_schedule", {})
+    max_porog_by_band = sched.get("max_porog_by_band", {})
 
     rules: list[dict[str, Any]] = []
     band_sources: dict[str, str] = {}
 
-    for band_id, min_porog in min_porog_by_band.items():
-        if band_id in best_map:
-            porog = Decimal(str(best_map[band_id]))
-            band_sources[band_id] = "best_30d"
+    for band_id in sorted(min_porog_by_band.keys()):
+        min_porog = min_porog_by_band[band_id]
+        if band_id in best_live_map:
+            porog = Decimal(str(best_live_map[band_id]))
+            band_sources[band_id] = "best_30d_live"
+        elif band_id in best_test_seed_map:
+            porog = Decimal(str(best_test_seed_map[band_id]))
+            band_sources[band_id] = "seed_best_30d_test"
         else:
             porog = Decimal(str(min_porog))
             band_sources[band_id] = "fallback_min_porog"
 
-        # safety: porog >= min_porog
+        hi_val = max_porog_by_band.get(band_id)
+        hi = Decimal(str(hi_val)) if hi_val is not None else Decimal("1.0")
+
         porog = _clamp_decimal(
             porog,
             Decimal(str(min_porog)),
-            Decimal("1.0"),
+            hi,
         )
 
         rules.append(
@@ -247,8 +301,9 @@ async def build_live_policy_async(
         min_porog_by_band={k: float(v) for k, v in min_porog_by_band.items()},
         reason="best_30d",
         reason_details={
-            "source": "balancer_segment_stats",
+            "source": "balancer_segment_stats_live_then_test_seed",
             "day_date": day_date.isoformat(),
             "band_sources": band_sources,
+            "supplier_state_key": supplier_state_key,
         },
     )

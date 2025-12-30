@@ -24,6 +24,7 @@ from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed
 from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
 from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
+from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -84,6 +85,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D4": parse_feed_D4,
     "D5": parse_feed_D5,
     "D6": parse_feed_D6,
+    "D7": parse_feed_D7,
 }
 
 # --------------------------------------------------------------------------------------
@@ -213,45 +215,117 @@ async def fetch_competitor_price(session: AsyncSession, product_code: str, city:
     return _to_decimal(row[0]) if row else None
 
 
-# --- Новый хелпер: получение правил ценообразования предприятия ---
-async def fetch_enterprise_pricing_rules(session: AsyncSession, enterprise_code: str) -> List[Decimal]:
+
+# --- Новый хелпер: получить последнюю применённую политику балансировщика для city+supplier ---
+async def fetch_latest_balancer_policy(
+    session: AsyncSession,
+    *,
+    city: str,
+    supplier_code: str,
+) -> Optional[dict]:
     """
-    Читает из enterprise_settings по enterprise_code:
-      - google_drive_folder_id_rest (ценовые диапазоны, строка вида "400,1000,1500")
+    Берём последнюю применённую политику из balancer_policy_log:
+      - is_applied = true
+      - city = :city
+      - supplier = :supplier_code
 
-    Возвращает:
-      ranges_list — [Decimal("400"), Decimal("1000"), ...]
-
-    ВАЖНО: enterprise_code — это код предприятия из аргумента run_pipeline (-e), а не код поставщика.
+    Возвращает dict:
+      {
+        "rules": [{"band_id": "...", "porog": 0.15}, ...],
+        "min_porog_by_band": {"B1": 0.15, ...},
+        "price_bands": [{"band_id": "B1", "min": 0, "max": 300}, ...]  # из config_snapshot профиля
+        "segment_id": "...",
+        "segment_start": "...",
+        "segment_end": "..."
+      }
+    Если записи нет — None.
     """
     sql = text("""
-        SELECT google_drive_folder_id_rest
-        FROM enterprise_settings
-        WHERE enterprise_code = :enterprise_code
+        SELECT
+            rules,
+            min_porog_by_band,
+            config_snapshot,
+            segment_id,
+            segment_start,
+            segment_end
+        FROM balancer_policy_log
+        WHERE is_applied = true
+          AND city = :city
+          AND supplier = :supplier
+        ORDER BY segment_start DESC, id DESC
         LIMIT 1
     """)
-    res = await session.execute(sql, {"enterprise_code": enterprise_code})
+    res = await session.execute(sql, {"city": city, "supplier": supplier_code})
     row = res.first()
     if not row:
-        return []
+        return None
 
-    ranges_raw = row[0]
+    rules, min_porog_by_band, config_snapshot, segment_id, segment_start, segment_end = row
 
-    # parse ranges
-    ranges: List[Decimal] = []
-    if isinstance(ranges_raw, str) and ranges_raw.strip():
-        for part in ranges_raw.split(","):
-            p = part.strip()
-            if not p:
-                continue
+    # config_snapshot может быть NULL
+    price_bands = []
+    try:
+        if isinstance(config_snapshot, dict):
+            # ищем профиль, который подходит под city+supplier
+            profiles = config_snapshot.get("profiles") or []
+            for p in profiles:
+                scope = (p.get("scope") or {})
+                cities = scope.get("cities") or []
+                suppliers = scope.get("suppliers") or []
+                if city in cities and supplier_code in suppliers:
+                    price_bands = p.get("price_bands") or []
+                    break
+    except Exception:
+        price_bands = []
+
+    return {
+        "rules": rules or [],
+        "min_porog_by_band": min_porog_by_band or {},
+        "price_bands": price_bands or [],
+        "segment_id": segment_id,
+        "segment_start": segment_start,
+        "segment_end": segment_end,
+    }
+
+
+def resolve_band_id_from_bands(price: Decimal, bands: list[dict]) -> Optional[str]:
+    """
+    Определяем band_id по цене (берём rr, а если rr=0 — можно подать любую базовую цену).
+    bands: [{"band_id":"B1","min":0,"max":300}, ...]
+    Правило: min <= price < max, если max отсутствует/null -> price >= min.
+    """
+    if price is None:
+        return None
+    p = _to_decimal(price)
+    if p <= 0:
+        return None
+
+    for b in bands or []:
+        try:
+            band_id = str(b.get("band_id"))
+            mn = _to_decimal(b.get("min"))
+            mx_raw = b.get("max")
+            mx = None if mx_raw is None else _to_decimal(mx_raw)
+
+            if mx is None:
+                if p >= mn:
+                    return band_id
+            else:
+                if p >= mn and p < mx:
+                    return band_id
+        except Exception:
+            continue
+    return None
+
+
+def rule_porog_by_band(rules: list[dict], band_id: str) -> Optional[Decimal]:
+    for r in rules or []:
+        if str(r.get("band_id")) == str(band_id):
             try:
-                ranges.append(Decimal(p))
+                return _to_decimal(r.get("porog"))
             except Exception:
-                continue
-
-    # keep as-is order, but drop non-positive
-    ranges = [r for r in ranges if r > 0]
-    return ranges
+                return None
+    return None
 
 
 
@@ -266,7 +340,6 @@ def compute_price_for_item(
     price_retail: Optional[float | Decimal],
     price_opt: Optional[float | Decimal],
     threshold_percent_effective: Optional[float | Decimal],
-    price_ranges: List[Decimal],
     discount_min: Decimal = Decimal("0.001"),   # 0.1%
     discount_max: Decimal = Decimal("0.01"),    # 1%
 ) -> Decimal:
@@ -278,25 +351,8 @@ def compute_price_for_item(
       - po: оптовая цена
       - competitor_price
       - threshold_percent_effective: порог (в процентах или доле), уже с учётом cap (store_serial)
-      - price_ranges: ценовые диапазоны (например [400, 1000, 1500]) из enterprise_settings
 
-    Алгоритм:
-      1) Если is_rrp=True и rr>0 → ЖЁСТКАЯ РРЦ: rr (округление до копейки)
-      2) Пороговая цена: po * (1 + threshold)
-      3) Цена под конкурента:
-           target = competitor_price * (1 - random_discount)
-           но разница с конкурентом должна быть минимум 2 грн и максимум 15 грн.
-      4) Итог:
-         - Цена под конкурента НЕ может быть выше rr.
-         - Если (есть конкурент) и (цена под конкурента >= пороговой) → берём цену под конкурента.
-         - Если цена под конкурента < пороговой →
-              если rr < first_range → rr
-              иначе → пороговая
-         - Если конкурента нет →
-              если rr < first_range → rr
-              иначе → пороговая
-
-    Примечание: если rr отсутствует/0, то в местах где rr требуется, берём пороговую.
+    Примечание: если rr отсутствует/0, то в местах где rr требуется, берём threshold_price.
     """
     rr = _to_decimal(price_retail)
     po = _to_decimal(price_opt)
@@ -322,9 +378,6 @@ def compute_price_for_item(
     if po > 0 and thr >= 0:
         threshold_price = po * (Decimal("1") + thr)
 
-    # 3) Первый ценовой диапазон
-    first_range = price_ranges[0] if price_ranges else Decimal("0")
-
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
     if competitor_price is not None and competitor_price > 0:
@@ -349,8 +402,8 @@ def compute_price_for_item(
     if under_competitor is not None and rr > 0:
         under_competitor = min(under_competitor, rr)
 
-    # 6) Выбор итоговой цены
-    # Если нет rr и нет threshold_price — fallback в 0
+    # 6) Выбор итоговой цены (без enterprise_settings диапазонов)
+    # Если rr отсутствует/0, то в местах где rr требуется, берём threshold_price.
     def _fallback() -> Decimal:
         if rr > 0:
             return rr
@@ -360,11 +413,12 @@ def compute_price_for_item(
             return under_competitor
         return Decimal("0")
 
-    # Если конкурента нет — идём по диапазонам
+    # Если конкурента нет
     if under_competitor is None:
-        if rr > 0 and first_range > 0 and rr < first_range:
-            return _round_money(rr)
         if threshold_price > 0:
+            # не поднимаем выше rr, если rr задан и меньше пороговой
+            if rr > 0 and rr < threshold_price:
+                return _round_money(rr)
             return _round_money(threshold_price)
         return _round_money(_fallback())
 
@@ -373,10 +427,10 @@ def compute_price_for_item(
         return _round_money(under_competitor)
 
     # under_competitor < threshold_price
-    if rr > 0 and first_range > 0 and rr < first_range:
-        return _round_money(rr)
-
     if threshold_price > 0:
+        # не поднимаем выше rr, если rr задан и меньше пороговой
+        if rr > 0 and rr < threshold_price:
+            return _round_money(rr)
         return _round_money(threshold_price)
 
     return _round_money(_fallback())
@@ -515,18 +569,8 @@ async def process_supplier(
     retail_markup = getattr(ent, "retail_markup", None)
 
     min_markup_threshold = ent.min_markup_threshold or 0
-
-    # Правила предприятия (ценовые диапазоны) берём по enterprise_code (аргумент пайплайна)
-    price_ranges: List[Decimal] = []
-    if getattr(ent, "enterprise_code", None):
-        # если вдруг у DropshipEnterprise есть enterprise_code — используем его
-        price_ranges = await fetch_enterprise_pricing_rules(session, str(ent.enterprise_code))
-    # enterprise_code для пайплайна приходит извне, поэтому пробрасываем его через ent._pipeline_enterprise_code (см. ниже)
-    if hasattr(ent, "_pipeline_enterprise_code") and ent._pipeline_enterprise_code:
-        price_ranges = await fetch_enterprise_pricing_rules(session, str(ent._pipeline_enterprise_code))
-
-    # Порог берём ТОЛЬКО из dropship_enterprises (без ограничения store_serial)
-    effective_threshold_percent = min_markup_threshold
+    # Порог поставщика (из dropship_enterprises). Если 0/None — берём порог из балансировщика по band_id.
+    supplier_threshold_percent = Decimal(str(min_markup_threshold)) if min_markup_threshold else Decimal("0")
 
     # 5.4 города поставщика
     cities = _split_cities(ent.city or "")
@@ -551,8 +595,19 @@ async def process_supplier(
                 continue
             comp_map[(str(code_val), city_val)] = _to_decimal(price_val)
 
+    # Кэш политик балансировщика на город
+    balancer_policy_cache: Dict[str, Optional[dict]] = {}
+
     # 5.6 цикл по городам и товарам
     for city in cities:
+        # Подтягиваем последнюю применённую политику балансировщика для (city, supplier_code)
+        if city not in balancer_policy_cache:
+            balancer_policy_cache[city] = await fetch_latest_balancer_policy(
+                session,
+                city=city,
+                supplier_code=code,
+            )
+        bal_policy = balancer_policy_cache[city]
         logger.info("Supplier %s / city %s / items %d", code, city, len(mapped))
         for it in mapped:
             product_code = str(it["product_code"])  # это ID из catalog_mapping."ID"
@@ -561,6 +616,34 @@ async def process_supplier(
             po = it.get("price_opt")
 
             competitor = comp_map.get((product_code, city))
+
+            # Выбор порога:
+            # 1) если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
+            # 2) иначе пытаемся взять порог из балансировщика по band_id (band определяем по rr)
+            threshold_percent_effective = supplier_threshold_percent
+
+            if threshold_percent_effective <= 0 and bal_policy:
+                bands = bal_policy.get("price_bands") or []
+                rules = bal_policy.get("rules") or []
+                min_map = bal_policy.get("min_porog_by_band") or {}
+
+                rr_dec = _to_decimal(rr)
+                band_id = resolve_band_id_from_bands(rr_dec, bands)
+
+                # если band_id не определился (rr=0), пробуем от competitor_price, иначе от po
+                if not band_id and competitor is not None:
+                    band_id = resolve_band_id_from_bands(_to_decimal(competitor), bands)
+                if not band_id:
+                    band_id = resolve_band_id_from_bands(_to_decimal(po), bands)
+
+                if band_id:
+                    porog_from_rules = rule_porog_by_band(rules, band_id)
+                    min_porog = _to_decimal(min_map.get(band_id)) if min_map else Decimal("0")
+                    if porog_from_rules is not None and porog_from_rules > 0:
+                        threshold_percent_effective = porog_from_rules
+                    else:
+                        threshold_percent_effective = min_porog
+
             price = compute_price_for_item(
                 competitor_price=competitor,
                 is_rrp=is_rrp,
@@ -568,8 +651,7 @@ async def process_supplier(
                 retail_markup=retail_markup,
                 price_retail=rr,
                 price_opt=po,
-                threshold_percent_effective=effective_threshold_percent,
-                price_ranges=price_ranges,
+                threshold_percent_effective=threshold_percent_effective,
             )
 
             # Сохраняем price_opt в offers.wholesale_price (если пришло)
