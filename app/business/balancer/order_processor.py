@@ -12,19 +12,42 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 def _get_profile_from_snapshot(policy: Any) -> dict[str, Any] | None:
     """
     В policy.config_snapshot мы сохраняем cfg.balancer, где есть profiles.
-    Находим профиль по (mode, city, supplier).
+
+    ВАЖНО: config_snapshot — это снимок всего cfg.balancer, где могут быть одновременно
+    TEST и LIVE профили. Поэтому профиль нужно выбирать по scope (city + supplier),
+    а НЕ по mode.
+
+    Приоритет выбора:
+      1) точное совпадение: city ∈ scope.cities И supplier ∈ scope.suppliers
+      2) fallback: supplier ∈ scope.suppliers (если city в заказах смешан/не совпал)
+      3) fallback: любой профиль, где есть price_bands (чтобы не падать в проде)
     """
     snap = getattr(policy, "config_snapshot", None) or {}
     profiles = snap.get("profiles", []) or []
+
+    policy_city = getattr(policy, "city", None)
+    policy_supplier = getattr(policy, "supplier", None)
+
+    # 1) основной матч: по scope (city + supplier)
     for prof in profiles:
-        if str(prof.get("mode", "")).upper() != str(getattr(policy, "mode", "")).upper():
-            continue
         scope = prof.get("scope", {}) or {}
-        if getattr(policy, "city", None) not in (scope.get("cities", []) or []):
+        if policy_city not in (scope.get("cities", []) or []):
             continue
-        if getattr(policy, "supplier", None) not in (scope.get("suppliers", []) or []):
+        if policy_supplier not in (scope.get("suppliers", []) or []):
             continue
         return prof
+
+    # 2) fallback: по supplier
+    for prof in profiles:
+        scope = prof.get("scope", {}) or {}
+        if policy_supplier in (scope.get("suppliers", []) or []):
+            return prof
+
+    # 3) fallback: любой профиль с price_bands
+    for prof in profiles:
+        if prof.get("price_bands"):
+            return prof
+
     return None
 
 
@@ -87,7 +110,15 @@ def build_order_facts(policy: Any, order: dict[str, Any]) -> dict[str, Any]:
 
     price_bands = profile.get("price_bands") or []
     if not price_bands:
-        raise RuntimeError("price_bands is empty in config_snapshot profile (cannot resolve band)")
+        raise RuntimeError(
+            "price_bands is empty in config_snapshot (cannot resolve band): "
+            f"policy_id={getattr(policy, 'id', None)} "
+            f"mode={getattr(policy, 'mode', None)} "
+            f"city={getattr(policy, 'city', None)} "
+            f"supplier={getattr(policy, 'supplier', None)} "
+            f"matched_profile_name={profile_name} "
+            f"matched_profile_mode={profile.get('mode')}"
+        )
 
     products = order.get("products", []) or []
 
