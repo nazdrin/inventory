@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -17,12 +17,17 @@ __all__ = [
     "compute_policy_hash",
     "upsert_policy_log",
     "get_last_applied_policies",
+    "get_applied_policies_by_segment_end",
     "upsert_order_fact",
     "get_order_facts_for_policy",
     "upsert_segment_stats",
     "get_segment_stats_for_day_scope",
     "update_day_metrics_for_segment",
     "get_best_porog_30d",
+    "get_best_porog_30d_global_test",
+    "get_best_porog_30d_global_live",
+    "get_best_porog_30d_global_best",
+    "get_active_policy_for_pricing",
 ]
 
 
@@ -137,6 +142,7 @@ async def upsert_policy_log(payload: dict[str, Any]) -> tuple[BalancerPolicyLog,
         return obj, True
 
 
+
 async def get_last_applied_policies() -> list[BalancerPolicyLog]:
     """Возвращает последние применённые политики по каждой паре (mode, city, supplier).
 
@@ -159,6 +165,74 @@ async def get_last_applied_policies() -> list[BalancerPolicyLog]:
             BalancerPolicyLog.city,
             BalancerPolicyLog.supplier,
         )
+        res = await db.execute(q)
+        return list(res.scalars().all())
+
+
+# --- New helper and function: get_applied_policies_by_segment_end ---
+
+def _parse_dt_utc(value: str) -> datetime:
+    """Parse ISO datetime string into timezone-aware UTC datetime."""
+    s = (value or "").strip()
+    if not s:
+        raise ValueError("empty datetime")
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+async def get_applied_policies_by_segment_end(
+    *,
+    segment_end: datetime | str,
+    mode: str | None = None,
+) -> list[BalancerPolicyLog]:
+    """Возвращает применённые политики ровно для закрытого сегмента (по segment_end).
+
+    Используется шедуллером/джобой, которая запускается ПОСЛЕ окончания сегмента,
+    чтобы собрать заказы и записать факты строго для завершившегося окна.
+
+    segment_end:
+      - datetime (tz-aware желательно) или ISO-строка (UTC)
+    mode:
+      - None -> берём из env BALANCER_RUN_MODE (если LIVE/TEST)
+      - иначе конкретно "LIVE" или "TEST"
+
+    Возвращает список политик (по всем city/supplier), которые:
+      - is_applied = true
+      - segment_end == указанному
+      - mode == выбранному (если задан)
+    """
+
+    if isinstance(segment_end, str):
+        seg_end = _parse_dt_utc(segment_end)
+    else:
+        seg_end = segment_end
+        if seg_end.tzinfo is None:
+            seg_end = seg_end.replace(tzinfo=timezone.utc)
+        seg_end = seg_end.astimezone(timezone.utc)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = None
+
+    async with get_async_db() as db:
+        q = (
+            select(BalancerPolicyLog)
+            .where(
+                BalancerPolicyLog.is_applied.is_(True),
+                BalancerPolicyLog.segment_end == seg_end,
+            )
+            .order_by(
+                BalancerPolicyLog.mode.asc(),
+                BalancerPolicyLog.city.asc(),
+                BalancerPolicyLog.supplier.asc(),
+            )
+        )
+
+        if run_mode:
+            q = q.where(BalancerPolicyLog.mode == run_mode)
+
         res = await db.execute(q)
         return list(res.scalars().all())
 
@@ -351,3 +425,206 @@ async def get_best_porog_30d(
         best[band_id] = float(r.porog_used)
 
     return best
+
+
+async def _get_best_porog_30d_global(
+    *,
+    mode: str,  # "TEST" или "LIVE"
+    segment_id: str,
+    day_date,
+    lookback_days: int = 30,
+) -> dict[str, dict[str, float | str]]:
+    """Глобальный best porog по (segment_id, band_id) без разреза по city/supplier.
+
+    Фильтры:
+    - orders_sample_ok = true
+    - day_date in [day_date-lookback_days, day_date)
+
+    Критерий выбора по каждому band_id:
+    - максимальный excess_profit_sum
+
+    Возвращает:
+    {
+      "B1": {"porog": 0.15, "excess_profit_sum": 123.45, "source": "best_30d_test_global"},
+      ...
+    }
+    """
+    from datetime import timedelta
+
+    mode = str(mode or "").upper().strip()
+    start_date = day_date - timedelta(days=int(lookback_days))
+
+    async with get_async_db() as db:
+        q = (
+            select(BalancerSegmentStats)
+            .where(
+                BalancerSegmentStats.mode == mode,
+                BalancerSegmentStats.segment_id == segment_id,
+                BalancerSegmentStats.day_date >= start_date,
+                BalancerSegmentStats.day_date < day_date,
+                BalancerSegmentStats.orders_sample_ok.is_(True),
+            )
+            .order_by(
+                BalancerSegmentStats.band_id.asc(),
+                BalancerSegmentStats.excess_profit_sum.desc(),
+            )
+        )
+        res = await db.execute(q)
+        rows = list(res.scalars().all())
+
+    src = "best_30d_test_global" if mode == "TEST" else "best_30d_live_global"
+
+    best: dict[str, dict[str, float | str]] = {}
+    for r in rows:
+        band_id = str(r.band_id)
+        if band_id in best:
+            continue
+        best[band_id] = {
+            "porog": float(r.porog_used),
+            "excess_profit_sum": float(r.excess_profit_sum or 0),
+            "source": src,
+        }
+
+    return best
+
+
+async def get_best_porog_30d_global_test(
+    *,
+    segment_id: str,
+    day_date,
+    lookback_days: int = 30,
+) -> dict[str, dict[str, float | str]]:
+    """Глобальный best porog из TEST по (segment_id, band_id)."""
+    return await _get_best_porog_30d_global(
+        mode="TEST",
+        segment_id=segment_id,
+        day_date=day_date,
+        lookback_days=lookback_days,
+    )
+
+
+async def get_best_porog_30d_global_live(
+    *,
+    segment_id: str,
+    day_date,
+    lookback_days: int = 30,
+) -> dict[str, dict[str, float | str]]:
+    """Глобальный best porog из LIVE по (segment_id, band_id)."""
+    return await _get_best_porog_30d_global(
+        mode="LIVE",
+        segment_id=segment_id,
+        day_date=day_date,
+        lookback_days=lookback_days,
+    )
+
+
+async def get_best_porog_30d_global_best(
+    *,
+    segment_id: str,
+    day_date,
+    lookback_days: int = 30,
+) -> dict[str, dict[str, float | str]]:
+    """Лучший global porog по band_id из (TEST global vs LIVE global).
+
+    Выбор между TEST и LIVE делаем по максимальному excess_profit_sum.
+    """
+    test_best = await get_best_porog_30d_global_test(
+        segment_id=segment_id,
+        day_date=day_date,
+        lookback_days=lookback_days,
+    )
+    live_best = await get_best_porog_30d_global_live(
+        segment_id=segment_id,
+        day_date=day_date,
+        lookback_days=lookback_days,
+    )
+
+    out: dict[str, dict[str, float | str]] = {}
+
+    for band_id in set(test_best.keys()) | set(live_best.keys()):
+        t = test_best.get(band_id)
+        l = live_best.get(band_id)
+
+        if t and not l:
+            out[band_id] = t
+            continue
+        if l and not t:
+            out[band_id] = l
+            continue
+
+        # оба есть — выбираем по excess_profit_sum
+        if float(l.get("excess_profit_sum", 0)) >= float(t.get("excess_profit_sum", 0)):
+            out[band_id] = l
+        else:
+            out[band_id] = t
+
+    return out
+# --- Pricing read-only API ---
+async def get_active_policy_for_pricing(
+    *,
+    mode: str,
+    supplier: str,
+    city: str,
+    as_of: datetime,
+) -> dict[str, Any] | None:
+    """
+    Возвращает активную (последнюю применённую) политику для ценообразования.
+
+    Используется модулем ценообразования (dropship_pipeline).
+    READ-ONLY, никаких записей в БД.
+
+    Вход:
+      - mode: "LIVE" | "TEST"
+      - supplier: код поставщика (D1, D2, ...)
+      - city: город
+      - as_of: datetime, для которого ищем активный сегмент
+
+    Выход (или None):
+      {
+        "policy_id": int,
+        "hash": str,
+        "segment_id": str,
+        "segment_start": datetime,
+        "segment_end": datetime,
+        "rules": list[{band_id, porog}],
+        "reason": str,
+        "reason_details": dict | None,
+      }
+    """
+
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=timezone.utc)
+
+    async with get_async_db() as db:
+        q = (
+            select(BalancerPolicyLog)
+            .where(
+                BalancerPolicyLog.is_applied.is_(True),
+                BalancerPolicyLog.mode == mode,
+                BalancerPolicyLog.supplier == supplier,
+                BalancerPolicyLog.city == city,
+                BalancerPolicyLog.segment_start <= as_of,
+                BalancerPolicyLog.segment_end > as_of,
+            )
+            .order_by(BalancerPolicyLog.segment_start.desc())
+            .limit(1)
+        )
+
+        res = await db.execute(q)
+        policy = res.scalar_one_or_none()
+
+        if policy is None:
+            return None
+
+        return {
+            "policy_id": policy.id,
+            "hash": policy.hash,
+            "mode": policy.mode,
+            "segment_id": policy.segment_id,
+            "segment_start": policy.segment_start,
+            "segment_end": policy.segment_end,
+            "rules": policy.rules or [],
+            "min_porog_by_band": policy.min_porog_by_band or {},
+            "reason": policy.reason,
+            "reason_details": policy.reason_details,
+        }

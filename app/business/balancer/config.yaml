@@ -5,19 +5,33 @@ balancer:
   # Профили позволяют параллельно держать часть поставщиков/городов в TEST,
   # а часть — в LIVE. Каждый профиль независим.
   profiles:
-    - name: kyiv_test_d1_d2
+    - name: _test_global
       mode: TEST
       scope:
         cities:
+  
           - Kyiv
+          - Lviv
+          - Kremenchuk
+          - Ivano-Frankivsk
         suppliers:
           - D1
           - D2
+          - D3
+          - D5
+          - D6
+ 
+          - D4
 
       # Справочник (чисто для читаемости в логах/интерфейсах)
       supplier_names:
+ 
+        D4: DOBAVKI.UA
         D1: Biotus
         D2: DSN
+        D3: ProteinPlus
+        D5: Monsterlab
+        D6: SportAtlet
 
       # Ценовые диапазоны (bands). band_id должен быть стабильным.
       price_bands:
@@ -90,13 +104,12 @@ balancer:
       mode: LIVE
       scope:
         cities:
-      
-          - Ivano-Frankivsk
+         
         suppliers:
-          - D4
+       
 
       supplier_names:
-        D4: DOBAVKI.UA
+    
 
       price_bands:
         - band_id: B1

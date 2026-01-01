@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import os
+from app.services.notification_service import send_notification
+from collections import Counter
 
 from typing import Any
 
 from .config import load_config
 from .segments import resolve_current_segment
 from .policy import build_test_policy_async, build_live_policy_async
-from .repository import create_policy_log_record, upsert_policy_log
+from .repository import (
+    create_policy_log_record,
+    upsert_policy_log,
+    get_best_porog_30d_global_best,
+)
 from .salesdrive_client import fetch_orders_for_segment
 from .order_processor import build_order_facts
+from datetime import timedelta, datetime, timezone
 
 __all__ = [
     "start_segment_dry_run_async",
@@ -17,8 +24,45 @@ __all__ = [
     "collect_orders_for_last_policy_async",
     "aggregate_stats_for_last_policy_async",
     "compute_day_metrics_for_last_policies_async",
+    "run_balancer_pipeline_async",
 ]
 
+def _parse_collect_segment_end_utc() -> datetime | None:
+    """
+    Scheduler can pass BALANCER_COLLECT_SEGMENT_END_UTC.
+    If set -> this run is a 'segment close' run, and we must collect/aggregate
+    ONLY for policies whose segment_end equals this boundary.
+    """
+    v = (os.getenv("BALANCER_COLLECT_SEGMENT_END_UTC") or "").strip()
+    if not v:
+        return None
+    try:
+        dt = datetime.fromisoformat(v)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _filter_policies_by_collect_end(policies: list[Any]) -> list[Any]:
+    collect_end = _parse_collect_segment_end_utc()
+    if not collect_end:
+        return policies
+
+    out: list[Any] = []
+    for p in policies:
+        try:
+            pe = getattr(p, "segment_end", None)
+            if pe is None:
+                continue
+            if pe.tzinfo is None:
+                pe = pe.replace(tzinfo=timezone.utc)
+            if pe.astimezone(timezone.utc) == collect_end:
+                out.append(p)
+        except Exception:
+            continue
+    return out
 
 async def start_segment_dry_run_async() -> list[dict[str, Any]]:
     """Этап 2.4: без записи в БД policy_log, но TEST использует состояние в БД.
@@ -49,7 +93,7 @@ async def start_segment_dry_run_async() -> list[dict[str, Any]]:
             return reason, details
 
         # Detect if any band actually used best_30d.
-        any_best = any(str(v) == "best_30d" for v in band_sources.values())
+        any_best = any(str(v).startswith("best_30d") for v in band_sources.values())
         all_fallback = all(str(v) == "fallback_min_porog" for v in band_sources.values())
 
         if all_fallback and not any_best:
@@ -153,17 +197,53 @@ async def start_segment_dry_run_async() -> list[dict[str, Any]]:
                         )
                         out.append(rec)
                     else:
-                        # LIVE: строим политику из best_30d (с фоллбеком на min_porog_by_band внутри policy.py)
-                        policy = await build_live_policy_async(
-                            profile,
-                            city=city,
-                            supplier=supplier,
+                        # LIVE: строим политику из GLOBAL best_30d (TEST_GLOBAL + LIVE_GLOBAL -> BEST_GLOBAL)
+                        # (не city/supplier-специфично, чтобы не упираться в маленькую выборку)
+                        # IMPORTANT: repository uses window day_date < day_date_param,
+                        # so to include already-computed stats for `day_date` (today),
+                        # we query best "as of" next day.
+                        best_asof = day_date + timedelta(days=1)
+
+                        best_global = await get_best_porog_30d_global_best(
                             segment_id=seg.segment_id,
-                            day_date=day_date,
-                            suppliers_in_profile=[str(s) for s in suppliers] if len(suppliers) > 1 else None,
+                            day_date=best_asof,
+                            lookback_days=30,
                         )
-                        # Normalize reason to avoid misleading "best_30d" when we actually used fallback for all bands.
-                        norm_reason, norm_details = _normalized_reason_and_details(policy)
+
+                        # Собираем rules: если для band есть global best — берем его, иначе fallback на min_porog_by_band
+                        rules: list[dict[str, Any]] = []
+                        band_sources: dict[str, str] = {}
+                        for band in profile.get("price_bands") or []:
+                            band_id = str(band.get("band_id"))
+                            if not band_id:
+                                continue
+                            if band_id in (best_global or {}):
+                                info = (best_global or {}).get(band_id) or {}
+                                porog_val = float(info.get("porog"))
+                                src = str(info.get("source") or "best_30d")
+                                rules.append({"band_id": band_id, "porog": porog_val})
+                                band_sources[band_id] = src
+                            else:
+                                porog_val = float((profile.get("min_porog_by_band") or {}).get(band_id) or 0)
+                                rules.append({"band_id": band_id, "porog": porog_val})
+                                band_sources[band_id] = "fallback_min_porog"
+
+                        # reason_details: храним band_sources как источник истины
+                        reason_details = {
+                            "source": "best_30d_global",
+                            "day_date": str(best_asof),
+                            "band_sources": band_sources,
+                            "supplier_state_key": str(supplier),
+                        }
+
+                        # Нормализуем верхнеуровневую reason по фактическим band_sources
+                        class _TmpPolicy:
+                            def __init__(self):
+                                self.reason = "best_30d"
+                                self.reason_details = reason_details
+
+                        norm_reason, norm_details = _normalized_reason_and_details(_TmpPolicy())
+
                         rec = create_policy_log_record(
                             mode=effective_mode,
                             config_version=int(cfg.balancer.get("version", 1)),
@@ -172,8 +252,8 @@ async def start_segment_dry_run_async() -> list[dict[str, Any]]:
                             segment_id=seg.segment_id,
                             segment_start=seg.start,
                             segment_end=seg.end,
-                            rules=policy.rules,
-                            min_porog_by_band=policy.min_porog_by_band,
+                            rules=rules,
+                            min_porog_by_band=profile.get("min_porog_by_band") or {},
                             reason=norm_reason,
                             reason_details=norm_details,
                             config_snapshot=cfg.balancer,  # пока целиком, позже сузим
@@ -278,6 +358,31 @@ async def compute_day_metrics_for_last_policies_async() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
     policies = await get_last_applied_policies()
+    # If scheduler provided boundary end, compute metrics ONLY for the segment that just ended.
+    policies = _filter_policies_by_collect_end(policies)
+
+    # --- Filter policies by current config and BALANCER_RUN_MODE (same idea as collect_orders) ---
+    cfg = load_config()
+    run_mode = os.getenv("BALANCER_RUN_MODE")
+    run_mode = str(run_mode).upper().strip() if run_mode else None
+
+    allowed_set = set()
+    for profile in cfg.profiles:
+        profile_mode = str(profile.get("mode", "TEST")).upper()
+        if run_mode and profile_mode != run_mode:
+            continue
+        scope = profile.get("scope", {}) or {}
+        cities = scope.get("cities", []) or []
+        suppliers = scope.get("suppliers", []) or []
+        for city in cities:
+            for supplier in suppliers:
+                allowed_set.add((profile_mode, city, supplier))
+
+    if allowed_set:
+        policies = [
+            p for p in policies
+            if (str(p.mode).upper(), p.city, p.supplier) in allowed_set
+        ]
 
     for policy in policies:
         day_date = policy.segment_start.date()
@@ -382,6 +487,30 @@ async def aggregate_stats_for_last_policy_async() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
     policies = await get_last_applied_policies()
+    # If scheduler provided boundary end, aggregate ONLY for the segment that just ended.
+    policies = _filter_policies_by_collect_end(policies)
+
+    # --- Filter policies by current config and BALANCER_RUN_MODE (same idea as collect_orders) ---
+    run_mode = os.getenv("BALANCER_RUN_MODE")
+    run_mode = str(run_mode).upper().strip() if run_mode else None
+
+    allowed_set = set()
+    for profile in cfg.profiles:
+        profile_mode = str(profile.get("mode", "TEST")).upper()
+        if run_mode and profile_mode != run_mode:
+            continue
+        scope = profile.get("scope", {}) or {}
+        cities = scope.get("cities", []) or []
+        suppliers = scope.get("suppliers", []) or []
+        for city in cities:
+            for supplier in suppliers:
+                allowed_set.add((profile_mode, city, supplier))
+
+    if allowed_set:
+        policies = [
+            p for p in policies
+            if (str(p.mode).upper(), p.city, p.supplier) in allowed_set
+        ]
 
     for policy in policies:
         facts = await get_order_facts_for_policy(int(policy.id))
@@ -478,6 +607,8 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
 
     # --- Filtering policies by current config and BALANCER_RUN_MODE ---
     policies = await get_last_applied_policies()
+    # If scheduler provided boundary end, collect ONLY for the segment that just ended.
+    policies = _filter_policies_by_collect_end(policies)
 
     cfg = load_config()
     import os
@@ -515,6 +646,19 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
             }
         )
     policies = filtered_policies
+
+    # --- SalesDrive fetch: cache by time window to avoid burst requests (especially in TEST) ---
+    # In TEST we may have десятки policy на один и тот же сегмент; SalesDrive может отвечать 400 на частые повторы.
+    # Поэтому делаем 1 запрос на окно времени и дальше фильтруем в Python.
+    try:
+        import httpx  # local import to avoid global dependency in module import time
+    except Exception:  # pragma: no cover
+        httpx = None  # type: ignore
+
+    # Cache lives for the duration of this job run
+    if not hasattr(collect_orders_for_last_policy_async, "_orders_cache"):
+        setattr(collect_orders_for_last_policy_async, "_orders_cache", {})
+    _orders_cache: dict[tuple[str, str], list[Any]] = getattr(collect_orders_for_last_policy_async, "_orders_cache")
 
     for policy in policies:
         # SalesDrive хранит supplier как ЧЕЛОВЕЧЕСКОЕ ИМЯ (например "DSN"),
@@ -569,44 +713,213 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
         def _norm_text(v: Any) -> str:
             return str(v or "").strip().lower()
 
+        def _normalize_city(v: Any) -> str:
+            """Normalize city names coming from SalesDrive to a canonical key.
+
+            We expect config cities like: Kyiv, Lviv, Kremenchuk, Ivano-Frankivsk.
+            Orders may contain UA/RU variants or different transliteration.
+            """
+            s = _norm_text(v)
+            if not s:
+                return ""
+
+            # Common punctuation/hyphen variants
+            s = s.replace("–", "-").replace("—", "-")
+
+            # Canonical mapping (lowercased)
+            mapping = {
+                # Kyiv
+                "kyiv": "kyiv",
+                "kiev": "kyiv",
+                "київ": "kyiv",
+                "киев": "kyiv",
+                "м. київ": "kyiv",
+                "г. киев": "kyiv",
+                "город киев": "kyiv",
+
+                # Lviv
+                "lviv": "lviv",
+                "львів": "lviv",
+                "львов": "lviv",
+                "м. львів": "lviv",
+                "г. львов": "lviv",
+
+                # Kremenchuk
+                "kremenchuk": "kremenchuk",
+                "кременчук": "kremenchuk",
+                "кременчуг": "kremenchuk",
+
+                # Ivano-Frankivsk
+                "ivano-frankivsk": "ivano-frankivsk",
+                "ivano frankivsk": "ivano-frankivsk",
+                "ивано-франковск": "ivano-frankivsk",
+                "ивано франковск": "ivano-frankivsk",
+                "івано-франківськ": "ivano-frankivsk",
+                "івано франківськ": "ivano-frankivsk",
+            }
+
+            # Exact mapping first
+            if s in mapping:
+                return mapping[s]
+
+            # Heuristics (substring) for common cases
+            if "київ" in s or "киев" in s or s == "kiev" or s == "kyiv":
+                return "kyiv"
+            if "льв" in s or s == "lviv":
+                return "lviv"
+            if "кременч" in s:
+                return "kremenchuk"
+            if "івано" in s or "ивано" in s or "frank" in s:
+                return "ivano-frankivsk"
+
+            return s
+
+        def _fallback_extract_city(order_obj: Any) -> Any:
+            """Best-effort city extraction if salesdrive_client._extract_city_value is absent."""
+            try:
+                if isinstance(order_obj, dict):
+                    # Try common keys
+                    for k in (
+                        "city",
+                        "clientCity",
+                        "deliveryCity",
+                        "shippingCity",
+                        "receiverCity",
+                        "warehouseCity",
+                    ):
+                        if k in order_obj and order_obj.get(k):
+                            return order_obj.get(k)
+                    # Sometimes stored in nested structures
+                    for parent_key in ("customer", "delivery", "shipping", "receiver"):
+                        if parent_key in order_obj and isinstance(order_obj.get(parent_key), dict):
+                            nested = order_obj.get(parent_key) or {}
+                            for k in ("city", "clientCity", "deliveryCity", "shippingCity", "receiverCity"):
+                                if nested.get(k):
+                                    return nested.get(k)
+            except Exception:
+                pass
+            return None
+
         def _city_matches(order_obj: Any, expected_city: str) -> bool:
             if not expected_city:
                 return True
-            if _extract_city_value is None:
-                # If we can't extract city reliably, don't filter it here.
+
+            # Extract city value
+            if _extract_city_value is not None:
+                try:
+                    val = _extract_city_value(order_obj)
+                except Exception:
+                    val = None
+            else:
+                val = _fallback_extract_city(order_obj)
+
+            # If we can't extract city at all, do NOT filter it out (avoid false negatives)
+            if val is None:
                 return True
-            val = _extract_city_value(order_obj)
-            return _norm_text(val) == _norm_text(expected_city)
+
+            return _normalize_city(val) == _normalize_city(expected_city)
 
         # IMPORTANT:
         # Забор из SalesDrive делаем ТОЛЬКО по времени. Любые фильтры (city/supplier)
         # выполняем здесь, чтобы 1) не терять заказы из-за несовпадений форматов, 2) иметь диагностику.
-        raw_orders = await fetch_orders_for_segment(
-            city=None,
-            supplier_aliases=[],
-            start_dt=policy.segment_start,
-            end_dt=policy.segment_end,
-        )
+        window_key = (str(policy.segment_start), str(policy.segment_end))
+
+        async def _fetch_with_retries() -> list[Any]:
+            # Simple retry loop; SalesDrive sometimes returns 400 on bursts.
+            last_err = None
+            for attempt in range(1, 4):
+                try:
+                    return await fetch_orders_for_segment(
+                        city=None,
+                        supplier_aliases=[],  # IMPORTANT: no supplier filter at SalesDrive side
+                        start_dt=policy.segment_start,
+                        end_dt=policy.segment_end,
+                    )
+                except Exception as e:
+                    last_err = e
+                    # backoff: 0.3s, 0.9s, 2.7s
+                    try:
+                        import asyncio
+                        await asyncio.sleep(0.3 * (3 ** (attempt - 1)))
+                    except Exception:
+                        pass
+            raise last_err  # type: ignore[misc]
+
+        if window_key in _orders_cache:
+            raw_orders = _orders_cache[window_key]
+        else:
+            try:
+                raw_orders = await _fetch_with_retries()
+                _orders_cache[window_key] = raw_orders
+            except Exception as e:
+                # Do not crash the whole job; record diagnostics and continue.
+                note = f"salesdrive_fetch_error: {type(e).__name__}: {e}"
+                # If it's an HTTPStatusError, include status, url and response text head.
+                if httpx is not None and isinstance(e, httpx.HTTPStatusError):
+                    try:
+                        status = e.response.status_code
+                        url = str(e.request.url)
+                        txt = (e.response.text or "")
+                        note = (
+                            f"salesdrive_http_error status={status} url={url} "
+                            f"resp_head={txt[:500]}"
+                        )
+                    except Exception:
+                        pass
+                results.append(
+                    {
+                        "policy_log_id": policy.id,
+                        "order_id": None,
+                        "excess_profit": None,
+                        "note": note,
+                    }
+                )
+                continue
 
         fetched_total = len(raw_orders)
 
         # Диагностика: какие supplier реально пришли в выборке
         try:
             from collections import Counter
-
             suppliers_top = Counter([str(_extract_supplier_value(r)) for r in raw_orders]).most_common(10)
         except Exception:
             suppliers_top = []
 
-        def _supplier_matches(order_obj: Any, aliases: list[str]) -> bool:
-            if not aliases:
+        # Диагностика: какие города реально пришли в выборке
+        try:
+            from collections import Counter
+            if _extract_city_value is not None:
+                _cities_raw = [str(_extract_city_value(r)) for r in raw_orders]
+            else:
+                _cities_raw = [str(_fallback_extract_city(r)) for r in raw_orders]
+            cities_top = Counter([_normalize_city(x) for x in _cities_raw if x and x != "None"]).most_common(10)
+        except Exception:
+            cities_top = []
+
+        _aliases_norm = {_norm_text(a) for a in supplier_aliases if a}
+
+        def _supplier_matches(order_obj: Any) -> bool:
+            if not _aliases_norm:
                 return True
             val = _extract_supplier_value(order_obj)
-            return _norm_text(val) in {_norm_text(a) for a in aliases}
+            return _norm_text(val) in _aliases_norm
 
         # 1) фильтр по поставщику (по alias-именам из supplier_names)
-        orders = [o for o in raw_orders if _supplier_matches(o, supplier_aliases)]
+        orders = [o for o in raw_orders if _supplier_matches(o)]
         supplier_filtered_total = len(orders)
+
+        # Диагностика: какие города у ЭТОГО supplier в выборке (до фильтра по policy.city)
+        try:
+            from collections import Counter
+            if _extract_city_value is not None:
+                _sup_cities_raw = [str(_extract_city_value(r)) for r in orders]
+            else:
+                _sup_cities_raw = [str(_fallback_extract_city(r)) for r in orders]
+            supplier_cities_top = Counter(
+                [_normalize_city(x) for x in _sup_cities_raw if x and x != "None"]
+            ).most_common(10)
+        except Exception:
+            supplier_cities_top = []
 
         # 2) фильтр по городу
         orders = [o for o in orders if _city_matches(o, policy.city)]
@@ -625,7 +938,7 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
                         f"no orders for policy after filtering: supplier={policy.supplier} city={policy.city} "
                         f"aliases={supplier_aliases} fetched_total={fetched_total} "
                         f"supplier_filtered_total={supplier_filtered_total} filtered_total={filtered_total} "
-                        f"suppliers_top={suppliers_top}"
+                        f"suppliers_top={suppliers_top} cities_top={cities_top} supplier_cities_top={supplier_cities_top}"
                     ),
                 }
             )
@@ -644,3 +957,265 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
             )
 
     return results
+
+
+# --- New function: run_balancer_pipeline_async ---
+
+async def run_balancer_pipeline_async() -> dict[str, Any]:
+    """Run full balancer pipeline for the current BALANCER_RUN_MODE.
+
+    This is a convenience orchestrator so we can run the 4 core steps in order:
+      1) start_segment_apply_async
+      2) collect_orders_for_last_policy_async
+      3) aggregate_stats_for_last_policy_async
+      4) compute_day_metrics_for_last_policies_async
+
+    Returns a short summary that is easy to print as JSON.
+    """
+
+    # --- Snapshot BEST(global) before the run (to detect changes) ---
+    best_before: dict[str, Any] | None = None
+    best_after: dict[str, Any] | None = None
+    seg_id_for_best: str | None = None
+    day_date_for_best = None
+
+    try:
+        cfg0 = load_config()
+        first_profile = (cfg0.profiles or [])[0] if getattr(cfg0, "profiles", None) else None
+        if first_profile:
+            seg0 = resolve_current_segment(first_profile)
+            seg_id_for_best = str(seg0.segment_id)
+            day_date_for_best = seg0.start.date()
+            best_asof0 = day_date_for_best + timedelta(days=1)
+            best_before = await get_best_porog_30d_global_best(
+                segment_id=seg_id_for_best,
+                day_date=best_asof0,
+                lookback_days=30,
+            )
+    except Exception:
+        best_before = None
+    collect_end = _parse_collect_segment_end_utc()
+
+    if collect_end is not None:
+        # End-of-segment run: close the finished segment first, then apply policies for the NEW current segment.
+        collected = await collect_orders_for_last_policy_async()
+        aggregated = await aggregate_stats_for_last_policy_async()
+        metrics = await compute_day_metrics_for_last_policies_async()
+        applied = await start_segment_apply_async()
+    else:
+        # Regular run (no boundary): keep old behaviour.
+        applied = await start_segment_apply_async()
+        collected = await collect_orders_for_last_policy_async()
+        aggregated = await aggregate_stats_for_last_policy_async()
+        metrics = await compute_day_metrics_for_last_policies_async()
+
+    # --- Snapshot BEST(global) after the run ---
+    try:
+        if seg_id_for_best and day_date_for_best:
+            best_asof1 = day_date_for_best + timedelta(days=1)
+            best_after = await get_best_porog_30d_global_best(
+                segment_id=seg_id_for_best,
+                day_date=best_asof1,
+                lookback_days=30,
+            )
+    except Exception:
+        best_after = None
+
+    collected_facts = [x for x in collected if x.get("policy_log_id") is not None and x.get("order_id") is not None]
+
+    # --- Telegram notification block (RU, end-of-run summary) ---
+    def _parse_top_from_note(note: str, key: str) -> list[tuple[str, int]]:
+        """Extract list of (name, count) tuples from a diagnostic note string for a given key."""
+        import re
+        try:
+            idx = note.find(f"{key}=[")
+            if idx == -1:
+                return []
+            start = idx + len(f"{key}=[")
+            end = note.find("]", start)
+            if end == -1:
+                return []
+            substr = note[start:end]
+            pattern = r"\('([^']+)',\s*(\d+)\)"
+            return [(name, int(cnt)) for name, cnt in re.findall(pattern, substr)]
+        except Exception:
+            return []
+
+    def _fmt_best(best_map: dict[str, Any] | None) -> tuple[str, dict[str, tuple[float | None, str]]]:
+        """Return pretty lines and normalized mapping band_id -> (porog, source)."""
+        if not best_map:
+            return "— нет данных —", {}
+        norm: dict[str, tuple[float | None, str]] = {}
+        parts: list[str] = []
+        for band_id, info in (best_map or {}).items():
+            try:
+                porog = float((info or {}).get("porog"))
+            except Exception:
+                porog = None
+            src = str((info or {}).get("source") or "-")
+            norm[str(band_id)] = (porog, src)
+            if porog is None:
+                parts.append(f"{band_id}: ?% ({src})")
+            else:
+                parts.append(f"{band_id}: {porog*100:.2f}% ({src})")
+        return ", ".join(parts) if parts else "— нет данных —", norm
+
+    def _diff_best(before: dict[str, tuple[float | None, str]], after: dict[str, tuple[float | None, str]]) -> str:
+        keys = sorted(set(before.keys()) | set(after.keys()))
+        changes: list[str] = []
+        for k in keys:
+            b = before.get(k)
+            a = after.get(k)
+            if b == a:
+                continue
+            b_por = None if not b else b[0]
+            a_por = None if not a else a[0]
+            if b_por is None and a_por is None:
+                changes.append(f"{k}: ? → ?")
+            elif b_por is None:
+                changes.append(f"{k}: ? → {a_por*100:.2f}%")
+            elif a_por is None:
+                changes.append(f"{k}: {b_por*100:.2f}% → ?")
+            else:
+                changes.append(f"{k}: {b_por*100:.2f}% → {a_por*100:.2f}%")
+        return "; ".join(changes) if changes else "без изменений"
+
+    try:
+        run_mode = (os.getenv("BALANCER_RUN_MODE") or "").upper() or None
+        collect_end = _parse_collect_segment_end_utc()
+
+        applied_policies = len(applied)
+
+        # Determine segment window for message
+        seg_id = None
+        seg_start = None
+        seg_end = None
+        if applied:
+            try:
+                seg_id = applied[0].get("segment_id")
+                seg_start = applied[0].get("segment_start")
+                seg_end = applied[0].get("segment_end")
+            except Exception:
+                seg_id = None
+        if not seg_id:
+            try:
+                cfg0 = load_config()
+                first_profile = (cfg0.profiles or [])[0] if getattr(cfg0, "profiles", None) else None
+                if first_profile:
+                    seg0 = resolve_current_segment(first_profile)
+                    seg_id = str(seg0.segment_id)
+                    seg_start = str(seg0.start)
+                    seg_end = str(seg0.end)
+            except Exception:
+                pass
+
+        # Count only real collected facts
+        collected_facts = [x for x in collected if x.get("policy_log_id") is not None and x.get("order_id") is not None]
+        collected_facts_count = len(collected_facts)
+
+        # Profit stats
+        eps_values = []
+        for x in collected_facts:
+            try:
+                eps_values.append(float(x.get("excess_profit") or 0.0))
+            except Exception:
+                pass
+        eps_sum = sum(eps_values) if eps_values else 0.0
+        eps_avg = (eps_sum / collected_facts_count) if collected_facts_count else 0.0
+
+        # Empty policies diagnostics
+        empty_notes = [
+            x for x in collected
+            if x.get("note", "") and "no orders for policy after filtering" in str(x.get("note", ""))
+        ]
+        empty_count = len(empty_notes)
+
+        suppliers_counter = Counter()
+        cities_counter = Counter()
+        for en in empty_notes:
+            note = str(en.get("note", ""))
+            for s, c in _parse_top_from_note(note, "suppliers_top"):
+                suppliers_counter[s] += c
+            for city, c in _parse_top_from_note(note, "cities_top"):
+                cities_counter[city] += c
+        suppliers_top = suppliers_counter.most_common(5)
+        cities_top = cities_counter.most_common(5)
+
+        # Applied reason breakdown (LIVE)
+        applied_reasons = Counter()
+        if run_mode == "LIVE":
+            for a in applied:
+                r = a.get("reason", "")
+                applied_reasons[str(r or "-")] += 1
+
+        # Compact band_sources aggregation from applied policies (if present)
+        band_sources_counter = Counter()
+        try:
+            for a in applied:
+                # `a` is dict from start_segment_apply_async; it doesn't include reason_details
+                # so we only show counts by reason here.
+                pass
+        except Exception:
+            pass
+
+        best_before_s, best_before_norm = _fmt_best(best_before)
+        best_after_s, best_after_norm = _fmt_best(best_after)
+        best_diff = _diff_best(best_before_norm, best_after_norm)
+
+        msg_lines: list[str] = []
+        msg_lines.append("📊 Балансировщик: запуск завершён")
+        msg_lines.append(f"Режим: {run_mode or '-' }")
+        if collect_end is not None:
+            msg_lines.append(f"Тип запуска: закрытие сегмента (boundary_end_utc={collect_end.isoformat()})")
+        else:
+            msg_lines.append("Тип запуска: периодический/ручной (без boundary)")
+        if seg_id:
+            msg_lines.append(f"Сегмент: {seg_id}")
+        if seg_start and seg_end:
+            msg_lines.append(f"Окно: {seg_start} → {seg_end}")
+
+        if run_mode == "LIVE" and applied_policies > 0:
+            by_reason = ", ".join(f"{k}={v}" for k, v in applied_reasons.items())
+            msg_lines.append(f"Применено политик: {applied_policies} ({by_reason})")
+        else:
+            msg_lines.append(f"Применено политик: {applied_policies}")
+
+        msg_lines.append(f"Фактов записано: {collected_facts_count}")
+        msg_lines.append(f"Σ excess_profit: {eps_sum:.2f} грн; среднее: {eps_avg:.2f} грн/заказ")
+        msg_lines.append(f"Пустых политик (0 заказов после фильтров): {empty_count}")
+
+        if suppliers_top:
+            msg_lines.append(
+                "Топ поставщиков в выборке: " + ", ".join(f"{name}({cnt})" for name, cnt in suppliers_top)
+            )
+        if cities_top:
+            msg_lines.append(
+                "Топ городов в выборке: " + ", ".join(f"{name}({cnt})" for name, cnt in cities_top)
+            )
+
+        msg_lines.append("")
+        msg_lines.append("🏁 Best пороги (global, 30d)")
+        msg_lines.append(f"До: {best_before_s}")
+        msg_lines.append(f"После: {best_after_s}")
+        msg_lines.append(f"Изменения: {best_diff}")
+
+        msg = "\n".join(msg_lines)
+        try:
+            send_notification(msg, "Разработчик")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return {
+        "run_mode": (os.getenv("BALANCER_RUN_MODE") or "").upper() or None,
+        "applied_policies": len(applied),
+        "applied": applied,
+        "collected_total": len(collected),
+        "collected_facts": len(collected_facts),
+        "collected": collected,
+        "aggregated_rows": len(aggregated),
+        "aggregated": aggregated,
+        "metrics_rows": len(metrics),
+        "metrics": metrics,
+    }
