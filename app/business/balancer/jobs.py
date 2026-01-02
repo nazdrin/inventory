@@ -19,6 +19,9 @@ from .salesdrive_client import fetch_orders_for_segment
 from .order_processor import build_order_facts
 from datetime import timedelta, datetime, timezone
 
+
+
+
 __all__ = [
     "start_segment_dry_run_async",
     "start_segment_apply_async",
@@ -27,6 +30,32 @@ __all__ = [
     "compute_day_metrics_for_last_policies_async",
     "run_balancer_pipeline_async",
 ]
+
+
+# --- Normalization helpers ---
+
+def _norm_key(v: Any) -> str:
+    return str(v or "").strip().lower()
+
+
+def _norm_mode(v: Any) -> str:
+    return _norm_key(v).upper()
+
+
+def _norm_city_key(v: Any) -> str:
+    """Normalize city keys for config/profile matching (case-insensitive).
+
+    We keep policy.city as stored, but when comparing with config.scope.cities we compare normalized keys.
+    Also normalizes dash variants.
+    """
+    s = _norm_key(v)
+    if not s:
+        return ""
+    return s.replace("–", "-").replace("—", "-")
+
+
+def _norm_supplier_key(v: Any) -> str:
+    return _norm_key(v)
 
 def _parse_collect_segment_end_utc() -> datetime | None:
     """
@@ -293,9 +322,12 @@ async def start_segment_apply_async() -> list[dict[str, Any]]:
                 if str(prof.get("mode", "")).upper() != "TEST":
                     continue
                 scope = prof.get("scope", {}) or {}
-                if obj.city not in (scope.get("cities", []) or []):
+                scope_cities = scope.get("cities", []) or []
+                scope_suppliers = scope.get("suppliers", []) or []
+
+                if _norm_city_key(obj.city) not in {_norm_city_key(x) for x in scope_cities}:
                     continue
-                if obj.supplier not in (scope.get("suppliers", []) or []):
+                if _norm_supplier_key(obj.supplier) not in {_norm_supplier_key(x) for x in scope_suppliers}:
                     continue
                 matched_profile = prof
                 break
@@ -377,12 +409,12 @@ async def compute_day_metrics_for_last_policies_async() -> list[dict[str, Any]]:
         suppliers = scope.get("suppliers", []) or []
         for city in cities:
             for supplier in suppliers:
-                allowed_set.add((profile_mode, city, supplier))
+                allowed_set.add((_norm_mode(profile_mode), _norm_city_key(city), _norm_supplier_key(supplier)))
 
     if allowed_set:
         policies = [
             p for p in policies
-            if (str(p.mode).upper(), p.city, p.supplier) in allowed_set
+            if (_norm_mode(p.mode), _norm_city_key(p.city), _norm_supplier_key(p.supplier)) in allowed_set
         ]
 
     for policy in policies:
@@ -462,9 +494,12 @@ async def aggregate_stats_for_last_policy_async() -> list[dict[str, Any]]:
             if str(prof.get("mode", "")).upper() != str(policy.mode).upper():
                 continue
             scope = prof.get("scope", {}) or {}
-            if policy.city not in (scope.get("cities", []) or []):
+            scope_cities = scope.get("cities", []) or []
+            scope_suppliers = scope.get("suppliers", []) or []
+
+            if _norm_city_key(policy.city) not in {_norm_city_key(x) for x in scope_cities}:
                 continue
-            if policy.supplier not in (scope.get("suppliers", []) or []):
+            if _norm_supplier_key(policy.supplier) not in {_norm_supplier_key(x) for x in scope_suppliers}:
                 continue
             return prof.get("name") or prof.get("profile_name") or "profile"
         return "profile"
@@ -477,9 +512,12 @@ async def aggregate_stats_for_last_policy_async() -> list[dict[str, Any]]:
             if str(prof.get("mode", "")).upper() != str(policy.mode).upper():
                 continue
             scope = prof.get("scope", {}) or {}
-            if policy.city not in (scope.get("cities", []) or []):
+            scope_cities = scope.get("cities", []) or []
+            scope_suppliers = scope.get("suppliers", []) or []
+
+            if _norm_city_key(policy.city) not in {_norm_city_key(x) for x in scope_cities}:
                 continue
-            if policy.supplier not in (scope.get("suppliers", []) or []):
+            if _norm_supplier_key(policy.supplier) not in {_norm_supplier_key(x) for x in scope_suppliers}:
                 continue
             thresholds = prof.get("thresholds", {}) or {}
             return int(thresholds.get("min_orders_per_segment", 0) or 0)
@@ -505,12 +543,12 @@ async def aggregate_stats_for_last_policy_async() -> list[dict[str, Any]]:
         suppliers = scope.get("suppliers", []) or []
         for city in cities:
             for supplier in suppliers:
-                allowed_set.add((profile_mode, city, supplier))
+                allowed_set.add((_norm_mode(profile_mode), _norm_city_key(city), _norm_supplier_key(supplier)))
 
     if allowed_set:
         policies = [
             p for p in policies
-            if (str(p.mode).upper(), p.city, p.supplier) in allowed_set
+            if (_norm_mode(p.mode), _norm_city_key(p.city), _norm_supplier_key(p.supplier)) in allowed_set
         ]
 
     for policy in policies:
@@ -625,13 +663,13 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
         suppliers = scope.get("suppliers", []) or []
         for city in cities:
             for supplier in suppliers:
-                allowed_set.add((profile_mode, city, supplier))
+                allowed_set.add((_norm_mode(profile_mode), _norm_city_key(city), _norm_supplier_key(supplier)))
     # Only filter if allowed_set is non-empty
     before_count = len(policies)
     if allowed_set:
         filtered_policies = [
             p for p in policies
-            if (str(p.mode).upper(), p.city, p.supplier) in allowed_set
+            if (_norm_mode(p.mode), _norm_city_key(p.city), _norm_supplier_key(p.supplier)) in allowed_set
         ]
     else:
         filtered_policies = policies
@@ -673,9 +711,12 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
         matched_profile_mode = None
         for prof in profiles:
             scope = prof.get("scope", {}) or {}
-            if policy.city not in (scope.get("cities", []) or []):
+            scope_cities = scope.get("cities", []) or []
+            scope_suppliers = scope.get("suppliers", []) or []
+
+            if _norm_city_key(policy.city) not in {_norm_city_key(x) for x in scope_cities}:
                 continue
-            if policy.supplier not in (scope.get("suppliers", []) or []):
+            if _norm_supplier_key(policy.supplier) not in {_norm_supplier_key(x) for x in scope_suppliers}:
                 continue
             supplier_name = (prof.get("supplier_names") or {}).get(policy.supplier)
             matched_profile_mode = str(prof.get("mode", "")).upper() if prof.get("mode") is not None else None
