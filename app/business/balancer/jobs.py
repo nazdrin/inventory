@@ -644,6 +644,111 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
 
     results: list[dict[str, Any]] = []
 
+    # --- Status filtering rules (from policy.config_snapshot) ---
+
+    def _resolve_status_rules(policy_obj: Any) -> tuple[set[int], bool, set[int]]:
+        """Resolve SalesDrive status filtering rules from the policy's config_snapshot.
+
+        Returns:
+          statuses_in_scope: set[int] (empty => do not filter by statuses)
+          exclude_cancelled: bool
+          cancelled_statuses: set[int]
+        """
+        snap = getattr(policy_obj, "config_snapshot", None) or {}
+        profiles = snap.get("profiles", []) or []
+        for prof in profiles:
+            scope = prof.get("scope", {}) or {}
+            scope_cities = scope.get("cities", []) or []
+            scope_suppliers = scope.get("suppliers", []) or []
+
+            if _norm_city_key(policy_obj.city) not in {_norm_city_key(x) for x in scope_cities}:
+                continue
+            if _norm_supplier_key(policy_obj.supplier) not in {_norm_supplier_key(x) for x in scope_suppliers}:
+                continue
+
+            sd = prof.get("salesdrive", {}) or {}
+            statuses_in_scope = sd.get("statuses_in_scope") or []
+            exclude_cancelled = bool(sd.get("exclude_cancelled", False))
+            cancelled_statuses = sd.get("cancelled_statuses") or []
+
+            try:
+                sset = {int(x) for x in statuses_in_scope}
+            except Exception:
+                sset = set()
+            try:
+                cset = {int(x) for x in cancelled_statuses}
+            except Exception:
+                cset = set()
+
+            return sset, exclude_cancelled, cset
+
+        return set(), False, set()
+
+    def _extract_status_id(order_obj: Any) -> int | None:
+        """Best-effort extract SalesDrive status id from an order object."""
+        if not isinstance(order_obj, dict):
+            return None
+        for k in ("statusId", "status_id", "statusID", "orderStatusId", "orderStatus"):
+            if k in order_obj and order_obj.get(k) is not None:
+                try:
+                    return int(order_obj.get(k))
+                except Exception:
+                    return None
+        return None
+
+    def _extract_policy_city_value(order_obj: Any) -> Any:
+        """Extract city used for policy matching.
+
+        Prefer `order['city']` (it's already a normalized business city like 'Kyiv').
+        If it's missing, fallback to delivery cityName or other nested fields.
+        """
+        if not isinstance(order_obj, dict):
+            return None
+
+        # 1) Main field used in practice
+        v = order_obj.get("city")
+        if v:
+            return v
+
+        # 2) delivery info (often present)
+        try:
+            odd = order_obj.get("ord_delivery_data")
+            if isinstance(odd, list) and odd:
+                first = odd[0]
+                if isinstance(first, dict) and first.get("cityName"):
+                    return first.get("cityName")
+        except Exception:
+            pass
+
+        # 3) fallback: reuse existing extractor if present
+        try:
+            if _extract_city_value is not None:
+                return _extract_city_value(order_obj)
+        except Exception:
+            pass
+
+        # 4) last resort: try common keys / nested dicts
+        try:
+            for k in (
+                "clientCity",
+                "deliveryCity",
+                "shippingCity",
+                "receiverCity",
+                "warehouseCity",
+            ):
+                if order_obj.get(k):
+                    return order_obj.get(k)
+            for parent_key in ("customer", "delivery", "shipping", "receiver"):
+                parent = order_obj.get(parent_key)
+                if isinstance(parent, dict):
+                    for k in ("city", "clientCity", "deliveryCity", "shippingCity", "receiverCity"):
+                        if parent.get(k):
+                            return parent.get(k)
+        except Exception:
+            pass
+
+        return None
+
     # --- Filtering policies by current config and BALANCER_RUN_MODE ---
     policies = await get_last_applied_policies()
     # If scheduler provided boundary end, collect ONLY for the segment that just ended.
@@ -846,14 +951,8 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
             if not expected_city:
                 return True
 
-            # Extract city value
-            if _extract_city_value is not None:
-                try:
-                    val = _extract_city_value(order_obj)
-                except Exception:
-                    val = None
-            else:
-                val = _fallback_extract_city(order_obj)
+            # Prefer the business city field from order, fallback to delivery city.
+            val = _extract_policy_city_value(order_obj)
 
             # If we can't extract city at all, do NOT filter it out (avoid false negatives)
             if val is None:
@@ -920,6 +1019,37 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
 
         fetched_total = len(raw_orders)
 
+        # --- Status filtering (statuses_in_scope / exclude_cancelled) ---
+        statuses_in_scope, exclude_cancelled, cancelled_statuses = _resolve_status_rules(policy)
+
+        status_filtered_out = 0
+        cancelled_filtered_out = 0
+        unknown_status_filtered_out = 0
+
+        if statuses_in_scope or exclude_cancelled:
+            filtered_by_status: list[Any] = []
+            for o in raw_orders:
+                sid = _extract_status_id(o)
+
+                # If explicit statuses_in_scope is configured and status is missing/unparseable -> exclude (safer)
+                if statuses_in_scope and sid is None:
+                    unknown_status_filtered_out += 1
+                    continue
+
+                if statuses_in_scope and sid is not None and sid not in statuses_in_scope:
+                    status_filtered_out += 1
+                    continue
+
+                if exclude_cancelled and sid is not None and sid in cancelled_statuses:
+                    cancelled_filtered_out += 1
+                    continue
+
+                filtered_by_status.append(o)
+
+            raw_orders = filtered_by_status
+
+        status_stage_total = len(raw_orders)
+
         # Диагностика: какие supplier реально пришли в выборке
         try:
             from collections import Counter
@@ -930,10 +1060,7 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
         # Диагностика: какие города реально пришли в выборке
         try:
             from collections import Counter
-            if _extract_city_value is not None:
-                _cities_raw = [str(_extract_city_value(r)) for r in raw_orders]
-            else:
-                _cities_raw = [str(_fallback_extract_city(r)) for r in raw_orders]
+            _cities_raw = [str(_extract_policy_city_value(r)) for r in raw_orders]
             cities_top = Counter([_normalize_city(x) for x in _cities_raw if x and x != "None"]).most_common(10)
         except Exception:
             cities_top = []
@@ -953,10 +1080,7 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
         # Диагностика: какие города у ЭТОГО supplier в выборке (до фильтра по policy.city)
         try:
             from collections import Counter
-            if _extract_city_value is not None:
-                _sup_cities_raw = [str(_extract_city_value(r)) for r in orders]
-            else:
-                _sup_cities_raw = [str(_fallback_extract_city(r)) for r in orders]
+            _sup_cities_raw = [str(_extract_policy_city_value(r)) for r in orders]
             supplier_cities_top = Counter(
                 [_normalize_city(x) for x in _sup_cities_raw if x and x != "None"]
             ).most_common(10)
@@ -979,6 +1103,13 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
                     "note": (
                         f"no orders for policy after filtering: supplier={policy.supplier} city={policy.city} "
                         f"aliases={supplier_aliases} fetched_total={fetched_total} "
+                        f"status_stage_total={status_stage_total} "
+                        f"statuses_in_scope={sorted(list(statuses_in_scope)) if statuses_in_scope else []} "
+                        f"exclude_cancelled={exclude_cancelled} "
+                        f"cancelled_statuses={sorted(list(cancelled_statuses)) if cancelled_statuses else []} "
+                        f"status_filtered_out={status_filtered_out} "
+                        f"cancelled_filtered_out={cancelled_filtered_out} "
+                        f"unknown_status_filtered_out={unknown_status_filtered_out} "
                         f"supplier_filtered_total={supplier_filtered_total} filtered_total={filtered_total} "
                         f"suppliers_top={suppliers_top} cities_top={cities_top} supplier_cities_top={supplier_cities_top}"
                     ),
