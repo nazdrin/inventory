@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 import os
 
@@ -28,6 +28,8 @@ __all__ = [
     "get_best_porog_30d_global_live",
     "get_best_porog_30d_global_best",
     "get_active_policy_for_pricing",
+    "cleanup_old_balancer_data",
+    "get_policy_log_ids_older_than",
 ]
 
 
@@ -182,6 +184,7 @@ def _parse_dt_utc(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+
 async def get_applied_policies_by_segment_end(
     *,
     segment_end: datetime | str,
@@ -235,6 +238,53 @@ async def get_applied_policies_by_segment_end(
 
         res = await db.execute(q)
         return list(res.scalars().all())
+
+
+async def get_policy_log_ids_older_than(*, cutoff_utc: datetime) -> list[int]:
+    """Возвращает id записей BalancerPolicyLog, у которых segment_end < cutoff_utc."""
+    if cutoff_utc.tzinfo is None:
+        cutoff_utc = cutoff_utc.replace(tzinfo=timezone.utc)
+    cutoff_utc = cutoff_utc.astimezone(timezone.utc)
+
+    async with get_async_db() as db:
+        q = select(BalancerPolicyLog.id).where(BalancerPolicyLog.segment_end < cutoff_utc)
+        res = await db.execute(q)
+        return [int(x) for x in res.scalars().all()]
+
+
+async def cleanup_old_balancer_data(*, keep_days: int = 90) -> dict[str, int]:
+    """Удаляет старые записи балансировщика, чтобы БД не росла бесконечно."""
+    keep_days = int(keep_days)
+    if keep_days <= 0:
+        raise ValueError("keep_days must be positive")
+
+    cutoff_utc = datetime.now(timezone.utc) - timedelta(days=keep_days)
+
+    policy_ids = await get_policy_log_ids_older_than(cutoff_utc=cutoff_utc)
+    if not policy_ids:
+        return {"deleted_order_facts": 0, "deleted_segment_stats": 0, "deleted_policy_logs": 0}
+
+    async with get_async_db() as db:
+        res1 = await db.execute(
+            delete(BalancerOrderFacts).where(BalancerOrderFacts.policy_log_id.in_(policy_ids))
+        )
+        deleted_order_facts = int(getattr(res1, "rowcount", 0) or 0)
+
+        res2 = await db.execute(
+            delete(BalancerSegmentStats).where(BalancerSegmentStats.policy_log_id.in_(policy_ids))
+        )
+        deleted_segment_stats = int(getattr(res2, "rowcount", 0) or 0)
+
+        res3 = await db.execute(delete(BalancerPolicyLog).where(BalancerPolicyLog.id.in_(policy_ids)))
+        deleted_policy_logs = int(getattr(res3, "rowcount", 0) or 0)
+
+        await db.commit()
+
+    return {
+        "deleted_order_facts": deleted_order_facts,
+        "deleted_segment_stats": deleted_segment_stats,
+        "deleted_policy_logs": deleted_policy_logs,
+    }
 
 
 async def upsert_order_fact(payload: dict[str, Any]) -> BalancerOrderFacts:
