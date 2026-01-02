@@ -101,8 +101,8 @@ def build_order_facts(policy: Any, order: dict[str, Any]) -> dict[str, Any]:
     2) cost_sum = Σ(costPrice * amount) если costPrice есть у всех,
        иначе cost_sum = opt (общая себестоимость заказа)
     3) profit = sale_sum - cost_sum
-    4) min_profit = sale_sum * min_porog (по band)
-    5) excess_profit = profit - min_profit
+    4) variable_cost = cost_sum * min_porog (по band)
+    5) net_profit = profit - variable_cost
     """
 
     profile = _get_profile_from_snapshot(policy) or {}
@@ -152,7 +152,9 @@ def build_order_facts(policy: Any, order: dict[str, Any]) -> dict[str, Any]:
     if porog_used == Decimal("0"):
         porog_used = min_porog
 
-    min_profit = sale_sum * min_porog
+    # Переменные затраты по ТЗ: variable_cost = order_cost * min_threshold%
+    # Здесь order_cost уже посчитан как cost_sum
+    min_profit = cost_sum * min_porog
     excess_profit = profit - min_profit
 
     created_at_source = _parse_salesdrive_dt(order.get("orderTime"))
@@ -176,6 +178,9 @@ def build_order_facts(policy: Any, order: dict[str, Any]) -> dict[str, Any]:
         "sale_price": sale_sum,
         "cost": cost_sum,
         "profit": profit,
+        "gross_profit": profit,
+        "variable_cost": min_profit,
+        "net_profit": excess_profit,
         "porog_used": porog_used,
         "min_porog": min_porog,
         "min_profit": min_profit,
