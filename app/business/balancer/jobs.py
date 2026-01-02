@@ -9,6 +9,7 @@ from typing import Any
 from .config import load_config
 from .segments import resolve_current_segment
 from .policy import build_test_policy_async, build_live_policy_async
+from .live_logic import apply_live_controls
 from .repository import (
     create_policy_log_record,
     upsert_policy_log,
@@ -274,6 +275,19 @@ async def start_segment_dry_run_async() -> list[dict[str, Any]]:
 
                         norm_reason, norm_details = _normalized_reason_and_details(_TmpPolicy())
 
+                        # Apply LIVE controls (daily limits, etc.) on top of base rules.
+                        # This keeps jobs.py thin and makes LIVE behavior testable in isolation.
+                        live_rules, live_reason, live_details = await apply_live_controls(
+                            profile=profile,
+                            city=city,
+                            supplier=supplier,
+                            segment_id=str(seg.segment_id),
+                            day_date=day_date,
+                            base_rules=rules,
+                            base_reason=norm_reason,
+                            base_reason_details=norm_details,
+                        )
+
                         rec = create_policy_log_record(
                             mode=effective_mode,
                             config_version=int(cfg.balancer.get("version", 1)),
@@ -282,10 +296,10 @@ async def start_segment_dry_run_async() -> list[dict[str, Any]]:
                             segment_id=seg.segment_id,
                             segment_start=seg.start,
                             segment_end=seg.end,
-                            rules=rules,
+                            rules=live_rules,
                             min_porog_by_band=profile.get("min_porog_by_band") or {},
-                            reason=norm_reason,
-                            reason_details=norm_details,
+                            reason=live_reason,
+                            reason_details=live_details,
                             config_snapshot=cfg.balancer,  # пока целиком, позже сузим
                         )
                         out.append(rec)
@@ -361,6 +375,7 @@ async def start_segment_apply_async() -> list[dict[str, Any]]:
                 "segment_start": str(obj.segment_start),
                 "segment_end": str(obj.segment_end),
                 "reason": obj.reason,
+                "reason_details": getattr(obj, "reason_details", None),
             }
         )
 
@@ -780,13 +795,16 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
         filtered_policies = policies
     after_count = len(filtered_policies)
     # If filtering removed policies, note ONCE
-    if after_count < before_count:
+    if after_count == 0 and before_count > 0:
         results.append(
             {
                 "policy_log_id": None,
                 "order_id": None,
                 "excess_profit": None,
-                "note": f"policies filtered by current config: run_mode={run_mode or 'None'} before={before_count} after={after_count}"
+                "note": (
+                    f"no policies left after filtering by current config: "
+                    f"run_mode={run_mode or 'None'} before={before_count}"
+                ),
             }
         )
     policies = filtered_policies
@@ -948,6 +966,9 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
             return None
 
         def _city_matches(order_obj: Any, expected_city: str) -> bool:
+                # wildcard: apply same thresholds for all cities
+            if str(expected_city or "").strip() in ("*", "ALL", "all", "Any", "any"):
+                return True
             if not expected_city:
                 return True
 
@@ -1330,6 +1351,19 @@ async def run_balancer_pipeline_async() -> dict[str, Any]:
                 r = a.get("reason", "")
                 applied_reasons[str(r or "-")] += 1
 
+        # LIVE actions breakdown from reason_details
+        live_actions = Counter()
+        if run_mode == "LIVE":
+            for a in applied:
+                rd = a.get("reason_details") or {}
+                action = None
+                if isinstance(rd, dict):
+                    action = rd.get("action") or rd.get("live_action")
+                    if action is None and isinstance(rd.get("live"), dict):
+                        action = rd.get("live", {}).get("action")
+                if action:
+                    live_actions[str(action)] += 1
+
         # Compact band_sources aggregation from applied policies (if present)
         band_sources_counter = Counter()
         try:
@@ -1358,7 +1392,11 @@ async def run_balancer_pipeline_async() -> dict[str, Any]:
 
         if run_mode == "LIVE" and applied_policies > 0:
             by_reason = ", ".join(f"{k}={v}" for k, v in applied_reasons.items())
-            msg_lines.append(f"Применено политик: {applied_policies} ({by_reason})")
+            if live_actions:
+                by_action = ", ".join(f"{k}={v}" for k, v in live_actions.items())
+                msg_lines.append(f"Применено политик: {applied_policies} ({by_reason}); действия: {by_action}")
+            else:
+                msg_lines.append(f"Применено политик: {applied_policies} ({by_reason})")
         else:
             msg_lines.append(f"Применено политик: {applied_policies}")
 
