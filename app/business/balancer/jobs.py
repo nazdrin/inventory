@@ -13,6 +13,7 @@ from .repository import (
     create_policy_log_record,
     upsert_policy_log,
     get_best_porog_30d_global_best,
+    cleanup_old_balancer_data,
 )
 from .salesdrive_client import fetch_orders_for_segment
 from .order_processor import build_order_facts
@@ -973,6 +974,15 @@ async def run_balancer_pipeline_async() -> dict[str, Any]:
     Returns a short summary that is easy to print as JSON.
     """
 
+    # --- TTL cleanup (best-effort) ---
+    # Keep balancer tables bounded in size. Default keep_days=90, override via env.
+    ttl_cleanup: dict[str, int] | None = None
+    try:
+        keep_days = int(os.getenv("BALANCER_TTL_KEEP_DAYS", "90") or 90)
+        ttl_cleanup = await cleanup_old_balancer_data(keep_days=keep_days)
+    except Exception:
+        ttl_cleanup = None
+
     # --- Snapshot BEST(global) before the run (to detect changes) ---
     best_before: dict[str, Any] | None = None
     best_after: dict[str, Any] | None = None
@@ -1184,6 +1194,11 @@ async def run_balancer_pipeline_async() -> dict[str, Any]:
         msg_lines.append(f"Σ excess_profit: {eps_sum:.2f} грн; среднее: {eps_avg:.2f} грн/заказ")
         msg_lines.append(f"Пустых политик (0 заказов после фильтров): {empty_count}")
 
+        if ttl_cleanup:
+            msg_lines.append(
+                "TTL cleanup: " + ", ".join(f"{k}={v}" for k, v in ttl_cleanup.items())
+            )
+
         if suppliers_top:
             msg_lines.append(
                 "Топ поставщиков в выборке: " + ", ".join(f"{name}({cnt})" for name, cnt in suppliers_top)
@@ -1209,6 +1224,7 @@ async def run_balancer_pipeline_async() -> dict[str, Any]:
 
     return {
         "run_mode": (os.getenv("BALANCER_RUN_MODE") or "").upper() or None,
+        "ttl_cleanup": ttl_cleanup,
         "applied_policies": len(applied),
         "applied": applied,
         "collected_total": len(collected),
