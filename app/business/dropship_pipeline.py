@@ -919,8 +919,13 @@ async def process_supplier(
             # Выбор порога:
             # 1) если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
             # 2) иначе пытаемся взять порог из балансировщика по band_id (band определяем по rr)
+            # 3) если порог не найден (нет политики/нет band/нет порога) -> безопасный fallback на retail (RR), чтобы не демпинговать
             threshold_percent_effective = supplier_threshold_percent
             thr_source = "supplier_min_markup_threshold" if supplier_threshold_percent > 0 else "unset"
+
+            # Если политика балансировщика отсутствует и нет порога поставщика — не позволяем уходить в 0:
+            # при наличии RR используем RR как безопасный fallback.
+            force_rrp_fallback = (supplier_threshold_percent <= 0 and not bal_policy)
 
             band_id = None
 
@@ -949,8 +954,10 @@ async def process_supplier(
                     threshold_percent_effective = min_porog
                     thr_source = "policy_min_porog_by_band"
                 else:
+                    # Порог по band_id не найден — безопасный fallback на RR (если есть), вместо 0
                     threshold_percent_effective = Decimal("0")
-                    thr_source = "no_policy_threshold"
+                    thr_source = "no_policy_threshold_fallback_rrp"
+                    force_rrp_fallback = True
 
             price = compute_price_for_item(
                 competitor_price=competitor,
@@ -961,6 +968,12 @@ async def process_supplier(
                 price_opt=po,
                 threshold_percent_effective=threshold_percent_effective,
             )
+
+            # Safe fallback: если порог не найден (и нет порога поставщика), не опускаем цену под конкурента — берём RR
+            if force_rrp_fallback and (not is_rrp) and (not is_dumping):
+                rr_dec = _to_decimal(rr)
+                if rr_dec > 0:
+                    price = _round_money(rr_dec)
 
             # --- собрать несколько строк для нотификации: какие пороги реально применились ---
             if len(sample_rows) < sample_limit:
