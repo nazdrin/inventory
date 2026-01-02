@@ -24,7 +24,7 @@ TZ = ZoneInfo(os.getenv("BALANCER_TZ", "Europe/Kyiv"))
 # Границы сегментов (локальное время)
 # Под твою текущую схему: NIGHT (21:00-09:00), WD_09_15, WD_15_21
 
-logger = logging.getLogger(__name__)
+
 
 DEFAULT_BOUNDARIES_LOCAL: List[Tuple[int, int]] = [(9, 0), (15, 0), (21, 0)]
 
