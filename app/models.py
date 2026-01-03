@@ -486,6 +486,67 @@ class BalancerOrderFacts(Base, TimestampMixin):
     )
 
 
+# Состояние LIVE-режима балансировщика (суточные лимиты, итерации, «freeze»)
+class BalancerLiveState(Base, TimestampMixin):
+    """Состояние LIVE-режима балансировщика на день по поставщику.
+
+    Хранит счётчики/итерации и ссылку на последнюю применённую политику,
+    чтобы корректно реализовать дневные лимиты (freeze/soften/stop).
+
+    Ключ: (mode, supplier, day_date)
+    """
+
+    __tablename__ = "balancer_live_state"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+
+    # Режим (сейчас используем только LIVE, поле оставляем для единообразия)
+    mode = Column(String, nullable=False, doc="Режим: LIVE")
+
+    # Поставщик (D1/D2/...)
+    supplier = Column(String, nullable=False, index=True, doc="Код поставщика")
+
+    # День учёта (локальная логика дня — как в segment_stats: дата старта сегмента)
+    day_date = Column(Date, nullable=False, index=True, doc="День учёта")
+
+    # Итерация LIVE-логики (для ограничений типа max 10 итераций)
+    live_iter = Column(Integer, nullable=False, server_default=text("0"), doc="Текущая итерация LIVE")
+
+    # Кеш счётчика заказов за день (можно пересчитывать из facts, но хранить удобно)
+    day_orders_count = Column(Integer, nullable=False, server_default=text("0"), doc="Заказов за день (кеш)")
+
+    # Последняя применённая политика (нужно для freeze)
+    last_policy_log_id = Column(BigInteger, ForeignKey("balancer_policy_log.id"), nullable=True, index=True)
+
+    # Технический флаг: достигнут ли лимит (опционально, удобно для дебага)
+    is_limit_reached = Column(Boolean, nullable=False, server_default=text("false"), doc="Достигнут дневной лимит")
+
+    # Метрики LIVE-логики (baseline/best/last) для сравнения и остановок
+    baseline_metric = Column(Float, nullable=True, doc="Базовая метрика (эталон) для сравнения в LIVE")
+    best_metric = Column(Float, nullable=True, doc="Лучшая метрика за день (best run)")
+    best_iter = Column(Integer, nullable=False, server_default=text("0"), doc="Итерация, на которой получен best_metric")
+    last_metric = Column(Float, nullable=True, doc="Метрика последнего закрытого сегмента")
+
+    # Снимок лучших правил (best run) — нужен, чтобы откатываться/фиксировать лучший прогон
+    best_rules = Column(JSONB, nullable=True, doc="Снимок правил порогов на лучшем прогоне (список {band_id, porog})")
+
+    # Чтобы не пересчитывать один и тот же сегмент повторно
+    last_segment_end = Column(DateTime(timezone=True), nullable=True, doc="Конец последнего сегмента, учтённого в LIVE")
+
+    # Идемпотентность: ключ последнего учтённого прогона (segment_id + segment_end)
+    last_run_key = Column(String, nullable=True, doc="Ключ последнего учтённого прогона (для защиты от двойного инкремента)")
+
+    # Управляющие флаги остановок/заморозки
+    stop_reason = Column(String, nullable=True, doc="Причина остановки LIVE (max_iter/degrade/limit/manual/etc)")
+    is_frozen = Column(Boolean, nullable=False, server_default=text("false"), doc="Заморожен ли LIVE (не менять правила)")
+
+    __table_args__ = (
+        UniqueConstraint("mode", "supplier", "day_date", name="uq_balancer_live_state_key"),
+        Index("ix_balancer_live_state_scope", "supplier", "day_date"),
+        CheckConstraint("mode IN ('LIVE')", name="ck_balancer_live_state_mode"),
+    )
+
+
 # Состояние тестового графика балансировщика (чтобы TEST был воспроизводимым между перезапусками)
 class BalancerTestState(Base, TimestampMixin):
     """Состояние тестового графика для конкретного дня/сегмента/диапазона.

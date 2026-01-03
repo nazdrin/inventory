@@ -1,0 +1,71 @@
+diff --git a/app/services/balancer_scheduler_service.py b/app/services/balancer_scheduler_service.py
+index fc19f5b..ade5761 100644
+--- a/app/services/balancer_scheduler_service.py
++++ b/app/services/balancer_scheduler_service.py
+@@ -8,6 +8,10 @@ from zoneinfo import ZoneInfo
+ 
+ from app.business.balancer.jobs import run_balancer_pipeline_async
+ 
++
++from typing import List, Tuple
++
++from app.business.balancer.config import load_config
+ logger = logging.getLogger("balancer_scheduler")
+ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+ 
+@@ -19,7 +23,54 @@ TZ = ZoneInfo(os.getenv("BALANCER_TZ", "Europe/Kyiv"))
+ 
+ # Границы сегментов (локальное время)
+ # Под твою текущую схему: NIGHT (21:00-09:00), WD_09_15, WD_15_21
+-BOUNDARIES_LOCAL = [(9, 0), (15, 0), (21, 0)]
++
++logger = logging.getLogger(__name__)
++
++DEFAULT_BOUNDARIES_LOCAL: List[Tuple[int, int]] = [(9, 0), (15, 0), (21, 0)]
++
++
++def _parse_hhmm(value: str) -> Tuple[int, int]:
++    # ожидаем "HH:MM"
++    hh_str, mm_str = value.strip().split(":")
++    hh = int(hh_str)
++    mm = int(mm_str)
++    if not (0 <= hh <= 23 and 0 <= mm <= 59):
++        raise ValueError(f"Invalid time '{value}'")
++    return hh, mm
++
++
++def _load_boundaries_from_config() -> List[Tuple[int, int]]:
++    """
++    Собираем границы сегментов из config.yaml:
++    - берём все time_segments[*].end из profiles
++    - уникализируем и сортируем
++    - если не удалось — fallback на DEFAULT_BOUNDARIES_LOCAL
++    """
++    config_path = os.getenv("BALANCER_CONFIG_PATH")  # если None — load_config возьмёт дефолтный путь
++    try:
++        cfg = load_config(config_path)  # load_config уже умеет дефолт
++        ends = set()
++
++        for profile in cfg.profiles:
++            for seg in profile.time_segments:
++                # end может быть "21:00" и т.п.
++                ends.add(_parse_hhmm(seg.end))
++
++        if not ends:
++            logger.warning("Balancer scheduler: no time segment boundaries found in config; using default %s",
++                           DEFAULT_BOUNDARIES_LOCAL)
++            return DEFAULT_BOUNDARIES_LOCAL
++
++        boundaries = sorted(ends)
++        logger.info("Balancer scheduler: loaded boundaries from config: %s", boundaries)
++        return boundaries
++
++    except Exception as e:
++        logger.warning("Balancer scheduler: failed to load boundaries from config (%s); using default %s",
++                       e, DEFAULT_BOUNDARIES_LOCAL)
++        return DEFAULT_BOUNDARIES_LOCAL
++BOUNDARIES_LOCAL = _load_boundaries_from_config()
++
+ 
+ 
+ def _load_last_boundary_utc_iso() -> str | None:
