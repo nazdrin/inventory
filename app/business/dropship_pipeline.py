@@ -11,9 +11,117 @@ import tempfile
 import json
 from datetime import datetime, timezone
 
+# Fix: Ensure AsyncSession is imported at the top, before usage
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# --- Balancer (read-only) integration (Variant A) ---
+try:
+    # Preferred single source of truth for pricing policies
+    from app.business.balancer.repository import get_active_policy_for_pricing as _get_policy_for_pricing
+except Exception:  # pragma: no cover
+    _get_policy_for_pricing = None
+# --- Helper: fetch active policy from balancer repository (preferred) ---
+async def _fetch_policy_for_pricing_repo(
+    session: AsyncSession,
+    *,
+    city: str,
+    supplier_code: str,
+    now_utc: datetime,
+) -> Optional[dict]:
+    """Try to fetch active policy from balancer repository (preferred).
+
+    We keep this wrapper to:
+      - avoid spreading repository signature across the pipeline
+      - normalize output keys used below (rules/min_porog_by_band/price_bands/policy_id/mode/segment_id/...)
+
+    Returns None if repository is unavailable or no policy found.
+    """
+    if _get_policy_for_pricing is None:
+        return None
+
+    try:
+        import os
+        import json
+        sig = inspect.signature(_get_policy_for_pricing)
+        kwargs: Dict[str, Any] = {}
+
+        # Common parameter names we might support
+        for name in sig.parameters.keys():
+            if name in ("session", "db"):
+                kwargs[name] = session
+            elif name == "city":
+                kwargs[name] = city
+            elif name in ("supplier", "supplier_code"):
+                kwargs[name] = supplier_code
+            elif name in ("as_of", "now", "now_utc", "dt"):
+                kwargs[name] = now_utc
+            elif name in ("mode", "run_mode"):
+                # Pricing context mode (LIVE/TEST). Default LIVE, can be overridden for experiments.
+                kwargs[name] = os.getenv("PRICING_POLICY_MODE", "LIVE").upper()
+
+        res = _get_policy_for_pricing(**kwargs)
+        if inspect.isawaitable(res):
+            res = await res
+        if not res:
+            return None
+
+        # Normalize shapes:
+        # repo might return {id, hash, mode, rules, price_bands, min_porog_by_band, segment_id, segment_start, segment_end, reason_details}
+        policy_id = res.get("policy_id") or res.get("id")
+        mode = res.get("mode") or os.getenv("PRICING_POLICY_MODE", "LIVE").upper()
+        rules = res.get("rules") or []
+        min_porog_by_band = res.get("min_porog_by_band") or {}
+        price_bands = res.get("price_bands") or []
+        segment_id = res.get("segment_id")
+        segment_start = res.get("segment_start")
+        segment_end = res.get("segment_end")
+
+        # Some implementations may put config data under config_snapshot
+        if not price_bands:
+            cfg = res.get("config_snapshot")
+
+            # repo may return jsonb as a string
+            if isinstance(cfg, str):
+                try:
+                    cfg = json.loads(cfg)
+                except Exception:
+                    cfg = None
+
+            if isinstance(cfg, dict):
+                try:
+                    profiles = cfg.get("profiles") or []
+                    for p in profiles:
+                        scope = (p.get("scope") or {})
+                        cities = scope.get("cities") or []
+                        suppliers = scope.get("suppliers") or []
+                        if city in cities and supplier_code in suppliers:
+                            price_bands = p.get("price_bands") or []
+                            break
+                except Exception:
+                    price_bands = []
+
+        return {
+            "policy_id": policy_id,
+            "mode": mode,
+            "rules": rules,
+            "min_porog_by_band": min_porog_by_band,
+            "price_bands": price_bands,
+            "segment_id": segment_id,
+            "segment_start": segment_start,
+            "segment_end": segment_end,
+            # keep original for debugging
+            "_raw": res,
+        }
+    except Exception:
+        logger.exception(
+            "Failed to fetch policy via balancer repository: supplier=%s city=%s",
+            supplier_code,
+            city,
+        )
+        return None
+
 from sqlalchemy import text, select, func, asc, desc
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # === ВАША ИНФРАСТРУКТУРА / МОДЕЛИ ===
 from app.database import get_async_db
@@ -34,6 +142,13 @@ except Exception:
             "process_database_service() недоступен. Заглушка: file_type=%s enterprise_code=%s items=%d",
             file_type, enterprise_code, len(file_path)
         )
+
+# опционально: нотификации (Telegram/Email/whatever implemented in notification_service)
+try:
+    from app.services.notification_service import send_notification
+except Exception:  # pragma: no cover
+    async def send_notification(message: str, recipient: str) -> None:
+        logging.getLogger("dropship").info("send_notification() недоступен. recipient=%s msg=%s", recipient, message)
 
 logger = logging.getLogger("dropship")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -216,32 +331,46 @@ async def fetch_competitor_price(session: AsyncSession, product_code: str, city:
 
 
 
-# --- Новый хелпер: получить последнюю применённую политику балансировщика для city+supplier ---
-async def fetch_latest_balancer_policy(
+
+# --- Новый хелпер (Вариант A): получить АКТИВНУЮ политику балансировщика для city+supplier на текущий момент ---
+async def fetch_active_balancer_policy(
     session: AsyncSession,
     *,
     city: str,
     supplier_code: str,
+    now_utc: Optional[datetime] = None,
 ) -> Optional[dict]:
     """
-    Берём последнюю применённую политику из balancer_policy_log:
+    Вариант A:
+      - берём ТОЛЬКО активную (по времени) политику: segment_start <= now < segment_end
       - is_applied = true
       - city = :city
       - supplier = :supplier_code
+      - приоритет: LIVE > TEST
 
     Возвращает dict:
       {
+        "policy_id": <int>,
+        "mode": "LIVE"|"TEST",
         "rules": [{"band_id": "...", "porog": 0.15}, ...],
         "min_porog_by_band": {"B1": 0.15, ...},
-        "price_bands": [{"band_id": "B1", "min": 0, "max": 300}, ...]  # из config_snapshot профиля
+        "price_bands": [{"band_id": "B1", "min": 0, "max": 300}, ...],
         "segment_id": "...",
-        "segment_start": "...",
-        "segment_end": "..."
+        "segment_start": <datetime>,
+        "segment_end": <datetime>,
       }
-    Если записи нет — None.
+
+    Если активной политики нет — None.
+
+    ВАЖНО: сравнение делаем в UTC (now_utc). segment_start/segment_end в БД должны быть timestamptz.
     """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+
     sql = text("""
         SELECT
+            id,
+            mode,
             rules,
             min_porog_by_band,
             config_snapshot,
@@ -252,18 +381,24 @@ async def fetch_latest_balancer_policy(
         WHERE is_applied = true
           AND city = :city
           AND supplier = :supplier
-        ORDER BY segment_start DESC, id DESC
+          AND segment_start <= :now_utc
+          AND segment_end   >  :now_utc
+        ORDER BY
+            CASE WHEN mode = 'LIVE' THEN 1 ELSE 0 END DESC,
+            segment_start DESC,
+            id DESC
         LIMIT 1
     """)
-    res = await session.execute(sql, {"city": city, "supplier": supplier_code})
+
+    res = await session.execute(sql, {"city": city, "supplier": supplier_code, "now_utc": now_utc})
     row = res.first()
     if not row:
         return None
 
-    rules, min_porog_by_band, config_snapshot, segment_id, segment_start, segment_end = row
+    policy_id, mode, rules, min_porog_by_band, config_snapshot, segment_id, segment_start, segment_end = row
 
     # config_snapshot может быть NULL
-    price_bands = []
+    price_bands: list[dict] = []
     try:
         if isinstance(config_snapshot, dict):
             # ищем профиль, который подходит под city+supplier
@@ -279,6 +414,90 @@ async def fetch_latest_balancer_policy(
         price_bands = []
 
     return {
+        "policy_id": policy_id,
+        "mode": mode,
+        "rules": rules or [],
+        "min_porog_by_band": min_porog_by_band or {},
+        "price_bands": price_bands or [],
+        "segment_id": segment_id,
+        "segment_start": segment_start,
+        "segment_end": segment_end,
+    }
+
+
+# --- Fallback: если активной политики нет, берём последнюю применённую (как было раньше) ---
+async def fetch_latest_balancer_policy(
+    session: AsyncSession,
+    *,
+    city: str,
+    supplier_code: str,
+) -> Optional[dict]:
+    """
+    Берём последнюю применённую политику из balancer_policy_log:
+      - is_applied = true
+      - city = :city
+      - supplier = :supplier_code
+
+    ВАЖНО: приоритет LIVE > TEST.
+
+    Возвращает dict:
+      {
+        "policy_id": <int>,
+        "mode": "LIVE"|"TEST",
+        "rules": [{"band_id": "...", "porog": 0.15}, ...],
+        "min_porog_by_band": {"B1": 0.15, ...},
+        "price_bands": [{"band_id": "B1", "min": 0, "max": 300}, ...],
+        "segment_id": "...",
+        "segment_start": <datetime>,
+        "segment_end": <datetime>,
+      }
+    Если записи нет — None.
+    """
+    sql = text("""
+        SELECT
+            id,
+            mode,
+            rules,
+            min_porog_by_band,
+            config_snapshot,
+            segment_id,
+            segment_start,
+            segment_end
+        FROM balancer_policy_log
+        WHERE is_applied = true
+          AND city = :city
+          AND supplier = :supplier
+        ORDER BY
+            CASE WHEN mode = 'LIVE' THEN 1 ELSE 0 END DESC,
+            segment_start DESC,
+            id DESC
+        LIMIT 1
+    """)
+    res = await session.execute(sql, {"city": city, "supplier": supplier_code})
+    row = res.first()
+    if not row:
+        return None
+
+    policy_id, mode, rules, min_porog_by_band, config_snapshot, segment_id, segment_start, segment_end = row
+
+    # config_snapshot может быть NULL
+    price_bands: list[dict] = []
+    try:
+        if isinstance(config_snapshot, dict):
+            profiles = config_snapshot.get("profiles") or []
+            for p in profiles:
+                scope = (p.get("scope") or {})
+                cities = scope.get("cities") or []
+                suppliers = scope.get("suppliers") or []
+                if city in cities and supplier_code in suppliers:
+                    price_bands = p.get("price_bands") or []
+                    break
+    except Exception:
+        price_bands = []
+
+    return {
+        "policy_id": policy_id,
+        "mode": mode,
         "rules": rules or [],
         "min_porog_by_band": min_porog_by_band or {},
         "price_bands": price_bands or [],
@@ -598,17 +817,97 @@ async def process_supplier(
     # Кэш политик балансировщика на город
     balancer_policy_cache: Dict[str, Optional[dict]] = {}
 
+    # Фиксируем "сейчас" один раз на поставщика, чтобы все товары/города в прогоне брали один и тот же сегмент
+    now_utc = datetime.now(timezone.utc)
+
     # 5.6 цикл по городам и товарам
     for city in cities:
-        # Подтягиваем последнюю применённую политику балансировщика для (city, supplier_code)
+        # Вариант A: сначала пробуем взять АКТИВНУЮ политику через balancer repository (single source of truth)
         if city not in balancer_policy_cache:
-            balancer_policy_cache[city] = await fetch_latest_balancer_policy(
+            # Preferred: single source of truth (balancer repository)
+            active = await _fetch_policy_for_pricing_repo(
                 session,
                 city=city,
                 supplier_code=code,
+                now_utc=now_utc,
             )
+
+            # If repo returned a policy but without price_bands, treat as incomplete and fallback to SQL.
+            if active is not None and not (active.get("price_bands") or []):
+                logger.warning(
+                    "Balancer repo returned policy without price_bands; fallback to SQL. supplier=%s city=%s policy_id=%s",
+                    code,
+                    city,
+                    active.get("policy_id") or active.get("id"),
+                )
+                active = None
+
+            # Fallbacks (legacy): active-by-time, then last applied
+            if active is None:
+                active = await fetch_active_balancer_policy(
+                    session,
+                    city=city,
+                    supplier_code=code,
+                    now_utc=now_utc,
+                )
+            if active is None:
+                active = await fetch_latest_balancer_policy(
+                    session,
+                    city=city,
+                    supplier_code=code,
+                )
+
+            balancer_policy_cache[city] = active
         bal_policy = balancer_policy_cache[city]
+        # --- Extract reason and band_sources for debug/notification ---
+        reason_dbg = None
+        band_sources_dbg = None
+        raw = bal_policy.get("_raw") if bal_policy else None
+        if isinstance(raw, dict):
+            reason_dbg = raw.get("reason")
+            rd = raw.get("reason_details") or {}
+            band_sources_dbg = rd.get("band_sources")
+        if bal_policy:
+            logger.info(
+                "Balancer policy selected: supplier=%s city=%s mode=%s policy_id=%s segment=%s [%s..%s] now_utc=%s reason=%s band_sources=%s",
+                code,
+                city,
+                bal_policy.get("mode"),
+                bal_policy.get("policy_id") or bal_policy.get("id"),
+                bal_policy.get("segment_id"),
+                bal_policy.get("segment_start"),
+                bal_policy.get("segment_end"),
+                now_utc,
+                (bal_policy.get("_raw") or {}).get("reason"),
+                ((bal_policy.get("_raw") or {}).get("reason_details") or {}).get("band_sources"),
+            )
+        else:
+            logger.info(
+                "Balancer policy selected: supplier=%s city=%s NONE (will use supplier min_markup_threshold/fallback)",
+                code,
+                city,
+            )
         logger.info("Supplier %s / city %s / items %d", code, city, len(mapped))
+        # --- Debug/notify: показать, какую политику и какие пороги реально применяем ---
+        sample_limit = 8
+        try:
+            sample_limit = int(__import__("os").getenv("PRICING_POLICY_SAMPLE_LIMIT", "8"))
+        except Exception:
+            sample_limit = 8
+
+        sample_rows: list[str] = []
+        policy_id_dbg = None
+        policy_mode_dbg = None
+        segment_dbg = None
+        if bal_policy:
+            policy_id_dbg = bal_policy.get("policy_id") or bal_policy.get("id")
+            policy_mode_dbg = bal_policy.get("mode")
+            segment_dbg = bal_policy.get("segment_id")
+
+        logger.info(
+            "Pricing policy context: supplier=%s city=%s policy_id=%s mode=%s segment=%s now_utc=%s",
+            code, city, policy_id_dbg, policy_mode_dbg, segment_dbg, now_utc,
+        )
         for it in mapped:
             product_code = str(it["product_code"])  # это ID из catalog_mapping."ID"
             qty = int(it.get("qty") or 0)
@@ -621,28 +920,37 @@ async def process_supplier(
             # 1) если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
             # 2) иначе пытаемся взять порог из балансировщика по band_id (band определяем по rr)
             threshold_percent_effective = supplier_threshold_percent
+            thr_source = "supplier_min_markup_threshold" if supplier_threshold_percent > 0 else "unset"
 
-            if threshold_percent_effective <= 0 and bal_policy:
+            band_id = None
+
+            # Если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
+            # И всё равно считаем band_id (для диагностики/логов).
+            if bal_policy:
                 bands = bal_policy.get("price_bands") or []
-                rules = bal_policy.get("rules") or []
-                min_map = bal_policy.get("min_porog_by_band") or {}
-
                 rr_dec = _to_decimal(rr)
                 band_id = resolve_band_id_from_bands(rr_dec, bands)
-
-                # если band_id не определился (rr=0), пробуем от competitor_price, иначе от po
                 if not band_id and competitor is not None:
                     band_id = resolve_band_id_from_bands(_to_decimal(competitor), bands)
                 if not band_id:
                     band_id = resolve_band_id_from_bands(_to_decimal(po), bands)
 
-                if band_id:
-                    porog_from_rules = rule_porog_by_band(rules, band_id)
-                    min_porog = _to_decimal(min_map.get(band_id)) if min_map else Decimal("0")
-                    if porog_from_rules is not None and porog_from_rules > 0:
-                        threshold_percent_effective = porog_from_rules
-                    else:
-                        threshold_percent_effective = min_porog
+            # Если supplier_threshold_percent = 0/None — берём порог из балансировщика по band_id
+            if threshold_percent_effective <= 0 and bal_policy and band_id:
+                rules = bal_policy.get("rules") or []
+                min_map = bal_policy.get("min_porog_by_band") or {}
+
+                porog_from_rules = rule_porog_by_band(rules, band_id)
+                min_porog = _to_decimal(min_map.get(band_id)) if min_map else Decimal("0")
+                if porog_from_rules is not None and porog_from_rules > 0:
+                    threshold_percent_effective = porog_from_rules
+                    thr_source = "policy_rules"
+                elif min_porog > 0:
+                    threshold_percent_effective = min_porog
+                    thr_source = "policy_min_porog_by_band"
+                else:
+                    threshold_percent_effective = Decimal("0")
+                    thr_source = "no_policy_threshold"
 
             price = compute_price_for_item(
                 competitor_price=competitor,
@@ -653,6 +961,15 @@ async def process_supplier(
                 price_opt=po,
                 threshold_percent_effective=threshold_percent_effective,
             )
+
+            # --- собрать несколько строк для нотификации: какие пороги реально применились ---
+            if len(sample_rows) < sample_limit:
+                thr_share = _as_share(threshold_percent_effective)
+                # показываем в процентах
+                thr_pct = (thr_share * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                sample_rows.append(
+                    f"• {product_code} band={band_id or '-'} thr={thr_pct}% src={thr_source} rr={_to_decimal(rr)} po={_to_decimal(po)} comp={(competitor or Decimal('0'))} -> price={price}"
+                )
 
             # Сохраняем price_opt в offers.wholesale_price (если пришло)
             wholesale_price = None
@@ -670,6 +987,25 @@ async def process_supplier(
                 wholesale_price=wholesale_price,
                 stock=qty,
             )
+
+        # --- отправляем нотификацию 1 раз на supplier+city за прогон ---
+        if sample_rows:
+            header = (
+                f"📌 Pricing policy applied\n"
+                f"Supplier: {code}\n"
+                f"City: {city}\n"
+                f"Policy: id={policy_id_dbg} mode={policy_mode_dbg} seg={segment_dbg}\n"
+                f"Reason: {reason_dbg or '-'}\n"
+                f"Band sources: {band_sources_dbg or '-'}\n"
+                f"Now(UTC): {now_utc}\n"
+            )
+            msg = header + "\n".join(sample_rows)
+            try:
+                res = send_notification(msg, "Разработчик")
+                if inspect.isawaitable(res):
+                    await res
+            except Exception:
+                logger.exception("send_notification failed: supplier=%s city=%s", code, city)
 
 # --------------------------------------------------------------------------------------
 # 6) Построение "stock"-пакета из offers и отправка в БД-сервис
