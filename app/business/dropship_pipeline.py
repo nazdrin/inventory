@@ -4,6 +4,7 @@ import inspect
 import logging
 import re
 import argparse
+import os
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
@@ -989,7 +990,9 @@ async def process_supplier(
             )
 
         # --- отправляем нотификацию 1 раз на supplier+city за прогон ---
-        if sample_rows:
+        # ВРЕМЕННО ОТКЛЮЧЕНО по умолчанию, чтобы не спамить в проде.
+        # Включить можно явным флагом окружения: PRICING_POLICY_NOTIFY=1
+        if sample_rows and os.getenv("PRICING_POLICY_NOTIFY", "0") == "1":
             header = (
                 f"📌 Pricing policy applied\n"
                 f"Supplier: {code}\n"
