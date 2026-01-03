@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
+
+# --- Helper: normalize day_date to datetime.date ---
+def _normalize_day_date(value) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise TypeError(f"Invalid day_date type: {type(value)}")
 from typing import Any, Optional
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 
 import os
 
 from app.database import get_async_db
-from app.models import BalancerPolicyLog, BalancerOrderFacts, BalancerSegmentStats
+from app.models import BalancerPolicyLog, BalancerOrderFacts, BalancerSegmentStats, BalancerLiveState
 
 __all__ = [
     "create_policy_log_record",
@@ -30,6 +40,21 @@ __all__ = [
     "get_active_policy_for_pricing",
     "cleanup_old_balancer_data",
     "get_policy_log_ids_older_than",
+    "get_live_state",
+    "upsert_live_state",
+    # --- LIVE state metric helpers ---
+    "ensure_live_state",
+    "try_set_live_baseline",
+    "update_live_last_metric",
+    "update_live_best_if_better",
+    "set_live_stop",
+    "inc_live_orders",
+    "set_live_limit_reached",
+    "bump_live_iter",
+    "increment_live_day_orders",
+    "update_live_state_last_policy",
+    "try_mark_live_run_key",
+    "update_live_best_rules",
 ]
 
 
@@ -287,11 +312,703 @@ async def cleanup_old_balancer_data(*, keep_days: int = 90) -> dict[str, int]:
     }
 
 
-async def upsert_order_fact(payload: dict[str, Any]) -> BalancerOrderFacts:
+# --- LIVE state (daily counters / controls) ---
+
+async def get_live_state(
+    *,
+    day_date,
+    supplier: str,
+    mode: str | None = None,
+) -> BalancerLiveState | None:
+    """Возвращает live-state для (day_date, supplier[, mode]).
+
+    Таблица используется для LIVE-контролей: дневные лимиты, итерации и флаги.
+
+    Примечание: ключи зависят от модели. Мы фильтруем по тем полям,
+    которые реально присутствуют на модели `BalancerLiveState`.
+    """
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+
+    async with get_async_db() as db:
+        q = select(BalancerLiveState)
+        # обязательные ключи
+        if hasattr(BalancerLiveState, "day_date"):
+            q = q.where(BalancerLiveState.day_date == day_date)
+        if hasattr(BalancerLiveState, "supplier"):
+            q = q.where(BalancerLiveState.supplier == supplier)
+        # опциональный ключ mode
+        if run_mode in ("LIVE", "TEST") and hasattr(BalancerLiveState, "mode"):
+            q = q.where(BalancerLiveState.mode == run_mode)
+
+        res = await db.execute(q.limit(1))
+        return res.scalar_one_or_none()
+
+
+async def upsert_live_state(
+    *,
+    day_date,
+    supplier: str,
+    mode: str | None = None,
+    defaults: dict[str, Any] | None = None,
+    updates: dict[str, Any] | None = None,
+) -> BalancerLiveState:
+    """Создаёт или обновляет live-state (UPSERT).
+
+    - defaults: применяются только при создании
+    - updates: применяются и при создании, и при обновлении
+
+    Требование: в БД должен быть UNIQUE по (mode, supplier, day_date).
+    """
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    defaults = dict(defaults or {})
+    updates = dict(updates or {})
+
+    # формируем значения по умолчанию на insert
+    insert_live_iter = int(defaults.get("live_iter", 0)) if hasattr(BalancerLiveState, "live_iter") else 0
+    insert_day_orders = int(defaults.get("day_orders_count", 0)) if hasattr(BalancerLiveState, "day_orders_count") else 0
+    insert_is_limit = bool(defaults.get("is_limit_reached", False)) if hasattr(BalancerLiveState, "is_limit_reached") else False
+    insert_last_policy = defaults.get("last_policy_log_id") if hasattr(BalancerLiveState, "last_policy_log_id") else None
+
+    # updates применяем как для insert, так и для update
+    if "live_iter" in updates and hasattr(BalancerLiveState, "live_iter"):
+        insert_live_iter = int(updates["live_iter"])
+    if "day_orders_count" in updates and hasattr(BalancerLiveState, "day_orders_count"):
+        insert_day_orders = int(updates["day_orders_count"])
+    if "is_limit_reached" in updates and hasattr(BalancerLiveState, "is_limit_reached"):
+        insert_is_limit = bool(updates["is_limit_reached"])
+    if "last_policy_log_id" in updates and hasattr(BalancerLiveState, "last_policy_log_id"):
+        insert_last_policy = updates["last_policy_log_id"]
+
+    # дополнительные поля updates (кроме базовых) — обновим отдельным UPDATE после upsert
+    extra_update_keys = {
+        k: v
+        for k, v in updates.items()
+        if k not in {"live_iter", "day_orders_count", "is_limit_reached", "last_policy_log_id"}
+        and hasattr(BalancerLiveState, k)
+    }
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached, last_policy_log_id)
+                VALUES (:mode, :supplier, :day_date, :live_iter, :day_orders_count, :is_limit_reached, :last_policy_log_id)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    live_iter = EXCLUDED.live_iter,
+                    day_orders_count = EXCLUDED.day_orders_count,
+                    is_limit_reached = EXCLUDED.is_limit_reached,
+                    last_policy_log_id = EXCLUDED.last_policy_log_id,
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "live_iter": insert_live_iter,
+                "day_orders_count": insert_day_orders,
+                "is_limit_reached": insert_is_limit,
+                "last_policy_log_id": int(insert_last_policy) if insert_last_policy is not None else None,
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+
+        if extra_update_keys and obj is not None:
+            for k, v in extra_update_keys.items():
+                setattr(obj, k, v)
+            await db.commit()
+            await db.refresh(obj)
+        elif obj is not None:
+            await db.refresh(obj)
+
+        return obj  # type: ignore[return-value]
+
+
+async def inc_live_orders(
+    *,
+    day_date,
+    supplier: str,
+    delta: int,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Увеличивает дневной счётчик заказов по поставщику (day_orders_count += delta)."""
+
+    # backward-compatible wrapper around atomic counter update
+    return await increment_live_day_orders(
+        day_date=day_date,
+        supplier=supplier,
+        delta_orders=delta,
+        mode=mode,
+        policy_log_id=None,
+    )
+
+
+async def set_live_limit_reached(
+    *,
+    day_date,
+    supplier: str,
+    is_reached: bool = True,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Ставит флаг достижения дневного лимита (is_limit_reached)."""
+
+    updates: dict[str, Any] = {}
+    if hasattr(BalancerLiveState, "is_limit_reached"):
+        updates["is_limit_reached"] = bool(is_reached)
+
+    # гарантируем, что запись существует
+    obj = await upsert_live_state(
+        day_date=day_date,
+        supplier=supplier,
+        mode=mode,
+        defaults={"day_orders_count": 0} if hasattr(BalancerLiveState, "day_orders_count") else {},
+        updates=updates,
+    )
+    return obj
+
+
+# --- atomic helpers for live state ---
+
+async def bump_live_iter(
+    *,
+    day_date: date,
+    supplier: str,
+    delta: int = 1,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Атомарно увеличивает live_iter на delta (по умолчанию +1)."""
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    delta = int(delta)
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached)
+                VALUES (:mode, :supplier, :day_date, :delta, 0, false)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    live_iter = COALESCE(balancer_live_state.live_iter, 0) + :delta,
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {"mode": run_mode, "supplier": supplier, "day_date": day_date, "delta": delta},
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+async def increment_live_day_orders(
+    *,
+    day_date: date,
+    supplier: str,
+    delta_orders: int,
+    mode: str | None = None,
+    policy_log_id: int | None = None,
+) -> BalancerLiveState:
+    """Атомарно увеличивает day_orders_count на delta_orders.
+
+    Если передан policy_log_id — также обновляет last_policy_log_id.
+    """
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    delta_orders = int(delta_orders)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached, last_policy_log_id)
+                VALUES (:mode, :supplier, :day_date, 0, :delta, false, :policy_log_id)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    day_orders_count = COALESCE(balancer_live_state.day_orders_count, 0) + :delta,
+                    last_policy_log_id = COALESCE(:policy_log_id, balancer_live_state.last_policy_log_id),
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "delta": delta_orders,
+                "policy_log_id": int(policy_log_id) if policy_log_id is not None else None,
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+
+async def update_live_state_last_policy(
+    *,
+    day_date: date,
+    supplier: str,
+    policy_log_id: int | None,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Обновляет last_policy_log_id (и updated_at) без изменения счётчиков."""
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached, last_policy_log_id)
+                VALUES (:mode, :supplier, :day_date, 0, 0, false, :policy_log_id)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    last_policy_log_id = :policy_log_id,
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "policy_log_id": int(policy_log_id) if policy_log_id is not None else None,
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+# --- Helper: try_mark_live_run_key ---
+
+async def try_mark_live_run_key(
+    *,
+    day_date: date,
+    supplier: str,
+    run_key: str,
+    mode: str | None = None,
+) -> bool:
+    """Idempotency gate for LIVE runs.
+
+    Returns True only if `run_key` was set/changed for (mode, supplier, day_date).
+    If the same run_key was already stored, returns False.
+
+    This is intended to prevent double counting when the same segment pipeline
+    is executed multiple times.
+
+    Requires column `last_run_key` (and UNIQUE on (mode, supplier, day_date)).
+    If the column does not exist (older schema), this function returns True.
+    """
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_key = str(run_key or "").strip()
+    if not run_key:
+        raise ValueError("run_key is required")
+
+    # Backward-compat: if schema isn't expanded yet, don't block the run.
+    if not hasattr(BalancerLiveState, "last_run_key"):
+        return True
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached, last_run_key)
+                VALUES (:mode, :supplier, :day_date, 0, 0, false, :run_key)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    last_run_key = EXCLUDED.last_run_key,
+                    updated_at = now()
+                WHERE balancer_live_state.last_run_key IS DISTINCT FROM EXCLUDED.last_run_key
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "run_key": run_key,
+            },
+        )
+        row_id = res.scalar_one_or_none()
+        await db.commit()
+        return row_id is not None
+
+
+async def update_live_best_rules(
+    *,
+    day_date: date,
+    supplier: str,
+    best_rules: dict[str, Any],
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Stores the current best rules snapshot into live_state.best_rules.
+
+    Requires column `best_rules` (json/jsonb). If the column does not exist,
+    this function will simply ensure the row exists and return it.
+    """
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    # Backward-compat: if schema isn't expanded yet, just ensure row exists.
+    if not hasattr(BalancerLiveState, "best_rules"):
+        return await ensure_live_state(day_date=day_date, supplier=supplier, mode=run_mode)
+
+    payload_json = json.dumps(best_rules or {}, ensure_ascii=False, default=str)
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached, best_rules)
+                VALUES (:mode, :supplier, :day_date, 0, 0, false, (:best_rules)::jsonb)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    best_rules = (:best_rules)::jsonb,
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "best_rules": payload_json,
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+# --- LIVE state: metrics/baseline/best/freeze helpers ---
+
+async def ensure_live_state(
+    *,
+    day_date: date,
+    supplier: str,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Гарантирует наличие строки live_state для (mode, supplier, day_date)."""
+    day_date = _normalize_day_date(day_date)
+    return await upsert_live_state(
+        day_date=day_date,
+        supplier=supplier,
+        mode=mode,
+        defaults={
+            "live_iter": 0,
+            "day_orders_count": 0,
+            "is_limit_reached": False,
+        },
+        updates={},
+    )
+
+
+async def try_set_live_baseline(
+    *,
+    day_date: date,
+    supplier: str,
+    baseline_metric: float,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Атомарно выставляет baseline_metric, но только если он ещё не задан."""
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (mode, supplier, day_date, live_iter, day_orders_count, is_limit_reached, baseline_metric)
+                VALUES (:mode, :supplier, :day_date, 0, 0, false, :baseline_metric)
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    baseline_metric = COALESCE(balancer_live_state.baseline_metric, EXCLUDED.baseline_metric),
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "baseline_metric": float(baseline_metric),
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+async def update_live_last_metric(
+    *,
+    day_date: date,
+    supplier: str,
+    last_metric: float,
+    last_segment_end: datetime | None = None,
+    last_policy_log_id: int | None = None,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Атомарно обновляет last_metric (+ опционально last_segment_end/last_policy_log_id)."""
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (
+                    mode, supplier, day_date,
+                    live_iter, day_orders_count, is_limit_reached,
+                    last_metric, last_segment_end, last_policy_log_id
+                )
+                VALUES (
+                    :mode, :supplier, :day_date,
+                    0, 0, false,
+                    :last_metric, :last_segment_end, :last_policy_log_id
+                )
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    last_metric = EXCLUDED.last_metric,
+                    last_segment_end = COALESCE(EXCLUDED.last_segment_end, balancer_live_state.last_segment_end),
+                    last_policy_log_id = COALESCE(EXCLUDED.last_policy_log_id, balancer_live_state.last_policy_log_id),
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "last_metric": float(last_metric),
+                "last_segment_end": last_segment_end,
+                "last_policy_log_id": int(last_policy_log_id) if last_policy_log_id is not None else None,
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+async def update_live_best_if_better(
+    *,
+    day_date: date,
+    supplier: str,
+    candidate_metric: float,
+    candidate_iter: int,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Атомарно обновляет best_metric/best_iter, если candidate лучше текущего best."""
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    cand = float(candidate_metric)
+    it = int(candidate_iter)
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (
+                    mode, supplier, day_date,
+                    live_iter, day_orders_count, is_limit_reached,
+                    best_metric, best_iter
+                )
+                VALUES (
+                    :mode, :supplier, :day_date,
+                    0, 0, false,
+                    :cand, :it
+                )
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    best_metric = CASE
+                        WHEN balancer_live_state.best_metric IS NULL THEN :cand
+                        WHEN :cand > balancer_live_state.best_metric THEN :cand
+                        ELSE balancer_live_state.best_metric
+                    END,
+                    best_iter = CASE
+                        WHEN balancer_live_state.best_metric IS NULL THEN :it
+                        WHEN :cand > balancer_live_state.best_metric THEN :it
+                        ELSE balancer_live_state.best_iter
+                    END,
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "cand": cand,
+                "it": it,
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+async def set_live_stop(
+    *,
+    day_date: date,
+    supplier: str,
+    stop_reason: str,
+    freeze: bool = True,
+    mode: str | None = None,
+) -> BalancerLiveState:
+    """Ставит stop_reason и (опционально) замораживает LIVE-управление на день."""
+
+    supplier = str(supplier or "").strip()
+    if not supplier:
+        raise ValueError("supplier is required")
+
+    day_date = _normalize_day_date(day_date)
+
+    run_mode = (mode or os.getenv("BALANCER_RUN_MODE") or "").strip().upper()
+    if run_mode not in ("LIVE", "TEST"):
+        run_mode = "LIVE"
+
+    async with get_async_db() as db:
+        res = await db.execute(
+            text(
+                """
+                INSERT INTO balancer_live_state (
+                    mode, supplier, day_date,
+                    live_iter, day_orders_count, is_limit_reached,
+                    stop_reason, is_frozen
+                )
+                VALUES (
+                    :mode, :supplier, :day_date,
+                    0, 0, false,
+                    :stop_reason, :is_frozen
+                )
+                ON CONFLICT (mode, supplier, day_date)
+                DO UPDATE SET
+                    stop_reason = EXCLUDED.stop_reason,
+                    is_frozen = EXCLUDED.is_frozen,
+                    updated_at = now()
+                RETURNING id
+                """
+            ),
+            {
+                "mode": run_mode,
+                "supplier": supplier,
+                "day_date": day_date,
+                "stop_reason": str(stop_reason)[:255],
+                "is_frozen": bool(freeze),
+            },
+        )
+        row_id = res.scalar_one()
+        await db.commit()
+        obj = await db.get(BalancerLiveState, int(row_id))
+        return obj  # type: ignore[return-value]
+
+
+async def upsert_order_fact(payload: dict[str, Any]) -> tuple[BalancerOrderFacts, bool]:
     """Идемпотентно пишет строку в balancer_order_facts.
 
     Уникальность обеспечивается парой (policy_log_id, order_id).
-    Если такая запись уже есть — возвращаем её.
+    Если такая запись уже есть — возвращаем её и created=False.
+    Если нет — создаём новую и возвращаем created=True.
+
+    Это важно для LIVE-дневных лимитов: мы должны уметь посчитать delta
+    по новым вставкам (created=True), чтобы второй прогон не увеличивал счётчик.
     """
 
     payload = dict(payload)
@@ -306,13 +1023,13 @@ async def upsert_order_fact(payload: dict[str, Any]) -> BalancerOrderFacts:
         res = await db.execute(q)
         existing = res.scalar_one_or_none()
         if existing is not None:
-            return existing
+            return existing, False
 
         obj = BalancerOrderFacts(**payload)
         db.add(obj)
         await db.commit()
         await db.refresh(obj)
-        return obj
+        return obj, True
 
 
 # --- Aggregation step segment functions ---

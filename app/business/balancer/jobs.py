@@ -15,6 +15,9 @@ from .repository import (
     upsert_policy_log,
     get_best_porog_30d_global_best,
     cleanup_old_balancer_data,
+    # LIVE state helpers (may be no-ops in older repo versions)
+    upsert_live_state,  # type: ignore
+    get_live_state,  # type: ignore
 )
 from .salesdrive_client import fetch_orders_for_segment
 from .order_processor import build_order_facts
@@ -817,10 +820,8 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
     except Exception:  # pragma: no cover
         httpx = None  # type: ignore
 
-    # Cache lives for the duration of this job run
-    if not hasattr(collect_orders_for_last_policy_async, "_orders_cache"):
-        setattr(collect_orders_for_last_policy_async, "_orders_cache", {})
-    _orders_cache: dict[tuple[str, str], list[Any]] = getattr(collect_orders_for_last_policy_async, "_orders_cache")
+    # Cache lives only for the duration of this call (avoid keeping objects across event loops)
+    _orders_cache: dict[tuple[str, str], list[Any]] = {}
 
     for policy in policies:
         # SalesDrive хранит supplier как ЧЕЛОВЕЧЕСКОЕ ИМЯ (например "DSN"),
@@ -966,7 +967,7 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
             return None
 
         def _city_matches(order_obj: Any, expected_city: str) -> bool:
-                # wildcard: apply same thresholds for all cities
+            # wildcard: apply same thresholds for all cities
             if str(expected_city or "").strip() in ("*", "ALL", "all", "Any", "any"):
                 return True
             if not expected_city:
@@ -1138,9 +1139,20 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
             )
             continue
 
+        inserted = 0
         for order in orders:
             fact = build_order_facts(policy, order)
-            obj = await upsert_order_fact(fact)
+            res = await upsert_order_fact(fact)
+            # repository versions may return either (obj, created) or just obj
+            if isinstance(res, tuple) and len(res) == 2:
+                obj, created = res
+            else:
+                obj, created = res, False
+
+            # Count only real inserts (idempotent re-runs should not inflate counters)
+            if created:
+                inserted += 1
+
             results.append(
                 {
                     "policy_log_id": policy.id,
@@ -1149,6 +1161,7 @@ async def collect_orders_for_last_policy_async() -> list[dict[str, Any]]:
                     "note": None,
                 }
             )
+
 
     return results
 
@@ -1225,6 +1238,112 @@ async def run_balancer_pipeline_async() -> dict[str, Any]:
         best_after = None
 
     collected_facts = [x for x in collected if x.get("policy_log_id") is not None and x.get("order_id") is not None]
+
+    # --- LIVE state upsert (source of truth for day counters / iterations) ---
+    # We persist per-supplier daily counters in balancer_live_state so live_logic does not need
+    # to re-derive day_orders_count / live_iter from policy_log.
+    # Important: daily limits are per SUPPLIER for the whole day (across all cities/segments).
+    try:
+        run_mode_env = (os.getenv("BALANCER_RUN_MODE") or "").upper().strip()
+        if run_mode_env == "LIVE" and applied:
+            # Resolve daily limit per supplier from config profiles (fallback to global balancer setting).
+            def _resolve_daily_limit_orders(cfg_obj: Any, supplier_code: str) -> int:
+                try:
+                    for prof in (getattr(cfg_obj, "profiles", None) or []):
+                        if str(prof.get("mode", "")).upper() != "LIVE":
+                            continue
+                        scope = prof.get("scope", {}) or {}
+                        sup_list = [str(x).strip() for x in (scope.get("suppliers", []) or [])]
+                        if supplier_code in sup_list:
+                            v = prof.get("daily_limit_orders")
+                            if v is not None and str(v).strip() != "":
+                                return int(v)
+                except Exception:
+                    pass
+                try:
+                    bal = getattr(cfg_obj, "balancer", None)
+                    if isinstance(bal, dict):
+                        v = bal.get("daily_limit_orders")
+                        if v is not None and str(v).strip() != "":
+                            return int(v)
+                except Exception:
+                    pass
+                return 0
+
+            cfg_live = load_config()
+
+            # Build mapping policy_id -> (supplier, day_date)
+            pid_to_supplier: dict[int, str] = {}
+            pid_to_day_date: dict[int, str] = {}
+            supplier_to_last_pid: dict[str, int] = {}
+
+            for a in (applied or []):
+                try:
+                    pid = int(a.get("id"))
+                    supplier = str(a.get("supplier") or "").strip()
+                    if not supplier:
+                        continue
+
+                    # day_date should be the business day of the segment start.
+                    seg_start = str(a.get("segment_start") or "")
+                    day_date_str = seg_start[:10] if len(seg_start) >= 10 else ""
+                    if not day_date_str:
+                        continue
+
+                    pid_to_supplier[pid] = supplier
+                    pid_to_day_date[pid] = day_date_str
+                    # Track last applied policy id for this supplier (max id)
+                    prev = supplier_to_last_pid.get(supplier)
+                    if prev is None or pid > prev:
+                        supplier_to_last_pid[supplier] = pid
+                except Exception:
+                    continue
+
+            # Aggregate day_total_orders from metrics across ALL cities for each supplier
+            supplier_day_orders: dict[tuple[str, str], int] = {}
+            for m in (metrics or []):
+                try:
+                    pid = int(m.get("policy_log_id"))
+                    dto = m.get("day_total_orders")
+                    if dto is None:
+                        continue
+                    supplier = pid_to_supplier.get(pid)
+                    day_date_str = pid_to_day_date.get(pid)
+                    if not supplier or not day_date_str:
+                        continue
+                    key = (supplier, day_date_str)
+                    supplier_day_orders[key] = supplier_day_orders.get(key, 0) + int(dto)
+                except Exception:
+                    continue
+
+            # Upsert state rows (one per supplier per day)
+            for (supplier, day_date_str), day_orders_count in supplier_day_orders.items():
+                try:
+                    # Keep current live_iter from DB as source of truth
+                    live_iter_val = 0
+                    try:
+                        st = await get_live_state(mode="LIVE", supplier=supplier, day_date=day_date_str)
+                        if st is not None:
+                            live_iter_val = int(getattr(st, "live_iter", 0) or 0)
+                    except Exception:
+                        live_iter_val = 0
+
+                    daily_limit = _resolve_daily_limit_orders(cfg_live, supplier)
+                    is_limit_reached = bool(daily_limit and int(day_orders_count) >= int(daily_limit))
+
+                    await upsert_live_state(
+                        mode="LIVE",
+                        supplier=supplier,
+                        day_date=day_date_str,
+                        live_iter=int(live_iter_val),
+                        day_orders_count=int(day_orders_count),
+                        last_policy_log_id=int(supplier_to_last_pid.get(supplier) or 0) or None,
+                        is_limit_reached=is_limit_reached,
+                    )
+                except Exception:
+                    continue
+    except Exception:
+        pass
 
     # --- Telegram notification block (RU, end-of-run summary) ---
     def _parse_top_from_note(note: str, key: str) -> list[tuple[str, int]]:

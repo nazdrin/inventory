@@ -1,4 +1,3 @@
-# app/business/balancer/live_logic.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,12 +9,14 @@ from typing import Any, Dict, List, Optional, Tuple
 # - Все доступы к БД делаем через repository, но импортируем локально/внутри функций,
 #   чтобы не ломать импорт при частичных конфигурациях.
 # - Если каких-то функций repository нет — логика деградирует мягко (ничего не меняет).
+# - Для LIVE источником истины является balancer_live_state. Fallback на policy_log/segment_stats
+#   намеренно удалён, чтобы не было расхождений данных.
 
 
 @dataclass(frozen=True)
 class LiveControls:
     """Параметры LIVE-логики (берём из profile['live'] в config.yaml)."""
-    daily_order_limit: Optional[int] = None          # дневной лимит заказов (например 200)
+    daily_order_limit: Optional[int] = None          # дневной лимит заказов (например 200); можно задавать в profile.live или в корне профиля как daily_limit_orders
     step: float = 0.01                              # шаг изменения порога (например 0.01 == +1%)
     max_iterations: int = 10                        # максимум итераций изменения за день
     min_porog_floor: float = 0.0                    # нижний пол (обычно 0.0)
@@ -51,7 +52,16 @@ def load_live_controls(profile: Dict[str, Any]) -> LiveControls:
             return default
 
     return LiveControls(
-        daily_order_limit=_opt_int(live.get("daily_order_limit")),
+        # daily limit can be configured either under profile.live.* or at profile root as daily_limit_orders
+        daily_order_limit=_opt_int(
+            live.get("daily_order_limit")
+            if live.get("daily_order_limit") is not None
+            else (
+                live.get("daily_limit_orders")
+                if live.get("daily_limit_orders") is not None
+                else (profile or {}).get("daily_limit_orders")
+            )
+        ),
         step=step,
         max_iterations=max_iterations,
         min_porog_floor=_opt_float(live.get("min_porog_floor", 0.0), 0.0),
@@ -187,6 +197,64 @@ async def get_day_total_orders_so_far(
     return total
 
 
+async def get_day_total_orders_so_far_live_state(
+    *,
+    mode: str,
+    supplier: str,
+    day_date: date,
+) -> int:
+    """Best-effort: read per-supplier/day counter from balancer_live_state.
+
+    Returns 0 if repository helper is unavailable or on any error.
+    """
+    try:
+        from .repository import get_live_state
+    except Exception:
+        return 0
+
+    try:
+        st = await get_live_state(day_date=day_date, supplier=supplier, mode=mode)
+    except Exception:
+        return 0
+
+    if not st:
+        return 0
+
+    try:
+        return _as_int(getattr(st, "day_orders_count", 0), 0)
+    except Exception:
+        return 0
+
+
+async def get_live_iter_so_far_live_state(
+    *,
+    mode: str,
+    supplier: str,
+    day_date: date,
+) -> int:
+    """Best-effort: read per-supplier/day live_iter from balancer_live_state.
+
+    Returns 0 if repository helper is unavailable or on any error.
+    """
+    try:
+        from .repository import get_live_state
+    except Exception:
+        return 0
+
+    try:
+        st = await get_live_state(day_date=day_date, supplier=supplier, mode=mode)
+    except Exception:
+        return 0
+
+    if not st:
+        return 0
+
+    try:
+        return _as_int(getattr(st, "live_iter", 0), 0)
+    except Exception:
+        return 0
+
+
 def _increase_rules_by_step(
     rules: List[Dict[str, Any]],
     *,
@@ -229,12 +297,12 @@ async def apply_live_controls(
         rd["live"]["enabled"] = False
         return base_rules, base_reason, rd
 
-    # Итерация "A": хранится в reason_details у последней LIVE-политики за день
-    current_iter = await get_today_live_iteration(
-        city=city,
+    # Источник истины для LIVE итерации: balancer_live_state.
+    # IMPORTANT: никаких fallback на policy_log — чтобы не «плавать» в источниках данных.
+    current_iter = await get_live_iter_so_far_live_state(
+        mode="LIVE",
         supplier=supplier,
         day_date=day_date,
-        segment_id=None,  # за день по связке city+supplier
     )
 
     rd = _safe_dict(base_reason_details)
@@ -251,14 +319,24 @@ async def apply_live_controls(
         rd["live_iter"] = int(current_iter)
         return base_rules, base_reason, rd
 
-    # Считаем текущие заказы за день (по сегментной статистике)
-    day_total = await get_day_total_orders_so_far(
+    # Считаем текущие заказы за день.
+    # Источник истины: balancer_live_state (пер-сапплаерный счётчик).
+    # IMPORTANT: никаких fallback на segment_stats — live_state должен обновляться jobs.py.
+    day_total = await get_day_total_orders_so_far_live_state(
         mode="LIVE",
-        city=city,
         supplier=supplier,
         day_date=day_date,
     )
+
     rd["live"]["day_total_orders_so_far"] = int(day_total)
+
+    # Если live_state ещё не заполнен (например первый прогон дня до metrics-update),
+    # действуем максимально безопасно: НЕ меняем правила и НЕ крутим итерации.
+    if day_total <= 0 and current_iter <= 0:
+        rd["live"]["action"] = "keep_base_rules"
+        rd["live"]["note"] = "live_state is empty (orders=0, iter=0); keep base rules without fallbacks"
+        rd["live_iter"] = int(current_iter)
+        return base_rules, base_reason, rd
 
     # --- RULE 1: дневной лимит заказов ---
     if controls.daily_order_limit is not None and day_total >= controls.daily_order_limit:
@@ -269,7 +347,7 @@ async def apply_live_controls(
             floor=controls.min_porog_floor,
             cap=controls.max_porog_cap,
         )
-        rd["live"]["action"] = "increase_due_to_daily_limit"
+        rd["live"]["action"] = "increase_porog_due_to_daily_limit"
         rd["live"]["daily_order_limit"] = int(controls.daily_order_limit)
         rd["live"]["step"] = float(controls.step)
         rd["live"]["cap"] = float(controls.max_porog_cap)
@@ -302,11 +380,22 @@ class LiveComparisonResult:
 
 
 async def compare_with_baseline_stub(*args, **kwargs) -> LiveComparisonResult:
+    """Best-effort comparator (пока без жёсткой логики в jobs).
+
+    Сейчас задача этого метода — дать структуру, но не ломать пайплайн, если
+    статистики для сравнения ещё нет.
+
+    Ожидаемый будущий контракт (когда допишем repository helpers):
+      - baseline_profit: эталон (лучшее/среднее за 30d или за предыдущий сегмент)
+      - current_profit: текущий сегмент/итерация
+      - degradation_pct: (baseline-current)/max(baseline, eps)
+
+    Сейчас возвращаем None-поля и note, чтобы можно было отладить причины.
     """
-    Заглушка: позже сюда добавим:
-      - эталон (baseline) по прибыли/марже
-      - сравнение текущего сегмента
-      - правило деградации > X%
-      - выбор "лучший результат прогона", остановка
-    """
-    return LiveComparisonResult(note="not implemented")
+    return LiveComparisonResult(
+        is_better=None,
+        degradation_pct=None,
+        baseline_profit=None,
+        current_profit=None,
+        note="baseline/compare not wired yet (needs repository profit helpers)",
+    )

@@ -86,19 +86,18 @@ balancer:
       thresholds:
         min_orders_per_segment: 1
 
-    - name: Ivano-Frankivsk_live_d4
+    - name: live_all
       mode: LIVE
+      daily_limit_orders: 200
       scope:
-        cities:
-         - "*"
-         
-        suppliers:
-         - D1
-   
-
+        cities: [Kyiv, Lviv, Kremenchuk, Ivano-Frankivsk]
+        suppliers: [D1, D2, D3, D4, D5, D6]
       supplier_names:
-        
         D1: Biotus
+      live:
+        enabled: true
+        step: 0.01
+        max_iterations: 10
    
 
       price_bands:
