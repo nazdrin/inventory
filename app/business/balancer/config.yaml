@@ -10,28 +10,14 @@ balancer:
       scope:
         cities:
   
-          - Kyiv
-          - Lviv
-          - Kremenchuk
-          - Ivano-Frankivsk
+         
         suppliers:
-          - D1
-          - D2
-          - D3
-          - D5
-          - D6
- 
-          - D4
+         
 
       # Справочник (чисто для читаемости в логах/интерфейсах)
       supplier_names:
  
-        D4: DOBAVKI.UA
-        D1: Biotus
-        D2: DSN
-        D3: ProteinPlus
-        D5: Monsterlab
-        D6: SportAtlet
+      
 
       # Ценовые диапазоны (bands). band_id должен быть стабильным.
       price_bands:
@@ -100,16 +86,19 @@ balancer:
       thresholds:
         min_orders_per_segment: 1
 
-    - name: Ivano-Frankivsk_live_d4
+    - name: live_all
       mode: LIVE
+      daily_limit_orders: 200
       scope:
-        cities:
-         
-        suppliers:
-       
-
+        cities: [Kyiv, Lviv, Kremenchuk, Ivano-Frankivsk]
+        suppliers: [D1, D2, D3, D4, D5, D6]
       supplier_names:
-    
+        D1: Biotus
+      live:
+        enabled: true
+        step: 0.01
+        max_iterations: 10
+   
 
       price_bands:
         - band_id: B1

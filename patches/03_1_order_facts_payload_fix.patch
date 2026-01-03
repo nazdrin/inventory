@@ -1,0 +1,14 @@
+diff --git a/app/business/balancer/order_processor.py b/app/business/balancer/order_processor.py
+index ffc9273..4c3421f 100644
+--- a/app/business/balancer/order_processor.py
++++ b/app/business/balancer/order_processor.py
+@@ -178,9 +178,6 @@ def build_order_facts(policy: Any, order: dict[str, Any]) -> dict[str, Any]:
+         "sale_price": sale_sum,
+         "cost": cost_sum,
+         "profit": profit,
+-        "gross_profit": profit,
+-        "variable_cost": min_profit,
+-        "net_profit": excess_profit,
+         "porog_used": porog_used,
+         "min_porog": min_porog,
+         "min_profit": min_profit,
