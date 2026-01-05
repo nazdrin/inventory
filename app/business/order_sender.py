@@ -1008,9 +1008,11 @@ async def _build_products_block(
             effective_supplier_name = (await _fetch_supplier_name(session, effective_supplier_code)) or effective_supplier_code
 
         parts: list[str] = []
-        # Сохраняем supplier_item_name первым (как и раньше), если он есть
+        # Добавляем наш общий код товара (CatalogMapping.ID == Offer.product_code) перед Name_{supplier_code}
         if supplier_item_name:
-            parts.append(str(supplier_item_name))
+            parts.append(f"{str(r.goodsCode)} {str(supplier_item_name)}")
+        else:
+            parts.append(f"{str(r.goodsCode)}")
         # ВАЖНО: убираем наименование поставщика и код поставщика из description
         # Оставляем только данные товара у поставщика: название, штрих-код и код товара.
         if barcode:
@@ -1026,8 +1028,9 @@ async def _build_products_block(
                 "costPerItem": str(r.price),  # исх. цена позиции
                 "amount": str(r.qty),
                 "description": description,
+                "barcode": str(barcode) if barcode else "",
                 "discount": "",
-                "sku": sku or "",
+                "sku": str(r.goodsCode),
             }
         )
     return products
