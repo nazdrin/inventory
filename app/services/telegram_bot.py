@@ -5,6 +5,7 @@ import html
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.exceptions import TelegramForbiddenError
 from app.database import get_async_db, MappingBranch
 from dotenv import load_dotenv
 from sqlalchemy import text
@@ -12,6 +13,7 @@ from sqlalchemy import text
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CALL_DELAY_SECONDS = float(os.getenv("TELEGRAM_CALL_DELAY_SECONDS", "0"))
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=TOKEN)
@@ -68,7 +70,6 @@ async def notify_user(branch: str, codes: list):
                 f"{safe_orders_list}"
             )
 
-            # Отправляем сообщение всем пользователям
             for user_id in user_ids:
                 try:
                     await bot.send_message(
@@ -77,6 +78,13 @@ async def notify_user(branch: str, codes: list):
                         parse_mode="HTML",
                         disable_web_page_preview=True,
                     )
+                except TelegramForbiddenError:
+                    # User blocked the bot (or removed chat). Remove from DB so we don't fail next time.
+                    logger.warning("Bot was blocked by user_id=%s. Removing from branch=%s", user_id, branch)
+                    current_ids = branch_entry.id_telegram or []
+                    branch_entry.id_telegram = [uid for uid in current_ids if uid != user_id]
+                    session.add(branch_entry)
+                    await session.commit()
                 except Exception:
                     logger.exception(
                         "Failed to send order notification to user_id=%s branch=%s",
@@ -124,18 +132,43 @@ async def notify_call_request(
         if not user_ids:
             return
 
+        safe_fName = html.escape(fName or "")
+        safe_lName = html.escape(lName or "")
+        safe_phone = html.escape(phone or "")
+        safe_id = html.escape(str(id) if id is not None else "")
+        safe_product_name = html.escape(product_name or "")
+        safe_order_date = html.escape(order_date or "")
+
         message_text = (
-            "📞 Нужно позвонить клиенту\n\n"
-            f"👤 Клиент: *{fName} {lName}*\n"
-            f"📱 Телефон: {phone}\n\n"
-            f"📝 Номер заявки: {id}\n"
-            f"💰 Товар:\n{product_name}\n"
-            f"💵 Сумма: {paymentAmount}\n"
-            f"📅 Дата заказа: {order_date}"
+            "📞 <b>Нужно позвонить клиенту</b>\n\n"
+            f"👤 <b>Клиент:</b> {safe_fName} {safe_lName}\n"
+            f"📱 <b>Телефон:</b> {safe_phone}\n\n"
+            f"📝 <b>Номер заявки:</b> {safe_id}\n"
+            f"💰 <b>Товар:</b>\n{safe_product_name}\n"
+            f"💵 <b>Сумма:</b> {paymentAmount}\n"
+            f"📅 <b>Дата заказа:</b> {safe_order_date}"
         )
 
         for user_id in user_ids:
-            await bot.send_message(chat_id=int(user_id), text=message_text, parse_mode="Markdown")
+            try:
+                await bot.send_message(
+                    chat_id=int(user_id),
+                    text=message_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except TelegramForbiddenError:
+                logger.warning("Bot was blocked by user_id=%s. Removing from branch=%s", user_id, branch)
+                current_ids = branch_entry.id_telegram or []
+                branch_entry.id_telegram = [uid for uid in current_ids if uid != user_id]
+                session.add(branch_entry)
+                await session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to send call request to user_id=%s branch=%s",
+                    user_id,
+                    branch,
+                )
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
