@@ -55,6 +55,17 @@ async def branch_handler(message: Message):
         else:
             await message.answer("❌ Помилка! Будь ласка, введіть коректний серійний номер.")
 
+async def _remove_user_from_branch(session, branch_entry: MappingBranch, user_id: str, branch: str) -> None:
+    """Remove user_id from branch_entry.id_telegram and commit.
+
+    Used when a user blocks the bot (TelegramForbiddenError) to prevent repeated failures.
+    """
+    logger.warning("Bot was blocked by user_id=%s. Removing from branch=%s", user_id, branch)
+    current_ids = branch_entry.id_telegram or []
+    branch_entry.id_telegram = [uid for uid in current_ids if uid != user_id]
+    session.add(branch_entry)
+    await session.commit()
+
 async def notify_user(branch: str, codes: list):
     async with get_async_db() as session:
         branch_entry = await session.get(MappingBranch, branch)
@@ -80,11 +91,7 @@ async def notify_user(branch: str, codes: list):
                     )
                 except TelegramForbiddenError:
                     # User blocked the bot (or removed chat). Remove from DB so we don't fail next time.
-                    logger.warning("Bot was blocked by user_id=%s. Removing from branch=%s", user_id, branch)
-                    current_ids = branch_entry.id_telegram or []
-                    branch_entry.id_telegram = [uid for uid in current_ids if uid != user_id]
-                    session.add(branch_entry)
-                    await session.commit()
+                    await _remove_user_from_branch(session, branch_entry, user_id, branch)
                 except Exception:
                     logger.exception(
                         "Failed to send order notification to user_id=%s branch=%s",
@@ -158,11 +165,7 @@ async def notify_call_request(
                     disable_web_page_preview=True,
                 )
             except TelegramForbiddenError:
-                logger.warning("Bot was blocked by user_id=%s. Removing from branch=%s", user_id, branch)
-                current_ids = branch_entry.id_telegram or []
-                branch_entry.id_telegram = [uid for uid in current_ids if uid != user_id]
-                session.add(branch_entry)
-                await session.commit()
+                await _remove_user_from_branch(session, branch_entry, user_id, branch)
             except Exception:
                 logger.exception(
                     "Failed to send call request to user_id=%s branch=%s",
