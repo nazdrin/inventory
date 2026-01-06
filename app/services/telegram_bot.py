@@ -1,5 +1,7 @@
 import asyncio
 import os
+import logging
+import html
 from aiogram import Bot, Dispatcher, types, Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -10,6 +12,7 @@ from sqlalchemy import text
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CALL_DELAY_SECONDS = float(os.getenv("TELEGRAM_CALL_DELAY_SECONDS", "0"))
+logger = logging.getLogger(__name__)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -21,7 +24,7 @@ dp.include_router(router)
 async def start_handler(message: Message):
     await message.answer("Вітаємо! Будь ласка, введіть серійний номер аптеки або магазину для проходження реєстрації.")
 
-@router.message(lambda message: message.text.isdigit())
+@router.message(lambda message: message.text and message.text.isdigit())
 async def branch_handler(message: Message):
     user_id = str(message.from_user.id)  # Всегда строка!
     branch = message.text
@@ -57,10 +60,29 @@ async def notify_user(branch: str, codes: list):
         if branch_entry and branch_entry.id_telegram:
             user_ids = [uid for uid in branch_entry.id_telegram if uid and uid.isdigit()]  # Фильтруем неверные данные
             orders_list = "\n".join(f"{i+1}. {code}" for i, code in enumerate(codes))
-            message_text = f"✅ *Нове замовлення!* \n\n📌 *Номер:* \n\n{orders_list}"
+            safe_orders_list = html.escape(orders_list)
+
+            message_text = (
+                "✅ <b>Нове замовлення!</b>\n\n"
+                "📌 <b>Номер:</b>\n\n"
+                f"{safe_orders_list}"
+            )
+
             # Отправляем сообщение всем пользователям
             for user_id in user_ids:
-                await bot.send_message(chat_id=int(user_id), text=message_text, parse_mode="Markdown")
+                try:
+                    await bot.send_message(
+                        chat_id=int(user_id),
+                        text=message_text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send order notification to user_id=%s branch=%s",
+                        user_id,
+                        branch,
+                    )
 
 
 # New function: notify_call_request
@@ -121,4 +143,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
