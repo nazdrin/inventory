@@ -658,6 +658,14 @@ def compute_price_for_item(
 # --------------------------------------------------------------------------------------
 # 4) UPSERT в offers
 # --------------------------------------------------------------------------------------
+
+# Batched upsert helper: yields seq in chunks of chunk_size
+def _iter_chunks(seq: List[dict], chunk_size: int):
+    """Yield seq in chunks of chunk_size."""
+    if chunk_size <= 0:
+        chunk_size = 1000
+    for i in range(0, len(seq), chunk_size):
+        yield seq[i : i + chunk_size]
 from typing import Optional
 async def upsert_offer(
     session: AsyncSession,
@@ -688,6 +696,35 @@ async def upsert_offer(
         }
     )
     await session.execute(stmt)
+
+
+# Batched UPSERT into offers (removes per-row INSERT ... ON CONFLICT round-trips)
+async def bulk_upsert_offers(
+    session: AsyncSession,
+    *,
+    rows: List[dict],
+    batch_size: int = 1000,
+) -> None:
+    """Batched UPSERT into offers.
+
+    Removes per-row INSERT ... ON CONFLICT round-trips.
+    Expects each row dict to contain:
+      product_code, supplier_code, city, price, wholesale_price, stock
+    """
+    if not rows:
+        return
+
+    for chunk in _iter_chunks(rows, batch_size):
+        ins = insert(Offer).values(chunk)
+        stmt = ins.on_conflict_do_update(
+            constraint="uq_offers_product_supplier_city",
+            set_={
+                "price": ins.excluded.price,
+                "wholesale_price": ins.excluded.wholesale_price,
+                "stock": ins.excluded.stock,
+            },
+        )
+        await session.execute(stmt)
 
 
 async def clear_offers_for_supplier(session: AsyncSession, supplier_code: str) -> int:
@@ -823,6 +860,8 @@ async def process_supplier(
 
     # 5.6 цикл по городам и товарам
     for city in cities:
+        # Collect rows for batched upsert per-city (reduces SQL round-trips)
+        rows_to_upsert: List[dict] = []
         # Вариант A: сначала пробуем взять АКТИВНУЮ политику через balancer repository (single source of truth)
         if city not in balancer_policy_cache:
             # Preferred: single source of truth (balancer repository)
@@ -979,14 +1018,27 @@ async def process_supplier(
                 if wp > 0:
                     wholesale_price = _round_money(wp)
 
-            await upsert_offer(
+            rows_to_upsert.append({
+                "product_code": product_code,
+                "supplier_code": code,
+                "city": city,
+                "price": price,
+                "wholesale_price": wholesale_price,
+                "stock": qty,
+            })
+
+        # Batched UPSERT for this city
+        if rows_to_upsert:
+            await bulk_upsert_offers(
                 session,
-                product_code=product_code,
-                supplier_code=code,
-                city=city,
-                price=price,
-                wholesale_price=wholesale_price,
-                stock=qty,
+                rows=rows_to_upsert,
+                batch_size=int(os.getenv("OFFERS_UPSERT_BATCH_SIZE", "1000")),
+            )
+            logger.info(
+                "Offers upserted (batched): supplier=%s city=%s rows=%d",
+                code,
+                city,
+                len(rows_to_upsert),
             )
 
         # --- отправляем нотификацию 1 раз на supplier+city за прогон ---
