@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import time
 from typing import Optional, List, Dict, Literal, Any
 
 import httpx
@@ -32,6 +33,17 @@ logger = logging.getLogger(__name__)
 
 # === D5: внешний прайс оптовых цен (Excel) ===
 D5_WHOLESALE_XLSX_URL = "https://monsterlab.com.ua/content/export/70cca9450c0767d8ef664f0473037c60.xlsx"
+
+# Кеш для оптового XLSX (чтобы не скачивать и не парсить при каждом запуске)
+TEMP_FILE_PATH = os.getenv("TEMP_FILE_PATH", "/tmp")
+
+D5_WHOLESALE_CACHE_PATH = os.getenv(
+    "D5_WHOLESALE_CACHE_PATH",
+    os.path.join(TEMP_FILE_PATH, "d5_wholesale_map.json"),
+)
+D5_WHOLESALE_CACHE_TTL_SECONDS = int(os.getenv("D5_WHOLESALE_CACHE_TTL_SECONDS", "7200"))
+
+
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ XML/ФИДА D5 ===
 
@@ -138,14 +150,15 @@ async def _get_profit_percent_by_code(code: str) -> float:
     return val
 
 
-async def _load_feed_root(*, code: str, timeout: int) -> Optional[ET.Element]:
+async def _load_feed_root(*, code: str, timeout: int, feed_url: Optional[str] = None) -> Optional[ET.Element]:
     """
     Получение XML фида:
-    1) берём feed_url из БД по code
+    1) берём feed_url из БД по code (или используем переданный feed_url)
     2) скачиваем XML
     3) возвращаем корень ElementTree
     """
-    feed_url = await _get_feed_url_by_code(code)
+    if not feed_url:
+        feed_url = await _get_feed_url_by_code(code)
     if not feed_url:
         msg = f"Не найден feed_url в dropship_enterprises для code='{code}'"
         logger.error(msg)
@@ -286,7 +299,7 @@ def _parse_catalog_excel_bytes(data: bytes) -> List[Dict[str, str]]:
       Номенклатура -> name
       Штрихкод     -> barcode
     """
-    wb = load_workbook(io.BytesIO(data), data_only=True)
+    wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     sheet = wb.active
 
     # Первая строка — заголовки
@@ -331,6 +344,52 @@ def _parse_catalog_excel_bytes(data: bytes) -> List[Dict[str, str]]:
 
 # === D5: ОПТОВЫЕ ЦЕНЫ ИЗ ВНЕШНЕГО XLSX ===
 
+async def _get_d5_wholesale_map_cached(*, timeout: int) -> Dict[str, float]:
+    """Возвращает маппинг оптовых цен D5 (Артикул -> цена) с кешированием.
+
+    Кешируем уже распарсенный mapping в JSON-файл на диске.
+    Это сильно снижает CPU, т.к. openpyxl парсинг XLSX дорогой.
+    """
+    try:
+        path = D5_WHOLESALE_CACHE_PATH
+        ttl = max(0, int(D5_WHOLESALE_CACHE_TTL_SECONDS))
+        if ttl > 0 and os.path.exists(path):
+            age = time.time() - os.path.getmtime(path)
+            if age <= ttl:
+                with open(path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if isinstance(cached, dict) and cached:
+                    out: Dict[str, float] = {}
+                    for k, v in cached.items():
+                        if not k:
+                            continue
+                        try:
+                            fv = float(v)
+                        except Exception:
+                            continue
+                        if fv > 0:
+                            out[str(k).strip()] = fv
+                    logger.info("Оптовый прайс D5: использован кеш (%d цен)", len(out))
+                    return out
+    except Exception as e:
+        logger.warning("Оптовый прайс D5: не удалось прочитать кеш: %s", e)
+
+    # cache miss / expired -> download + parse
+    xlsx_bytes = await _download_xlsx_bytes(D5_WHOLESALE_XLSX_URL, timeout=timeout)
+    mapping = _parse_d5_wholesale_price_xlsx(xlsx_bytes)
+
+    # persist cache (best-effort)
+    try:
+        cache_dir = os.path.dirname(D5_WHOLESALE_CACHE_PATH) or "/tmp"
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(D5_WHOLESALE_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Оптовый прайс D5: не удалось записать кеш: %s", e)
+
+    return mapping
+
+
 async def _download_xlsx_bytes(url: str, *, timeout: int = 30) -> bytes:
     """Скачивает XLSX по URL и возвращает bytes."""
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -356,7 +415,7 @@ def _parse_d5_wholesale_price_xlsx(data: bytes) -> Dict[str, float]:
     Значения цены приводятся к float (через `_to_float`).
     Пустые/невалидные строки пропускаются.
     """
-    wb = load_workbook(io.BytesIO(data), data_only=True)
+    wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     sheet = wb.active
 
     header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
@@ -403,6 +462,8 @@ async def parse_feed_catalog_to_json(
     *,
     code: str = "D5",
     timeout: int = 30,  # не используется, но оставлен для совместимости
+    session: Any = None,
+    enterprise: Any = None,
 ) -> str:
     """
     Каталог для D5:
@@ -420,7 +481,13 @@ async def parse_feed_catalog_to_json(
     """
     try:
         drive_service = await _connect_to_google_drive()
-        folder_id = await _get_gdrive_folder_id_by_code(code)
+
+        folder_id = None
+        if enterprise is not None and getattr(enterprise, "gdrive_folder", None):
+            folder_id = str(getattr(enterprise, "gdrive_folder"))
+        if not folder_id:
+            folder_id = await _get_gdrive_folder_id_by_code(code)
+
         file_meta = await _fetch_single_file_metadata(drive_service, folder_id)
         file_id = file_meta["id"]
         file_name = file_meta.get("name")
@@ -441,6 +508,8 @@ async def parse_feed_stock_to_json(
     *,
     code: str = "D5",
     timeout: int = 30,
+    session: Any = None,
+    enterprise: Any = None,
 ) -> str:
     """
     Сток для D5: возвращает JSON со списком
@@ -467,36 +536,55 @@ async def parse_feed_stock_to_json(
         <name><![CDATA[ ON Gold Standard 100% Whey Protein 900 грам (EU), Банан ]]></name>
       </offer>
     """
-    root = await _load_feed_root(code=code, timeout=timeout)
+    ent_feed_url = None
+    if enterprise is not None and getattr(enterprise, "feed_url", None):
+        ent_feed_url = str(getattr(enterprise, "feed_url"))
+    root = await _load_feed_root(code=code, timeout=timeout, feed_url=ent_feed_url)
     if root is None:
         return "[]"
 
     # Наценка для розницы из dropship_enterprises.retail_markup (в процентах)
-    try:
-        retail_markup = await _get_retail_markup_by_code(code)
-    except Exception as e:
-        msg = f"Ошибка получения retail_markup для code='{code}': {e}"
-        logger.exception(msg)
-        send_notification(msg, "Разработчик")
-        retail_markup = 0.0
+    retail_markup = None
+    if enterprise is not None and getattr(enterprise, "retail_markup", None) is not None:
+        try:
+            retail_markup = float(getattr(enterprise, "retail_markup"))
+        except Exception:
+            retail_markup = None
+
+    if retail_markup is None:
+        try:
+            retail_markup = await _get_retail_markup_by_code(code)
+        except Exception as e:
+            msg = f"Ошибка получения retail_markup для code='{code}': {e}"
+            logger.exception(msg)
+            send_notification(msg, "Разработчик")
+            retail_markup = 0.0
 
     # Профит (процент) из dropship_enterprises.profit_percent (например 10 -> 0.1)
-    try:
-        profit = await _get_profit_percent_by_code(code)
-    except Exception as e:
-        msg = f"Ошибка получения profit_percent для code='{code}': {e}"
-        logger.exception(msg)
-        send_notification(msg, "Разработчик")
-        profit = 0.0
+    profit = None
+    if enterprise is not None and getattr(enterprise, "profit_percent", None) is not None:
+        try:
+            val = float(getattr(enterprise, "profit_percent"))
+            profit = val / 100.0 if val > 1 else val
+        except Exception:
+            profit = None
+
+    if profit is None:
+        try:
+            profit = await _get_profit_percent_by_code(code)
+        except Exception as e:
+            msg = f"Ошибка получения profit_percent для code='{code}': {e}"
+            logger.exception(msg)
+            send_notification(msg, "Разработчик")
+            profit = 0.0
 
     # Коэффициент: 1 + retail_markup/100, например при 10% будет 1.10
     retail_coef = 1.0 + (retail_markup / 100.0 if retail_markup else 0.0)
 
-    # Внешний прайс оптовых цен (XLSX): Артикул -> Оптова ціна
+    # Внешний прайс оптовых цен (XLSX): Артикул -> Оптова ціна (с кешем)
     wholesale_map: Dict[str, float] = {}
     try:
-        xlsx_bytes = await _download_xlsx_bytes(D5_WHOLESALE_XLSX_URL, timeout=timeout)
-        wholesale_map = _parse_d5_wholesale_price_xlsx(xlsx_bytes)
+        wholesale_map = await _get_d5_wholesale_map_cached(timeout=timeout)
     except Exception:
         # Если прайс не скачался/не распарсился — просто работаем по старому алгоритму
         wholesale_map = {}
@@ -571,6 +659,8 @@ async def parse_feed_to_json(
     mode: Literal["catalog", "stock"] = "catalog",
     code: str = "D5",
     timeout: int = 30,
+    session: Any = None,
+    enterprise: Any = None,
 ) -> str:
     """
     Унифицированная обёртка для D5.
@@ -578,9 +668,9 @@ async def parse_feed_to_json(
     mode = 'stock'   -> XML фид по dropship_enterprises.code
     """
     if mode == "catalog":
-        return await parse_feed_catalog_to_json(code=code, timeout=timeout)
+        return await parse_feed_catalog_to_json(code=code, timeout=timeout, session=session, enterprise=enterprise)
     elif mode == "stock":
-        return await parse_feed_stock_to_json(code=code, timeout=timeout)
+        return await parse_feed_stock_to_json(code=code, timeout=timeout, session=session, enterprise=enterprise)
     else:
         raise ValueError("mode must be 'catalog' or 'stock'")
 
