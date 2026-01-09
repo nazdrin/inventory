@@ -134,6 +134,7 @@ from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
 from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
 from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
+from app.business.feed_suziria import parse_suziria_stock_to_json as parse_feed_D8
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -163,11 +164,21 @@ def _to_decimal(x: Optional[float | Decimal]) -> Decimal:
     return Decimal(str(x))
 
 def _as_share(x: Optional[float | Decimal]) -> Decimal:
-    """25 -> 0.25; 0.25 -> 0.25; None -> 0"""
+    """Convert percent to share.
+
+    Examples:
+      25   -> 0.25
+      0.25 -> 0.25
+      -2   -> -0.02
+      -0.02 -> -0.02
+      None -> 0
+
+    NOTE: For negative values we also treat absolute values > 1 as percentages.
+    """
     d = _to_decimal(x)
     if d == 0:
         return Decimal("0")
-    if d > 1:
+    if abs(d) > 1:
         return d / Decimal("100")
     return d
 
@@ -202,6 +213,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D5": parse_feed_D5,
     "D6": parse_feed_D6,
     "D7": parse_feed_D7,
+    "D8": parse_feed_D8,
 }
 
 # --------------------------------------------------------------------------------------
@@ -595,8 +607,11 @@ def compute_price_for_item(
     # 2) Эффективный порог
     thr = _as_share(threshold_percent_effective)
     threshold_price = Decimal("0")
-    if po > 0 and thr >= 0:
+    if po > 0:
         threshold_price = po * (Decimal("1") + thr)
+        # safety: do not allow negative prices
+        if threshold_price < 0:
+            threshold_price = Decimal("0")
 
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
@@ -960,7 +975,12 @@ async def process_supplier(
             # 1) если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
             # 2) иначе пытаемся взять порог из балансировщика по band_id (band определяем по rr)
             threshold_percent_effective = supplier_threshold_percent
-            thr_source = "supplier_min_markup_threshold" if supplier_threshold_percent > 0 else "unset"
+            if supplier_threshold_percent > 0:
+                thr_source = "supplier_min_markup_threshold"
+            elif supplier_threshold_percent < 0:
+                thr_source = "supplier_min_markup_threshold_negative"
+            else:
+                thr_source = "unset"
 
             band_id = None
 
@@ -975,8 +995,10 @@ async def process_supplier(
                 if not band_id:
                     band_id = resolve_band_id_from_bands(_to_decimal(po), bands)
 
-            # Если supplier_threshold_percent = 0/None — берём порог из балансировщика по band_id
-            if threshold_percent_effective <= 0 and bal_policy and band_id:
+            # Если supplier_threshold_percent == 0 — берём порог из балансировщика по band_id.
+            # ВАЖНО: отрицательные значения supplier_threshold_percent считаются осознанным режимом (можно ниже себестоимости)
+            # и НЕ должны переключать на балансировщик.
+            if threshold_percent_effective == 0 and bal_policy and band_id:
                 rules = bal_policy.get("rules") or []
                 min_map = bal_policy.get("min_porog_by_band") or {}
 
