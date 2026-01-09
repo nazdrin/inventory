@@ -172,13 +172,15 @@ def _as_share(x: Optional[float | Decimal]) -> Decimal:
       -2   -> -0.02
       -0.02 -> -0.02
       None -> 0
+      1    -> 0.01
+      -1   -> -0.01
 
-    NOTE: For negative values we also treat absolute values > 1 as percentages.
+    NOTE: We treat absolute values >= 1 as percentages (so 1 == 1%).
     """
     d = _to_decimal(x)
     if d == 0:
         return Decimal("0")
-    if abs(d) > 1:
+    if abs(d) >= 1:
         return d / Decimal("100")
     return d
 
