@@ -1,4 +1,3 @@
-# feed_parser.py
 from __future__ import annotations
 
 import asyncio
@@ -276,44 +275,90 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
       - price               -> price_retail
       - price_opt           -> 0 (по умолчанию)
     """
+    # 1) Пытаемся взять основной сток-фид (URL берётся из dropship_enterprises.gdrive_folder)
     root = await _load_stock_feed_root(code=code, timeout=timeout)
+    used_fallback = False
+
+    # 2) Если основной сток-фид недоступен/падает — берём запасной фид из dropship_enterprises.feed_url
+    #    (он же используется для каталога), но парсим из него поля: sku, in_stock, price_rsp_uah
     if root is None:
-        return "[]"
+        used_fallback = True
+        msg = (
+            f"Сток-фид из gdrive_folder недоступен для code='{code}'. "
+            f"Переключаемся на фид из feed_url (fallback)."
+        )
+        logger.warning(msg)
+        # Нотификация разработчику, чтобы было видно факт деградации
+        send_notification(msg, "Разработчик")
+
+        root = await _load_feed_root(code=code, timeout=timeout)
+        if root is None:
+            # Если и запасной фид не загрузился — возвращаем пустой результат
+            return "[]"
 
     profit_percent = await _get_profit_percent_by_code(code)
 
     rows: List[Dict[str, object]] = []
-    for node in _collect_product_nodes(root):
-        sku = _extract_sku(node)
-        if not sku:
-            continue
 
-        # qty: только новый формат сток-фида
-        qty_raw = _get_text(node, ["quantity_in_stock"]) or node.get("quantity_in_stock")
+    if not used_fallback:
+        # ОСНОВНОЙ СТОК-ФИД (структура: quantity_in_stock / price)
+        for node in _collect_product_nodes(root):
+            sku = _extract_sku(node)
+            if not sku:
+                continue
 
-        # price: только новый формат сток-фида
-        price_raw = _get_text(node, ["price"]) or node.get("price")
+            qty_raw = _get_text(node, ["quantity_in_stock"]) or node.get("quantity_in_stock")
+            price_raw = _get_text(node, ["price"]) or node.get("price")
 
-        qty = _to_int(qty_raw)
-        # Игнорируем позиции с нулевым или отрицательным остатком
-        if qty <= 0:
-            continue
+            qty = _to_int(qty_raw)
+            if qty <= 0:
+                continue
 
-        price_retail = _to_float(price_raw)
+            price_retail = _to_float(price_raw)
 
-        price_opt = price_retail / (1.0 + profit_percent)
-        # На всякий случай не уходим в минус
-        if price_opt < 0:
-            price_opt = 0.0
+            price_opt = price_retail / (1.0 + profit_percent)
+            if price_opt < 0:
+                price_opt = 0.0
 
-        rows.append({
-            "code_sup": sku,
-            "qty": qty,
-            "price_retail": price_retail,
-            "price_opt": price_opt,
-        })
+            rows.append({
+                "code_sup": sku,
+                "qty": qty,
+                "price_retail": price_retail,
+                "price_opt": price_opt,
+            })
+    else:
+        # FALLBACK-ФИД (структура: in_stock / price_rsp_uah)
+        for node in _collect_product_nodes(root):
+            sku = _extract_sku(node)
+            if not sku:
+                continue
 
-    logger.info("Сток: собрано позиций (code=%s): %d", code, len(rows))
+            qty_raw = _get_text(node, ["in_stock"]) or node.get("in_stock")
+            price_raw = _get_text(node, ["price_rsp_uah"]) or node.get("price_rsp_uah")
+
+            qty = _to_int(qty_raw)
+            if qty <= 0:
+                continue
+
+            price_retail = _to_float(price_raw)
+
+            price_opt = price_retail / (1.0 + profit_percent)
+            if price_opt < 0:
+                price_opt = 0.0
+
+            rows.append({
+                "code_sup": sku,
+                "qty": qty,
+                "price_retail": price_retail,
+                "price_opt": price_opt,
+            })
+
+    logger.info(
+        "Сток: собрано позиций (code=%s): %d (fallback=%s)",
+        code,
+        len(rows),
+        "yes" if used_fallback else "no",
+    )
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
