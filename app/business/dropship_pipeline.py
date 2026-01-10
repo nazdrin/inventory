@@ -134,6 +134,7 @@ from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
 from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
 from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
+from app.business.feed_suziria import parse_suziria_stock_to_json as parse_feed_D8
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -163,11 +164,23 @@ def _to_decimal(x: Optional[float | Decimal]) -> Decimal:
     return Decimal(str(x))
 
 def _as_share(x: Optional[float | Decimal]) -> Decimal:
-    """25 -> 0.25; 0.25 -> 0.25; None -> 0"""
+    """Convert percent to share.
+
+    Examples:
+      25   -> 0.25
+      0.25 -> 0.25
+      -2   -> -0.02
+      -0.02 -> -0.02
+      None -> 0
+      1    -> 0.01
+      -1   -> -0.01
+
+    NOTE: We treat absolute values >= 1 as percentages (so 1 == 1%).
+    """
     d = _to_decimal(x)
     if d == 0:
         return Decimal("0")
-    if d > 1:
+    if abs(d) >= 1:
         return d / Decimal("100")
     return d
 
@@ -202,6 +215,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D5": parse_feed_D5,
     "D6": parse_feed_D6,
     "D7": parse_feed_D7,
+    "D8": parse_feed_D8,
 }
 
 # --------------------------------------------------------------------------------------
@@ -595,8 +609,11 @@ def compute_price_for_item(
     # 2) Эффективный порог
     thr = _as_share(threshold_percent_effective)
     threshold_price = Decimal("0")
-    if po > 0 and thr >= 0:
+    if po > 0:
         threshold_price = po * (Decimal("1") + thr)
+        # safety: do not allow negative prices
+        if threshold_price < 0:
+            threshold_price = Decimal("0")
 
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
@@ -658,6 +675,14 @@ def compute_price_for_item(
 # --------------------------------------------------------------------------------------
 # 4) UPSERT в offers
 # --------------------------------------------------------------------------------------
+
+# Batched upsert helper: yields seq in chunks of chunk_size
+def _iter_chunks(seq: List[dict], chunk_size: int):
+    """Yield seq in chunks of chunk_size."""
+    if chunk_size <= 0:
+        chunk_size = 1000
+    for i in range(0, len(seq), chunk_size):
+        yield seq[i : i + chunk_size]
 from typing import Optional
 async def upsert_offer(
     session: AsyncSession,
@@ -688,6 +713,35 @@ async def upsert_offer(
         }
     )
     await session.execute(stmt)
+
+
+# Batched UPSERT into offers (removes per-row INSERT ... ON CONFLICT round-trips)
+async def bulk_upsert_offers(
+    session: AsyncSession,
+    *,
+    rows: List[dict],
+    batch_size: int = 1000,
+) -> None:
+    """Batched UPSERT into offers.
+
+    Removes per-row INSERT ... ON CONFLICT round-trips.
+    Expects each row dict to contain:
+      product_code, supplier_code, city, price, wholesale_price, stock
+    """
+    if not rows:
+        return
+
+    for chunk in _iter_chunks(rows, batch_size):
+        ins = insert(Offer).values(chunk)
+        stmt = ins.on_conflict_do_update(
+            constraint="uq_offers_product_supplier_city",
+            set_={
+                "price": ins.excluded.price,
+                "wholesale_price": ins.excluded.wholesale_price,
+                "stock": ins.excluded.stock,
+            },
+        )
+        await session.execute(stmt)
 
 
 async def clear_offers_for_supplier(session: AsyncSession, supplier_code: str) -> int:
@@ -823,6 +877,8 @@ async def process_supplier(
 
     # 5.6 цикл по городам и товарам
     for city in cities:
+        # Collect rows for batched upsert per-city (reduces SQL round-trips)
+        rows_to_upsert: List[dict] = []
         # Вариант A: сначала пробуем взять АКТИВНУЮ политику через balancer repository (single source of truth)
         if city not in balancer_policy_cache:
             # Preferred: single source of truth (balancer repository)
@@ -921,7 +977,12 @@ async def process_supplier(
             # 1) если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
             # 2) иначе пытаемся взять порог из балансировщика по band_id (band определяем по rr)
             threshold_percent_effective = supplier_threshold_percent
-            thr_source = "supplier_min_markup_threshold" if supplier_threshold_percent > 0 else "unset"
+            if supplier_threshold_percent > 0:
+                thr_source = "supplier_min_markup_threshold"
+            elif supplier_threshold_percent < 0:
+                thr_source = "supplier_min_markup_threshold_negative"
+            else:
+                thr_source = "unset"
 
             band_id = None
 
@@ -936,8 +997,10 @@ async def process_supplier(
                 if not band_id:
                     band_id = resolve_band_id_from_bands(_to_decimal(po), bands)
 
-            # Если supplier_threshold_percent = 0/None — берём порог из балансировщика по band_id
-            if threshold_percent_effective <= 0 and bal_policy and band_id:
+            # Если supplier_threshold_percent == 0 — берём порог из балансировщика по band_id.
+            # ВАЖНО: отрицательные значения supplier_threshold_percent считаются осознанным режимом (можно ниже себестоимости)
+            # и НЕ должны переключать на балансировщик.
+            if threshold_percent_effective == 0 and bal_policy and band_id:
                 rules = bal_policy.get("rules") or []
                 min_map = bal_policy.get("min_porog_by_band") or {}
 
@@ -979,14 +1042,27 @@ async def process_supplier(
                 if wp > 0:
                     wholesale_price = _round_money(wp)
 
-            await upsert_offer(
+            rows_to_upsert.append({
+                "product_code": product_code,
+                "supplier_code": code,
+                "city": city,
+                "price": price,
+                "wholesale_price": wholesale_price,
+                "stock": qty,
+            })
+
+        # Batched UPSERT for this city
+        if rows_to_upsert:
+            await bulk_upsert_offers(
                 session,
-                product_code=product_code,
-                supplier_code=code,
-                city=city,
-                price=price,
-                wholesale_price=wholesale_price,
-                stock=qty,
+                rows=rows_to_upsert,
+                batch_size=int(os.getenv("OFFERS_UPSERT_BATCH_SIZE", "1000")),
+            )
+            logger.info(
+                "Offers upserted (batched): supplier=%s city=%s rows=%d",
+                code,
+                city,
+                len(rows_to_upsert),
             )
 
         # --- отправляем нотификацию 1 раз на supplier+city за прогон ---
