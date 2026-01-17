@@ -31,6 +31,7 @@ try:
     from app.business.feed_sportatlet import parse_d6_feed_to_json as parse_feed_D6
     from app.business.feed_pediakid import parse_pediakid_feed_to_json as parse_feed_D7
     from app.business.feed_suziria import parse_suziria_feed_to_json as parse_feed_D8
+    from app.business.feed_ortomedika import parse_feed_to_json as parse_feed_D9
 except Exception:
     parse_feed_D1 = None  # если модуля нет — пропустим D1
 
@@ -44,6 +45,7 @@ PARSER_REGISTRY: Dict[str, Any] = {
     "D6": parse_feed_D6,
     "D7": parse_feed_D7,
     "D8": parse_feed_D8,
+    "D9": parse_feed_D9,
 }
 
 
