@@ -135,6 +135,7 @@ from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
 from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
 from app.business.feed_suziria import parse_suziria_stock_to_json as parse_feed_D8
+from app.business.feed_ortomedika import parse_feed_stock_to_json as parse_feed_D9
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -216,6 +217,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D6": parse_feed_D6,
     "D7": parse_feed_D7,
     "D8": parse_feed_D8,
+    "D9": parse_feed_D9,
 }
 
 # --------------------------------------------------------------------------------------
@@ -732,7 +734,40 @@ async def bulk_upsert_offers(
         return
 
     for chunk in _iter_chunks(rows, batch_size):
-        ins = insert(Offer).values(chunk)
+        # Deduplicate rows inside the batch by the same key as the UNIQUE constraint.
+        # Postgres throws: "ON CONFLICT DO UPDATE command cannot affect row a second time"
+        # if the same (product_code, supplier_code, city) appears more than once in a single INSERT statement.
+        dedup: Dict[tuple[str, str, str], dict] = {}
+        dup_count = 0
+
+        for r in chunk:
+            k = (
+                str(r.get("product_code")),
+                str(r.get("supplier_code")),
+                str(r.get("city")),
+            )
+            if k in dedup:
+                dup_count += 1
+                prev = dedup[k]
+                # Keep the latest price/wholesale_price, but do not reduce stock on duplicates.
+                # (Duplicates can happen due to feed/catalog mapping repetitions.)
+                prev_stock = int(prev.get("stock") or 0)
+                new_stock = int(r.get("stock") or 0)
+                prev["stock"] = max(prev_stock, new_stock)
+                prev["price"] = r.get("price")
+                prev["wholesale_price"] = r.get("wholesale_price")
+            else:
+                dedup[k] = r
+
+        if dup_count:
+            logger.warning(
+                "bulk_upsert_offers: deduplicated %d duplicate rows inside one batch (unique key: product_code+supplier_code+city)",
+                dup_count,
+            )
+
+        deduped_chunk = list(dedup.values())
+
+        ins = insert(Offer).values(deduped_chunk)
         stmt = ins.on_conflict_do_update(
             constraint="uq_offers_product_supplier_city",
             set_={
