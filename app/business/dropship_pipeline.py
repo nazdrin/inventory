@@ -168,6 +168,13 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger("dropship")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# --- Logging controls (env) ---
+# DROPSHIP_LOG_LEVEL: DEBUG/INFO/WARNING/ERROR (default INFO)
+# DROPSHIP_VERBOSE_ITEM_LOGS: 1 to log per-item pricing lines at INFO (default 0)
+_LOG_LEVEL = os.getenv("DROPSHIP_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
+VERBOSE_ITEM_LOGS = os.getenv("DROPSHIP_VERBOSE_ITEM_LOGS", "0") == "1"
+
 # --------------------------------------------------------------------------------------
 # Утилиты
 # --------------------------------------------------------------------------------------
@@ -987,7 +994,7 @@ async def process_supplier(
             rd = raw.get("reason_details") or {}
             band_sources_dbg = rd.get("band_sources")
         if bal_policy:
-            logger.info(
+            (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
                 "Balancer policy selected: supplier=%s city=%s mode=%s policy_id=%s segment=%s [%s..%s] now_utc=%s reason=%s band_sources=%s",
                 code,
                 city,
@@ -1001,7 +1008,7 @@ async def process_supplier(
                 ((bal_policy.get("_raw") or {}).get("reason_details") or {}).get("band_sources"),
             )
         else:
-            logger.info(
+            (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
                 "Balancer policy selected: supplier=%s city=%s NONE (will use supplier min_markup_threshold/fallback)",
                 code,
                 city,
@@ -1083,7 +1090,7 @@ async def process_supplier(
             price = _round_price_export(price)
 
             # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
-            logger.info(
+            (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
                 "Price: supplier=%s city=%s product_code=%s band=%s thr_supplier=%s thr_effective=%s competitor_price=%s final_price=%s",
                 code, city, product_code, band, thr_supplier, thr_effective, competitor, price
             )
