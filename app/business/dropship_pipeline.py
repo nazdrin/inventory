@@ -5,7 +5,7 @@ import logging
 import re
 import argparse
 import os
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "300"))
 PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "1000"))
 PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "3000"))
@@ -210,10 +210,18 @@ def _round_money(x: Decimal) -> Decimal:
 # Округление итоговой цены для экспорта/записи (до 1 знака, но с двумя знаками после запятой)
 def _round_price_export(x: Decimal) -> Decimal:
     """
-    Округление итоговой цены до 1 знака после запятой (0.1),
-    но в формате Decimal с 2 знаками (второй всегда 0), например 12.27 -> 12.30.
+    Округление итоговой цены ВВЕРХ до ближайших 0.50 (50 копеек),
+    например 10.21 -> 10.50, 10.51 -> 11.00.
     """
-    return x.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if x is None:
+        return Decimal("0.00")
+    d = _to_decimal(x)
+    if d <= 0:
+        return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    step = Decimal("0.50")
+    q = (d / step).to_integral_value(rounding=ROUND_CEILING) * step
+    return q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 def resolve_price_band(base_price: Decimal) -> str:
     if base_price <= PRICE_BAND_LOW_MAX:
