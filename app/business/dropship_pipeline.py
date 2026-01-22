@@ -5,7 +5,19 @@ import logging
 import re
 import argparse
 import os
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
+PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "300"))
+PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "1000"))
+PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "3000"))
+THR_MULT_LOW = Decimal(os.getenv("THR_MULT_LOW", "1.0"))
+THR_MULT_MID = Decimal(os.getenv("THR_MULT_MID", "1.0"))
+THR_MULT_HIGH = Decimal(os.getenv("THR_MULT_HIGH", "1.0"))
+THR_MULT_PREMIUM = Decimal(os.getenv("THR_MULT_PREMIUM", "1.0"))
+NO_COMP_MULT_LOW = Decimal(os.getenv("NO_COMP_MULT_LOW", "1.0"))
+NO_COMP_MULT_MID = Decimal(os.getenv("NO_COMP_MULT_MID", "1.0"))
+NO_COMP_MULT_HIGH = Decimal(os.getenv("NO_COMP_MULT_HIGH", "1.0"))
+NO_COMP_MULT_PREMIUM = Decimal(os.getenv("NO_COMP_MULT_PREMIUM", "1.0"))
+MIN_MARGIN_ABS_LOW = Decimal(os.getenv("MIN_MARGIN_ABS_LOW", "10"))
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 import tempfile
@@ -156,6 +168,13 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger("dropship")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# --- Logging controls (env) ---
+# DROPSHIP_LOG_LEVEL: DEBUG/INFO/WARNING/ERROR (default INFO)
+# DROPSHIP_VERBOSE_ITEM_LOGS: 1 to log per-item pricing lines at INFO (default 0)
+_LOG_LEVEL = os.getenv("DROPSHIP_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
+VERBOSE_ITEM_LOGS = os.getenv("DROPSHIP_VERBOSE_ITEM_LOGS", "0") == "1"
+
 # --------------------------------------------------------------------------------------
 # Утилиты
 # --------------------------------------------------------------------------------------
@@ -188,6 +207,30 @@ def _as_share(x: Optional[float | Decimal]) -> Decimal:
 def _round_money(x: Decimal) -> Decimal:
     return x.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+# Округление итоговой цены для экспорта/записи (до 1 знака, но с двумя знаками после запятой)
+def _round_price_export(x: Decimal) -> Decimal:
+    """
+    Округление итоговой цены ВВЕРХ до ближайших 0.50 (50 копеек),
+    например 10.21 -> 10.50, 10.51 -> 11.00.
+    """
+    if x is None:
+        return Decimal("0.00")
+    d = _to_decimal(x)
+    if d <= 0:
+        return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    step = Decimal("0.50")
+    q = (d / step).to_integral_value(rounding=ROUND_CEILING) * step
+    return q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+def resolve_price_band(base_price: Decimal) -> str:
+    if base_price <= PRICE_BAND_LOW_MAX:
+        return "LOW"
+    if base_price <= PRICE_BAND_MID_MAX:
+        return "MID"
+    if base_price <= PRICE_BAND_HIGH_MAX:
+        return "HIGH"
+    return "PREMIUM"
 def _split_cities(city_field: str) -> List[str]:
     """Разбиваем по , ; | и обрезаем пробелы."""
     if not city_field:
@@ -878,7 +921,6 @@ async def process_supplier(
     retail_markup = getattr(ent, "retail_markup", None)
 
     min_markup_threshold = ent.min_markup_threshold or 0
-    # Порог поставщика (из dropship_enterprises). Если 0/None — берём порог из балансировщика по band_id.
     supplier_threshold_percent = Decimal(str(min_markup_threshold)) if min_markup_threshold else Decimal("0")
 
     # 5.4 города поставщика
@@ -960,7 +1002,7 @@ async def process_supplier(
             rd = raw.get("reason_details") or {}
             band_sources_dbg = rd.get("band_sources")
         if bal_policy:
-            logger.info(
+            (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
                 "Balancer policy selected: supplier=%s city=%s mode=%s policy_id=%s segment=%s [%s..%s] now_utc=%s reason=%s band_sources=%s",
                 code,
                 city,
@@ -974,7 +1016,7 @@ async def process_supplier(
                 ((bal_policy.get("_raw") or {}).get("reason_details") or {}).get("band_sources"),
             )
         else:
-            logger.info(
+            (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
                 "Balancer policy selected: supplier=%s city=%s NONE (will use supplier min_markup_threshold/fallback)",
                 code,
                 city,
@@ -1001,55 +1043,48 @@ async def process_supplier(
             code, city, policy_id_dbg, policy_mode_dbg, segment_dbg, now_utc,
         )
         for it in mapped:
-            product_code = str(it["product_code"])  # это ID из catalog_mapping."ID"
+            product_code = str(it["product_code"])
             qty = int(it.get("qty") or 0)
             rr = it.get("price_retail")
             po = it.get("price_opt")
-
             competitor = comp_map.get((product_code, city))
 
-            # Выбор порога:
-            # 1) если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
-            # 2) иначе пытаемся взять порог из балансировщика по band_id (band определяем по rr)
-            threshold_percent_effective = supplier_threshold_percent
-            if supplier_threshold_percent > 0:
-                thr_source = "supplier_min_markup_threshold"
-            elif supplier_threshold_percent < 0:
-                thr_source = "supplier_min_markup_threshold_negative"
+            # Определение базовой цены для диапазона
+            rr_dec = _to_decimal(rr)
+            po_dec = _to_decimal(po)
+            competitor_dec = competitor if competitor is not None else Decimal("0")
+            if rr_dec > 0:
+                base_price = rr_dec
+            elif competitor_dec > 0:
+                base_price = competitor_dec
             else:
-                thr_source = "unset"
+                base_price = po_dec
+            band = resolve_price_band(base_price)
 
-            band_id = None
+            # Расчёт эффективного порога
+            thr_supplier = supplier_threshold_percent
+            if band == "LOW":
+                thr_mult = THR_MULT_LOW
+                no_comp_mult = NO_COMP_MULT_LOW
+            elif band == "MID":
+                thr_mult = THR_MULT_MID
+                no_comp_mult = NO_COMP_MULT_MID
+            elif band == "HIGH":
+                thr_mult = THR_MULT_HIGH
+                no_comp_mult = NO_COMP_MULT_HIGH
+            else:
+                thr_mult = THR_MULT_PREMIUM
+                no_comp_mult = NO_COMP_MULT_PREMIUM
+            thr_effective = thr_supplier * thr_mult
+            if competitor is None or competitor_dec <= 0:
+                thr_effective = thr_effective * no_comp_mult
 
-            # Если у поставщика задан min_markup_threshold > 0 -> используем его для всех товаров
-            # И всё равно считаем band_id (для диагностики/логов).
-            if bal_policy:
-                bands = bal_policy.get("price_bands") or []
-                rr_dec = _to_decimal(rr)
-                band_id = resolve_band_id_from_bands(rr_dec, bands)
-                if not band_id and competitor is not None:
-                    band_id = resolve_band_id_from_bands(_to_decimal(competitor), bands)
-                if not band_id:
-                    band_id = resolve_band_id_from_bands(_to_decimal(po), bands)
-
-            # Если supplier_threshold_percent == 0 — берём порог из балансировщика по band_id.
-            # ВАЖНО: отрицательные значения supplier_threshold_percent считаются осознанным режимом (можно ниже себестоимости)
-            # и НЕ должны переключать на балансировщик.
-            if threshold_percent_effective == 0 and bal_policy and band_id:
-                rules = bal_policy.get("rules") or []
-                min_map = bal_policy.get("min_porog_by_band") or {}
-
-                porog_from_rules = rule_porog_by_band(rules, band_id)
-                min_porog = _to_decimal(min_map.get(band_id)) if min_map else Decimal("0")
-                if porog_from_rules is not None and porog_from_rules > 0:
-                    threshold_percent_effective = porog_from_rules
-                    thr_source = "policy_rules"
-                elif min_porog > 0:
-                    threshold_percent_effective = min_porog
-                    thr_source = "policy_min_porog_by_band"
-                else:
-                    threshold_percent_effective = Decimal("0")
-                    thr_source = "no_policy_threshold"
+            # Расчёт пороговой цены
+            threshold_price = Decimal("0")
+            if po_dec > 0:
+                threshold_price = po_dec * (Decimal("1") + thr_effective)
+            if band == "LOW":
+                threshold_price = max(threshold_price, po_dec + MIN_MARGIN_ABS_LOW)
 
             price = compute_price_for_item(
                 competitor_price=competitor,
@@ -1058,19 +1093,24 @@ async def process_supplier(
                 retail_markup=retail_markup,
                 price_retail=rr,
                 price_opt=po,
-                threshold_percent_effective=threshold_percent_effective,
+                threshold_percent_effective=thr_effective,
+            )
+            price = _round_price_export(price)
+
+            # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
+            (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
+                "Price: supplier=%s city=%s product_code=%s band=%s thr_supplier=%s thr_effective=%s competitor_price=%s final_price=%s",
+                code, city, product_code, band, thr_supplier, thr_effective, competitor, price
             )
 
             # --- собрать несколько строк для нотификации: какие пороги реально применились ---
             if len(sample_rows) < sample_limit:
-                thr_share = _as_share(threshold_percent_effective)
-                # показываем в процентах
+                thr_share = _as_share(thr_effective)
                 thr_pct = (thr_share * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 sample_rows.append(
-                    f"• {product_code} band={band_id or '-'} thr={thr_pct}% src={thr_source} rr={_to_decimal(rr)} po={_to_decimal(po)} comp={(competitor or Decimal('0'))} -> price={price}"
+                    f"• {product_code} band={band} thr={thr_pct}% rr={rr_dec} po={po_dec} comp={(competitor or Decimal('0'))} -> price={price}"
                 )
 
-            # Сохраняем price_opt в offers.wholesale_price (если пришло)
             wholesale_price = None
             if po is not None:
                 wp = _to_decimal(po)

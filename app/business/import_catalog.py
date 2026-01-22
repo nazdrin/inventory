@@ -3,6 +3,9 @@ import os
 import io
 from typing import List, Dict, Any, Optional
 import json  # ← добавь наверху файла
+import httpx
+import xml.etree.ElementTree as ET
+from sqlalchemy import and_, or_, case
 import pandas as pd
 from dotenv import load_dotenv
 from google.oauth2 import service_account
@@ -327,7 +330,7 @@ def parse_catalog_xlsx(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]
             "Producer": (r.get("Товар.Производитель.Наименование") or "").strip(),
             "Guid": (r.get("ГУИД") or "").strip(),
             "Barcode": (r.get("Код ШК") or "").strip(),
-            "Code_Tabletki": (r.get("ГУИД") or "").strip()
+            "Code_Tabletki": ""
         }
         rows.append(row)
 
@@ -366,17 +369,25 @@ async def upsert_catalog_mapping(rows: List[Dict[str, Any]]) -> Dict[str, int]:
         chunk = rows[i : i + UPSERT_CHUNK_SIZE]
         insert_stmt = pg_insert(table).values(chunk)
 
+        excluded = insert_stmt.excluded
+
+        # Предикаты «реального изменения»: новое значение не пустое и отличается от текущего
+        name_changed = and_(excluded.Name != "", excluded.Name.is_distinct_from(table.c.Name))
+        producer_changed = and_(excluded.Producer != "", excluded.Producer.is_distinct_from(table.c.Producer))
+        barcode_changed = and_(excluded.Barcode != "", excluded.Barcode.is_distinct_from(table.c.Barcode))
+
+        # Обновляем только непустыми значениями; пустые не затирают существующие
         update_cols = {
-            "Name": insert_stmt.excluded.Name,
-            "Producer": insert_stmt.excluded.Producer,
-            "Guid": insert_stmt.excluded.Guid,
-            "Barcode": insert_stmt.excluded.Barcode,
-            "Code_Tabletki": insert_stmt.excluded.Code_Tabletki,
+            "Name": case((name_changed, excluded.Name), else_=table.c.Name),
+            "Producer": case((producer_changed, excluded.Producer), else_=table.c.Producer),
+            "Barcode": case((barcode_changed, excluded.Barcode), else_=table.c.Barcode),
+            # Guid / Code_Tabletki сейчас не обновляем (только при insert остаются как в values)
         }
 
         upsert_stmt = insert_stmt.on_conflict_do_update(
             index_elements=[table.c.ID],
             set_=update_cols,
+            where=or_(name_changed, producer_changed, barcode_changed),
         )
 
         async with get_async_db() as session:
@@ -386,6 +397,103 @@ async def upsert_catalog_mapping(rows: List[Dict[str, Any]]) -> Dict[str, int]:
         affected += len(chunk)
 
     return {"affected": affected}
+# ──────────────────────────────────────────────────────────────────────────────
+# SalesDrive YML (каталог)
+# ──────────────────────────────────────────────────────────────────────────────
+SALESDRIVE_YML_URL_TEMPLATE = "https://petrenko.salesdrive.me/export/yml/export.yml?publicKey={public_key}"
+
+
+def _strip_ns(tag: str) -> str:
+    """Убирает namespace из XML тега."""
+    if not tag:
+        return tag
+    return tag.split("}")[-1]
+
+
+async def _get_salesdrive_public_key(enterprise_code: str) -> str:
+    """Берёт publicKey из enterprise_settings.google_drive_folder_id_rest по enterprise_code."""
+    async with get_async_db() as session:
+        res = await session.execute(
+            text("SELECT google_drive_folder_id_rest FROM enterprise_settings WHERE enterprise_code = :c LIMIT 1"),
+            {"c": enterprise_code},
+        )
+        public_key = res.scalar_one_or_none()
+
+    public_key = (public_key or "").strip()
+    if not public_key:
+        raise RuntimeError(
+            f"Не найден publicKey (google_drive_folder_id_rest) для enterprise_code={enterprise_code}"
+        )
+    return public_key
+
+
+async def _download_salesdrive_yml(public_key: str) -> bytes:
+    url = SALESDRIVE_YML_URL_TEMPLATE.format(public_key=public_key)
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers={"accept": "application/xml"}, timeout=120)
+        resp.raise_for_status()
+        return resp.content
+
+
+def parse_catalog_yml(file_bytes: bytes, filename: str = "export.yml") -> List[Dict[str, Any]]:
+    """Парсит YML/XML и возвращает унифицированные dict для CatalogMapping.
+
+    Маппинг:
+      - ID        <- offer@id
+      - Name      <- name_ua (если не пусто), иначе name
+      - Producer  <- vendor
+      - Barcode   <- barcode
+      - Guid / Code_Tabletki: заглушки '' (не обновляем их при upsert)
+
+    Важно: парсинг потоковый (iterparse) + elem.clear(), чтобы не росла память.
+    """
+    rows: List[Dict[str, Any]] = []
+
+    # iterparse на BytesIO, освобождаем элементы по мере чтения
+    context = ET.iterparse(io.BytesIO(file_bytes), events=("end",))
+    for event, elem in context:
+        if _strip_ns(elem.tag) != "offer":
+            continue
+
+        offer_id = (elem.attrib.get("id") or "").strip()
+        if not offer_id:
+            elem.clear()
+            continue
+
+        def _find_text(tag_name: str) -> str:
+            for ch in list(elem):
+                if _strip_ns(ch.tag) == tag_name:
+                    return (ch.text or "").strip()
+            return ""
+
+        name_ua = _find_text("name_ua")
+        name = name_ua if name_ua else _find_text("name")
+        vendor = _find_text("vendor")
+        barcode = _find_text("barcode")
+
+        rows.append(
+            {
+                "ID": offer_id,
+                "Name": name,
+                "Producer": vendor,
+                "Guid": "",
+                "Barcode": barcode,
+                "Code_Tabletki": "",
+            }
+        )
+
+        # освобождаем память
+        elem.clear()
+
+    return rows
+
+
+async def load_catalog_from_salesdrive_yml(enterprise_code: str) -> Dict[str, Any]:
+    """Скачивает YML по publicKey из БД и парсит в rows."""
+    public_key = await _get_salesdrive_public_key(enterprise_code)
+    yml_bytes = await _download_salesdrive_yml(public_key)
+    rows = parse_catalog_yml(yml_bytes, filename="export.yml")
+    return {"file_name": "export.yml", "rows": rows}
 
 async def export_catalog_mapping_to_json_and_process(
     enterprise_code: str,
@@ -475,7 +583,7 @@ async def export_catalog_mapping_to_json_and_process(
 async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
     """
     Оркестрация:
-      1) Импорт одного .xlsx из Google Drive → парсинг → upsert базовых полей в CatalogMapping
+      1) Импорт одного YML из SalesDrive → парсинг → upsert базовых полей в CatalogMapping
       2) Для всех активных поставщиков (dropship_enterprises.is_active=TRUE):
            - находим парсер в PARSER_REGISTRY по code
            - вызываем его (await parser(code=code)) → JSON/объект
@@ -486,18 +594,6 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
     """
     if (file_type or "").strip().lower() != "catalog":
         logger.info("file_type != 'catalog' → сервис завершён без действий")
-        return {
-            "file_name": None,
-            "rows": 0,
-            "db": {"affected": 0},
-            "feeds": {},
-            "export_file": None,
-        }
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-    if not folder_id:
-        msg = "Не задан GOOGLE_DRIVE_FOLDER_ID в .env"
-        logger.error(msg)
-        send_notification(msg, "Разработчик")
         return {
             "file_name": None,
             "rows": 0,
@@ -544,15 +640,11 @@ async def run_service(enterprise_code: str, file_type: str) -> Dict[str, Any]:
         return []
 
     try:
-        # 1) Импорт из Google Drive → upsert базовых полей
-        drive_service = await _connect_to_google_drive()
-        meta = await _fetch_single_file_metadata(drive_service, folder_id)
-        file_id, file_name = meta["id"], meta.get("name", "catalog.xlsx")
-        logger.info("Выбран файл: %s (%s)", file_name, file_id)
-
-        file_bytes = await _download_file_bytes(drive_service, file_id)
-        rows = parse_catalog_xlsx(file_bytes, file_name)
-        logger.info("Распарсено строк: %d", len(rows))
+        # 1) Импорт из SalesDrive YML → парсинг → upsert базовых полей
+        yml_result = await load_catalog_from_salesdrive_yml(enterprise_code)
+        file_name = yml_result.get("file_name") or "export.yml"
+        rows = yml_result.get("rows") or []
+        logger.info("SalesDrive YML: распарсено строк: %d", len(rows))
 
         db_stats = await upsert_catalog_mapping(rows)
         logger.info("Upsert в БД выполнен. Затронуто записей (вставлено/обновлено): %d", db_stats.get("affected", 0))
@@ -745,7 +837,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     parser = argparse.ArgumentParser(
-        description="Ручной запуск импорта каталога из Google Drive и upsert в CatalogMapping"
+        description="Ручной запуск импорта каталога из SalesDrive YML и upsert в CatalogMapping"
     )
     parser.add_argument("--enterprise", required=True, help="enterprise_code (например, 342)")
     parser.add_argument("--type", default="catalog", help="file_type, по умолчанию 'catalog'")
