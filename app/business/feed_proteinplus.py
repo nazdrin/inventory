@@ -309,7 +309,7 @@ async def parse_feed_stock_to_json(
             continue
 
         in_stock_raw = (offer.get("in_stock") or "").strip().lower()
-        qty = 1 if in_stock_raw == "true" else 0
+        qty = 5 if in_stock_raw == "true" else 0
 
         # Игнорируем позиции с нулевым или отрицательным остатком
         if qty <= 0:
