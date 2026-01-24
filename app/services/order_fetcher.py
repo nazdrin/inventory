@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 # ORDER_FETCHER_VERBOSE_ORDER_LOGS: 1 to log full order JSON + per-order lines (default 0)
 _LOG_LEVEL = os.getenv("ORDER_FETCHER_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
+
 VERBOSE_ORDER_LOGS = os.getenv("ORDER_FETCHER_VERBOSE_ORDER_LOGS", "0") == "1"
+ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS = os.getenv("ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS", "1") == "1"
 
 ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
@@ -116,8 +118,8 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             cancel_reason=2,
                                         )
 
-                                    if status == 0 and VERBOSE_ORDER_LOGS:
-                                        order_codes = list(set(order["code"] for order in data if "code" in order))
+                                    if status == 0 and ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS:
+                                        order_codes = list({order["code"] for order in data if "code" in order})
                                         if order_codes:
                                             from app.services.telegram_bot import notify_user
                                             await notify_user(branch, order_codes)
@@ -164,8 +166,8 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             else:
                                                 logger.warning("No status checker for data_format=%s", enterprise.data_format)
                                         all_orders.append(order)
-                                    if status == 0 and VERBOSE_ORDER_LOGS:
-                                        order_codes = list(set(order["code"] for order in data if "code" in order))
+                                    if status == 0 and ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS:
+                                        order_codes = list({order["code"] for order in data if "code" in order})
                                         if order_codes:
                                             from app.services.telegram_bot import notify_user
                                             await notify_user(branch, order_codes)
