@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple, Iterable
@@ -26,7 +27,15 @@ from app.services.order_sender import send_orders_to_tabletki
 
 
 
+
 logger = logging.getLogger(__name__)
+
+# --- Logging controls (env) ---
+# ORDER_SENDER_LOG_LEVEL: DEBUG/INFO/WARNING/ERROR (default INFO)
+# ORDER_SENDER_VERBOSE_SALESDRIVE_LOGS: 1 to log full payload/response bodies (default 0)
+_LOG_LEVEL = os.getenv("ORDER_SENDER_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
+VERBOSE_SD_LOGS = os.getenv("ORDER_SENDER_VERBOSE_SALESDRIVE_LOGS", "0") == "1"
 
 
 # Глобальный допуск по цене для поиска поставщика
@@ -87,10 +96,21 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
 
     async with httpx.AsyncClient(timeout=15) as client:
         try:
-            logger.info("📦 Payload для SalesDrive:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
+            if VERBOSE_SD_LOGS:
+                logger.info("📦 Payload для SalesDrive:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
+
             response = await client.post(url, json=payload, headers=headers)
-            logger.info("📤 Отправка в SalesDrive. Код ответа: %s", response.status_code)
-            logger.info("📨 Ответ от SalesDrive: %s", response.text)
+
+            # In prod (default) keep logs compact; in test (verbose) log full response body.
+            logger.info(
+                "📤 SalesDrive POST /handler/ status=%s externalId=%s",
+                response.status_code,
+                payload.get("externalId"),
+            )
+            if VERBOSE_SD_LOGS:
+                logger.info("📨 Ответ от SalesDrive: %s", response.text)
+            else:
+                logger.debug("📨 SalesDrive response (truncated): %.2000s", response.text)
             response.raise_for_status()
         except httpx.RequestError as e:
             err_msg = f"❌ Помилка підключення до SalesDrive: {e}"
