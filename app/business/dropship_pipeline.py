@@ -148,6 +148,7 @@ from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
 from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
 from app.business.feed_suziria import parse_suziria_stock_to_json as parse_feed_D8
 from app.business.feed_ortomedika import parse_feed_stock_to_json as parse_feed_D9
+from app.business.feed_zoohub import parse_feed_stock_to_json as parse_feed_D10
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -261,6 +262,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D7": parse_feed_D7,
     "D8": parse_feed_D8,
     "D9": parse_feed_D9,
+    "D10": parse_feed_D10,
 }
 
 # --------------------------------------------------------------------------------------
