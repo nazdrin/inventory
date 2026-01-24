@@ -1,6 +1,8 @@
 import base64
 import aiohttp
 import json
+import logging
+import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models import DeveloperSettings, EnterpriseSettings, MappingBranch
@@ -10,6 +12,15 @@ from app.services.order_sender import send_single_order_status_2
 from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
 from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
 from app.business.order_sender import process_and_send_order
+
+logger = logging.getLogger(__name__)
+
+# --- Logging controls (env) ---
+# ORDER_FETCHER_LOG_LEVEL: DEBUG/INFO/WARNING/ERROR (default INFO)
+# ORDER_FETCHER_VERBOSE_ORDER_LOGS: 1 to log full order JSON + per-order lines (default 0)
+_LOG_LEVEL = os.getenv("ORDER_FETCHER_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
+VERBOSE_ORDER_LOGS = os.getenv("ORDER_FETCHER_VERBOSE_ORDER_LOGS", "0") == "1"
 
 ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
@@ -29,7 +40,6 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
     """
     Получает заказы для заданного предприятия (enterprise_code),
     если активирован флаг `order_fetcher = True` и найдены филиалы.
-    ВРЕМЕННО выводит каждый полученный заказ в терминал.
     """
     dev_settings = await session.execute(select(DeveloperSettings.endpoint_orders))
     endpoint_orders = dev_settings.scalar()
@@ -40,11 +50,11 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
     enterprise = enterprise_q.scalar()
 
     if not enterprise:
-        print(f"❌ Не найдены настройки EnterpriseSettings для enterprise_code={enterprise_code}")
+        logger.warning("EnterpriseSettings not found for enterprise_code=%s", enterprise_code)
         return []
 
     if not enterprise.order_fetcher:
-        print(f"ℹ️ Флаг order_fetcher=False, пропуск: enterprise_code={enterprise_code}")
+        logger.info("order_fetcher disabled, skip enterprise_code=%s", enterprise_code)
         return []
 
     auth_header = base64.b64encode(
@@ -70,20 +80,22 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                     url = f"{endpoint_orders}/api/Orders/{branch}/{status}"
                     try:
                         async with http_session.get(url, headers=headers) as response:
-                            print(f"🌐 Запрос заказов: {url}")
+                            logger.info("Orders request: %s", url)
                             if response.status == 200:
                                 data = await response.json()
                                 if isinstance(data, list):
                                     for order in data:
-                                        print("📦 Заказ:")
-                                        print(json.dumps(order, indent=2, ensure_ascii=False))
+                                        if VERBOSE_ORDER_LOGS:
+                                            logger.info("Order payload: %s", json.dumps(order, ensure_ascii=False))
+                                        else:
+                                            logger.debug("Order payload (truncated): %.2000s", json.dumps(order, ensure_ascii=False))
 
                                         if status in [0, 2]:
                                             processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
                                             if processor:
                                                 await processor(order, enterprise_code, branch)
                                             else:
-                                                print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")
+                                                logger.warning("No order send processor for data_format=%s", enterprise.data_format)
 
                                         # Для формата Business не выполняем проверку статусов у продавца
                                         if enterprise.data_format != "Business" and status in [2, 4, 4.1]:
@@ -91,11 +103,11 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             if status_checker:
                                                 await status_checker(order, enterprise_code, branch)
                                             else:
-                                                print(f"⚠️ Нет обработчика для проверки статуса формата {enterprise.data_format}")
+                                                logger.warning("No status checker for data_format=%s", enterprise.data_format)
 
                                     if status in [0, 2]:
                                         processed_orders = await process_orders(session, data)
-                                        print(f"🔁 Обработано {len(processed_orders)} заказов")
+                                        logger.info("Auto-confirm processed %d orders", len(processed_orders))
                                         await send_orders_to_tabletki(
                                             session,
                                             processed_orders,
@@ -104,35 +116,37 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             cancel_reason=2,
                                         )
 
-                                    if status == 0:
+                                    if status == 0 and VERBOSE_ORDER_LOGS:
                                         order_codes = list(set(order["code"] for order in data if "code" in order))
                                         if order_codes:
                                             from app.services.telegram_bot import notify_user
                                             await notify_user(branch, order_codes)
                             else:
-                                print(f"❌ Ошибка при запросе заказов: {response.status} для branch={branch}")
+                                logger.warning("Orders request failed: status=%s branch=%s", response.status, branch)
                     except Exception as e:
-                        print(f"🚨 Ошибка при запросе заказов для branch={branch}, status={status}: {str(e)}")
+                        logger.exception("Orders request exception: branch=%s status=%s", branch, status)
             else:
                 # ===== Вариант без авто-подтверждения =====
                 for status in [0, 2, 4, 4.1]:
                     url = f"{endpoint_orders}/api/Orders/{branch}/{status}"
                     try:
                         async with http_session.get(url, headers=headers) as response:
-                            print(f"🌐 Запрос заказов: {url}")
+                            logger.info("Orders request: %s", url)
                             if response.status == 200:
                                 data = await response.json()
                                 if isinstance(data, list):
                                     for order in data:
-                                        print("📦 Заказ:")
-                                        print(json.dumps(order, indent=2, ensure_ascii=False))
+                                        if VERBOSE_ORDER_LOGS:
+                                            logger.info("Order payload: %s", json.dumps(order, ensure_ascii=False))
+                                        else:
+                                            logger.debug("Order payload (truncated): %.2000s", json.dumps(order, ensure_ascii=False))
                                         if status == 0:
                                             # TODO: передача заказов продавцу
                                             processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
                                             if processor:
                                                 await processor(order, enterprise_code, branch)
                                             else:
-                                                print(f"⚠️ Нет функции отправки заказа для формата {enterprise.data_format}")
+                                                logger.warning("No order send processor for data_format=%s", enterprise.data_format)
                                             # Отправка на Tabletki.ua со статусом 2.0
                                             order["statusID"] = 2.0
                                             await send_single_order_status_2(
@@ -148,17 +162,17 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             if status_checker:
                                                 await status_checker(order, enterprise_code, branch)
                                             else:
-                                                print(f"⚠️ Нет обработчика для проверки статуса формата {enterprise.data_format}")
+                                                logger.warning("No status checker for data_format=%s", enterprise.data_format)
                                         all_orders.append(order)
-                                    if status == 0:
+                                    if status == 0 and VERBOSE_ORDER_LOGS:
                                         order_codes = list(set(order["code"] for order in data if "code" in order))
                                         if order_codes:
                                             from app.services.telegram_bot import notify_user
                                             await notify_user(branch, order_codes)
                             else:
-                                print(f"❌ Ошибка при запросе заказов: {response.status} для branch={branch}")
+                                logger.warning("Orders request failed: status=%s branch=%s", response.status, branch)
                     except Exception as e:
-                        print(f"🚨 Ошибка при запросе заказов для branch={branch}, status={status}: {str(e)}")
+                        logger.exception("Orders request exception: branch=%s status=%s", branch, status)
 
-    print(f"✅ Получено всего {len(all_orders)} заказов для предприятия {enterprise_code}")
+    logger.info("Total orders fetched: %d enterprise_code=%s", len(all_orders), enterprise_code)
     return all_orders
