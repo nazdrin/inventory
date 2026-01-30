@@ -17,7 +17,14 @@ NO_COMP_MULT_LOW = Decimal(os.getenv("NO_COMP_MULT_LOW", "1.0"))
 NO_COMP_MULT_MID = Decimal(os.getenv("NO_COMP_MULT_MID", "1.0"))
 NO_COMP_MULT_HIGH = Decimal(os.getenv("NO_COMP_MULT_HIGH", "1.0"))
 NO_COMP_MULT_PREMIUM = Decimal(os.getenv("NO_COMP_MULT_PREMIUM", "1.0"))
+# --- Competitor undercut behavior (env-controlled) ---
+# discount range (shares)
 MIN_MARGIN_ABS_LOW = Decimal(os.getenv("MIN_MARGIN_ABS_LOW", "10"))
+COMP_DISCOUNT_MIN = Decimal(os.getenv("COMP_DISCOUNT_MIN", "0.001"))
+COMP_DISCOUNT_MAX = Decimal(os.getenv("COMP_DISCOUNT_MAX", "0.01"))
+# clamp undercut in UAH
+COMP_DELTA_MIN_UAH = Decimal(os.getenv("COMP_DELTA_MIN_UAH", "2"))
+COMP_DELTA_MAX_UAH = Decimal(os.getenv("COMP_DELTA_MAX_UAH", "15"))
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 import tempfile
@@ -150,6 +157,7 @@ from app.business.feed_suziria import parse_suziria_stock_to_json as parse_feed_
 from app.business.feed_ortomedika import parse_feed_stock_to_json as parse_feed_D9
 from app.business.feed_zoohub import parse_feed_stock_to_json as parse_feed_D10
 from app.business.feed_toros import parse_feed_stock_to_json as parse_feed_D11
+from app.business.feed_vetstar import parse_feed_stock_to_json as parse_feed_D12
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -265,6 +273,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D9": parse_feed_D9,
     "D10": parse_feed_D10,
     "D11": parse_feed_D11,
+    "D12": parse_feed_D12,
 }
 
 # --------------------------------------------------------------------------------------
@@ -623,8 +632,9 @@ def compute_price_for_item(
     price_retail: Optional[float | Decimal],
     price_opt: Optional[float | Decimal],
     threshold_percent_effective: Optional[float | Decimal],
-    discount_min: Decimal = Decimal("0.001"),   # 0.1%
-    discount_max: Decimal = Decimal("0.01"),    # 1%
+    price_band: Optional[str] = None,
+    discount_min: Decimal = COMP_DISCOUNT_MIN,   # 0.1%
+    discount_max: Decimal = COMP_DISCOUNT_MAX,   # 1%
 ) -> Decimal:
     """
     Новая логика (для НЕ-RRP):
@@ -663,6 +673,12 @@ def compute_price_for_item(
         # safety: do not allow negative prices
         if threshold_price < 0:
             threshold_price = Decimal("0")
+    # 2.1) Absolute minimum margin for cheap items (LOW band): threshold_price >= po + MIN_MARGIN_ABS_LOW
+    if po > 0 and (price_band == "LOW"):
+        try:
+            threshold_price = max(threshold_price, po + MIN_MARGIN_ABS_LOW)
+        except Exception:
+            pass
 
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
@@ -671,12 +687,12 @@ def compute_price_for_item(
         disc = Decimal(str(__import__("random").uniform(float(discount_min), float(discount_max))))
         candidate = competitor_price * (Decimal("1") - disc)
 
-        # clamp delta between 2 and 15 UAH
+        # clamp undercut delta in UAH (env-controlled)
         delta = competitor_price - candidate
-        if delta < Decimal("2"):
-            candidate = competitor_price - Decimal("2")
-        elif delta > Decimal("15"):
-            candidate = competitor_price - Decimal("15")
+        if delta < COMP_DELTA_MIN_UAH:
+            candidate = competitor_price - COMP_DELTA_MIN_UAH
+        elif delta > COMP_DELTA_MAX_UAH:
+            candidate = competitor_price - COMP_DELTA_MAX_UAH
 
         # safety: never above competitor
         if candidate > competitor_price:
@@ -684,8 +700,8 @@ def compute_price_for_item(
 
         under_competitor = candidate
 
-    # 5) Ограничение: цена под конкурента не может быть выше rr
-    if under_competitor is not None and rr > 0:
+    # 5) RR ceiling (for non-RRP suppliers) applies ONLY when there is NO wholesale price (po<=0)
+    if under_competitor is not None and rr > 0 and po <= 0:
         under_competitor = min(under_competitor, rr)
 
     # 6) Выбор итоговой цены (без enterprise_settings диапазонов)
@@ -702,9 +718,6 @@ def compute_price_for_item(
     # Если конкурента нет
     if under_competitor is None:
         if threshold_price > 0:
-            # не поднимаем выше rr, если rr задан и меньше пороговой
-            if rr > 0 and rr < threshold_price:
-                return _round_money(rr)
             return _round_money(threshold_price)
         return _round_money(_fallback())
 
@@ -714,9 +727,6 @@ def compute_price_for_item(
 
     # under_competitor < threshold_price
     if threshold_price > 0:
-        # не поднимаем выше rr, если rr задан и меньше пороговой
-        if rr > 0 and rr < threshold_price:
-            return _round_money(rr)
         return _round_money(threshold_price)
 
     return _round_money(_fallback())
@@ -1083,13 +1093,6 @@ async def process_supplier(
             if competitor is None or competitor_dec <= 0:
                 thr_effective = thr_effective * no_comp_mult
 
-            # Расчёт пороговой цены
-            threshold_price = Decimal("0")
-            if po_dec > 0:
-                threshold_price = po_dec * (Decimal("1") + thr_effective)
-            if band == "LOW":
-                threshold_price = max(threshold_price, po_dec + MIN_MARGIN_ABS_LOW)
-
             price = compute_price_for_item(
                 competitor_price=competitor,
                 is_rrp=is_rrp,
@@ -1098,6 +1101,7 @@ async def process_supplier(
                 price_retail=rr,
                 price_opt=po,
                 threshold_percent_effective=thr_effective,
+                price_band=band,
             )
             price = _round_price_export(price)
 
