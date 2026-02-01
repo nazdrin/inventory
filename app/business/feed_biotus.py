@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional, List, Dict, Literal
+import math
+from typing import Optional, List, Dict, Literal, Tuple
 
 import httpx
 import xml.etree.ElementTree as ET
@@ -16,10 +17,57 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Типовые названия параметра штрихкода, встречающиеся в фидах
+
 BARCODE_PARAM_NAMES = {
     "Штрихкод", "Штрих-код", "Штрих код",
     "EAN", "EAN-13", "UPC", "GTIN", "Barcode", "barcode"
 }
+
+# --- USD->UAH rate (cache) ---
+_USD_RATE_CACHE: Dict[str, object] = {
+    "value": None,        # type: Optional[float]
+    "ts": 0.0,            # type: float (monotonic)
+    "ttl": 600.0,         # 10 minutes
+}
+
+
+async def _get_usd_rate_uah(*, timeout: int = 10) -> float:
+    """Возвращает курс USD->UAH (UAH за 1 USD).
+
+    Источник: публичный API monobank. Используем rateSell (банк продаёт USD).
+    Кешируем значение на короткое время, чтобы не дёргать API слишком часто.
+
+    Если курс получить не удалось — возвращаем 0.0.
+    """
+    now = asyncio.get_event_loop().time()
+    cached = _USD_RATE_CACHE.get("value")
+    ts = float(_USD_RATE_CACHE.get("ts") or 0.0)
+    ttl = float(_USD_RATE_CACHE.get("ttl") or 600.0)
+
+    if isinstance(cached, (int, float)) and cached > 0 and (now - ts) < ttl:
+        return float(cached)
+
+    url = "https://api.monobank.ua/bank/currency"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+
+        # ISO 4217: USD=840, UAH=980
+        for row in data:
+            if row.get("currencyCodeA") == 840 and row.get("currencyCodeB") == 980:
+                rate = row.get("rateSell") or row.get("rateCross") or row.get("rateBuy")
+                if rate:
+                    rate_f = float(rate)
+                    if rate_f > 0:
+                        _USD_RATE_CACHE["value"] = rate_f
+                        _USD_RATE_CACHE["ts"] = now
+                        return rate_f
+    except Exception as e:
+        logger.warning("Не удалось получить курс USD->UAH (monobank): %s", e)
+
+    return 0.0
 
 
 def _get_text(el: ET.Element, candidates: List[str]) -> Optional[str]:
@@ -71,6 +119,7 @@ def _to_int(val: Optional[str]) -> int:
         return 0
 
 
+
 def _to_float(val: Optional[str]) -> float:
     """Мягко преобразует строку в float (учитывая пробелы/запятые)."""
     if not val:
@@ -82,6 +131,14 @@ def _to_float(val: Optional[str]) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+# Математическое округление до целых UAH (.5 вверх)
+def _round_uah(val: float) -> int:
+    """Округление до целых по математическим правилам (.5 вверх)."""
+    if val <= 0:
+        return 0
+    return int(math.floor(val + 0.5))
 
 
 async def _get_feed_url_by_code(code: str = "D1") -> Optional[str]:
@@ -157,11 +214,12 @@ async def _get_profit_percent_by_code(code: str = "D1") -> float:
     if val > 1:
         val = val / 100.0
 
-    # Нормализуем границы
-    if val < 0:
-        val = 0.0
+    # Нормализуем границы: допускаем отрицательное значение,
+    # но по модулю ограничиваем 100%.
     if val > 1:
         val = 1.0
+    if val < -1:
+        val = -1.0
 
     return val
 
@@ -221,6 +279,7 @@ async def _load_stock_feed_root(*, code: str, timeout: int) -> Optional[ET.Eleme
     return await _load_feed_root_from_url(feed_url, timeout)
 
 
+
 def _collect_product_nodes(root: ET.Element) -> List[ET.Element]:
     """Собираем узлы товаров (типовые: <offer> или <item>)."""
     product_nodes = root.findall(".//offer") + root.findall(".//item")
@@ -228,6 +287,20 @@ def _collect_product_nodes(root: ET.Element) -> List[ET.Element]:
         # Фолбек: если структура нестандартная — берём все элементы, у которых есть дети
         product_nodes = [el for el in root.iter() if list(el)]
     return product_nodes
+
+
+def _build_partner_price_usd_map(root: ET.Element) -> Dict[str, float]:
+    """Строит словарь {sku: price_partner_usd} из фида по feed_url."""
+    mp: Dict[str, float] = {}
+    for node in _collect_product_nodes(root):
+        sku = _extract_sku(node)
+        if not sku:
+            continue
+        usd_raw = _get_text(node, ["price_partner_usd"]) or node.get("price_partner_usd")
+        usd_val = _to_float(usd_raw)
+        if usd_val > 0:
+            mp[sku] = usd_val
+    return mp
 
 
 async def parse_feed_catalog_to_json(*, code: str = "D1", timeout: int = 30) -> str:
@@ -265,7 +338,7 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
     """
     Сток: возвращает JSON со списком
     [
-      {"code_sup": "<vendorCode>", "qty": <int>, "price_retail": <float>, "price_opt": 0},
+      {"code_sup": "<vendorCode>", "qty": <int>, "price_retail": <float>, "price_opt": расчётная оптовая цена (см. формулу ниже)},
       ...
     ]
 
@@ -273,7 +346,13 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
       - vendorCode          -> code_sup
       - quantity_in_stock   -> qty
       - price               -> price_retail
-      - price_opt           -> 0 (по умолчанию)
+      - price_opt           -> расчётная оптовая цена (см. формулу ниже)
+
+    Формула price_opt:
+      - если доступно поле price_partner_usd в фиде по feed_url и удалось получить курс USD->UAH:
+          price_opt = price_partner_usd * usd_rate_uah * (1 - profit_percent)
+      - иначе:
+          price_opt = price_retail / 1.25
     """
     # 1) Пытаемся взять основной сток-фид (URL берётся из dropship_enterprises.gdrive_folder)
     root = await _load_stock_feed_root(code=code, timeout=timeout)
@@ -297,6 +376,34 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
             return "[]"
 
     profit_percent = await _get_profit_percent_by_code(code)
+    # profit_percent задаётся как "на сколько снизить". В БД вводим положительное число (например 20),
+    # которое превращается в 0.20 и даёт коэффициент 0.80.
+    # Если в БД по ошибке задано отрицательное — это будет означать увеличение (1 - (-0.2) = 1.2).
+    coef_profit = 1.0 - profit_percent  # 0.2 -> 0.8
+
+    # safety: не даём уйти в отрицательные/нулевые коэффициенты
+    if coef_profit <= 0:
+        coef_profit = 0.0
+
+    usd_rate_uah = await _get_usd_rate_uah(timeout=min(10, timeout))
+
+    partner_root: Optional[ET.Element] = None
+    partner_price_usd_map: Dict[str, float] = {}
+
+    # Пытаемся загрузить фид по feed_url, чтобы достать price_partner_usd
+    # (если мы уже в fallback-режиме, root = feed_url и достаточно использовать его)
+    if used_fallback:
+        partner_root = root
+    else:
+        partner_root = await _load_feed_root(code=code, timeout=timeout)
+
+    if partner_root is not None:
+        partner_price_usd_map = _build_partner_price_usd_map(partner_root)
+    else:
+        logger.warning(
+            "Фид по feed_url недоступен для code=%s. price_partner_usd недоступен, используем fallback-формулу price_retail/1.25",
+            code,
+        )
 
     rows: List[Dict[str, object]] = []
 
@@ -316,15 +423,26 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
 
             price_retail = _to_float(price_raw)
 
-            price_opt = price_retail / (1.0 + profit_percent)
+            # Основная формула: partner_usd * usd_rate * (1 + profit_percent)
+            price_opt = 0.0
+            partner_usd = partner_price_usd_map.get(sku)
+
+            if partner_usd and usd_rate_uah > 0 and coef_profit > 0:
+                price_opt = float(partner_usd) * float(usd_rate_uah) * float(coef_profit)
+            else:
+                # Фолбек: если partner_usd отсутствует или недоступен курс/фид — берём от розницы
+                price_opt = price_retail / 1.25 if price_retail > 0 else 0.0
+
             if price_opt < 0:
                 price_opt = 0.0
+
+            price_opt_int = _round_uah(float(price_opt))
 
             rows.append({
                 "code_sup": sku,
                 "qty": qty,
                 "price_retail": price_retail,
-                "price_opt": price_opt,
+                "price_opt": price_opt_int,
             })
     else:
         # FALLBACK-ФИД (структура: in_stock / price_rsp_uah)
@@ -342,15 +460,26 @@ async def parse_feed_stock_to_json(*, code: str = "D1", timeout: int = 30) -> st
 
             price_retail = _to_float(price_raw)
 
-            price_opt = price_retail / (1.0 + profit_percent)
+            # Основная формула: partner_usd * usd_rate * (1 + profit_percent)
+            price_opt = 0.0
+            partner_usd = partner_price_usd_map.get(sku)
+
+            if partner_usd and usd_rate_uah > 0 and coef_profit > 0:
+                price_opt = float(partner_usd) * float(usd_rate_uah) * float(coef_profit)
+            else:
+                # Фолбек: если partner_usd отсутствует или недоступен курс/фид — берём от розницы
+                price_opt = price_retail / 1.25 if price_retail > 0 else 0.0
+
             if price_opt < 0:
                 price_opt = 0.0
+
+            price_opt_int = _round_uah(float(price_opt))
 
             rows.append({
                 "code_sup": sku,
                 "qty": qty,
                 "price_retail": price_retail,
-                "price_opt": price_opt,
+                "price_opt": price_opt_int,
             })
 
     logger.info(
