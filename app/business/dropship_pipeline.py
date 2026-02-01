@@ -661,8 +661,8 @@ def compute_price_for_item(
             return _round_money(rr)
         return Decimal("0")
 
-    # 2) Эффективный порог
-    thr = _as_share(threshold_percent_effective)
+    # 2) Эффективный порог (УЖЕ доля/коэффициент, а не проценты). Может быть > 1 для дешёвых товаров.
+    thr = _to_decimal(threshold_percent_effective)
     threshold_price = Decimal("0")
     if po > 0:
         threshold_price = po * (Decimal("1") + thr)
