@@ -1028,18 +1028,47 @@ async def _build_products_block(
             effective_supplier_name = (await _fetch_supplier_name(session, effective_supplier_code)) or effective_supplier_code
 
         parts: list[str] = []
-        # Добавляем наш общий код товара (CatalogMapping.ID == Offer.product_code) перед Name_{supplier_code}
-        if supplier_item_name:
-            parts.append(f"{str(r.goodsCode)} {str(supplier_item_name)}")
-        else:
-            parts.append(f"{str(r.goodsCode)}")
-        # ВАЖНО: убираем наименование поставщика и код поставщика из description
-        # Оставляем только данные товара у поставщика: название, штрих-код и код товара.
-        if barcode:
-            parts.append(str(barcode))
+
+        # Требуемый формат description:
+        #   <supplier_item_code>,<supplier_item_name>, <barcode>,<our_goods_code>
+        # Пример: SNS-00802,Магній (ультра), Ultra-Mag, Source Naturals, 60 таблеток, 021078008026,1089839
+
         if supplier_item_code:
+            # 1) первый элемент: код товара у поставщика
             parts.append(str(supplier_item_code))
-        description = ", ".join(parts)
+
+            # 2) второй элемент: наименование товара у поставщика (без нашего кода)
+            name_part = str(supplier_item_name) if supplier_item_name else str(r.goodsName)
+            parts.append(name_part)
+
+            # 3) промежуточные элементы (как раньше, через ", ")
+            if barcode:
+                parts.append(str(barcode))
+
+            # 4) последний элемент: наш общий код товара
+            parts.append(str(r.goodsCode))
+
+            # Форматирование разделителей:
+            #   - после первого элемента: запятая БЕЗ пробела
+            #   - между промежуточными: ", "
+            #   - перед последним элементом: запятая БЕЗ пробела
+            if len(parts) == 1:
+                description = parts[0]
+            elif len(parts) == 2:
+                description = parts[0] + "," + parts[1]
+            else:
+                description = parts[0] + "," + parts[1]
+                for mid in parts[2:-1]:
+                    description += ", " + mid
+                description += "," + parts[-1]
+        else:
+            # Fallback: если кода у поставщика нет — оставляем старый формат
+            parts.append(str(r.goodsCode) + (f" {str(supplier_item_name)}" if supplier_item_name else ""))
+            if barcode:
+                parts.append(str(barcode))
+            if supplier_item_code:
+                parts.append(str(supplier_item_code))
+            description = ", ".join(parts)
 
         products.append(
             {
