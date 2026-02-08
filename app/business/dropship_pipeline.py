@@ -6,9 +6,9 @@ import re
 import argparse
 import os
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
-PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "300"))
-PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "1000"))
-PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "3000"))
+PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "100"))
+PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "400"))
+PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "999999"))
 THR_MULT_LOW = Decimal(os.getenv("THR_MULT_LOW", "1.0"))
 THR_MULT_MID = Decimal(os.getenv("THR_MULT_MID", "1.0"))
 THR_MULT_HIGH = Decimal(os.getenv("THR_MULT_HIGH", "1.0"))
@@ -17,7 +17,14 @@ NO_COMP_MULT_LOW = Decimal(os.getenv("NO_COMP_MULT_LOW", "1.0"))
 NO_COMP_MULT_MID = Decimal(os.getenv("NO_COMP_MULT_MID", "1.0"))
 NO_COMP_MULT_HIGH = Decimal(os.getenv("NO_COMP_MULT_HIGH", "1.0"))
 NO_COMP_MULT_PREMIUM = Decimal(os.getenv("NO_COMP_MULT_PREMIUM", "1.0"))
-MIN_MARGIN_ABS_LOW = Decimal(os.getenv("MIN_MARGIN_ABS_LOW", "10"))
+# --- Новый базовый порог (доля, например 0.08 = 8%) ---
+BASE_THR = Decimal(os.getenv("BASE_THR", "0.08"))
+# --- Competitor undercut behavior (env-controlled) ---
+# fixed discount share (default 1%)
+COMP_DISCOUNT_SHARE = Decimal(os.getenv("COMP_DISCOUNT_SHARE", "0.01"))
+# clamp undercut in UAH
+COMP_DELTA_MIN_UAH = Decimal(os.getenv("COMP_DELTA_MIN_UAH", "2"))
+COMP_DELTA_MAX_UAH = Decimal(os.getenv("COMP_DELTA_MAX_UAH", "15"))
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 import tempfile
@@ -150,6 +157,7 @@ from app.business.feed_suziria import parse_suziria_stock_to_json as parse_feed_
 from app.business.feed_ortomedika import parse_feed_stock_to_json as parse_feed_D9
 from app.business.feed_zoohub import parse_feed_stock_to_json as parse_feed_D10
 from app.business.feed_toros import parse_feed_stock_to_json as parse_feed_D11
+from app.business.feed_vetstar import parse_feed_stock_to_json as parse_feed_D12
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -228,11 +236,10 @@ def _round_price_export(x: Decimal) -> Decimal:
 def resolve_price_band(base_price: Decimal) -> str:
     if base_price <= PRICE_BAND_LOW_MAX:
         return "LOW"
-    if base_price <= PRICE_BAND_MID_MAX:
+    elif base_price <= PRICE_BAND_MID_MAX:
         return "MID"
-    if base_price <= PRICE_BAND_HIGH_MAX:
+    else:
         return "HIGH"
-    return "PREMIUM"
 def _split_cities(city_field: str) -> List[str]:
     """Разбиваем по , ; | и обрезаем пробелы."""
     if not city_field:
@@ -265,6 +272,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D9": parse_feed_D9,
     "D10": parse_feed_D10,
     "D11": parse_feed_D11,
+    "D12": parse_feed_D12,
 }
 
 # --------------------------------------------------------------------------------------
@@ -623,8 +631,6 @@ def compute_price_for_item(
     price_retail: Optional[float | Decimal],
     price_opt: Optional[float | Decimal],
     threshold_percent_effective: Optional[float | Decimal],
-    discount_min: Decimal = Decimal("0.001"),   # 0.1%
-    discount_max: Decimal = Decimal("0.01"),    # 1%
 ) -> Decimal:
     """
     Новая логика (для НЕ-RRP):
@@ -655,8 +661,8 @@ def compute_price_for_item(
             return _round_money(rr)
         return Decimal("0")
 
-    # 2) Эффективный порог
-    thr = _as_share(threshold_percent_effective)
+    # 2) Эффективный порог (УЖЕ доля/коэффициент, а не проценты). Может быть > 1 для дешёвых товаров.
+    thr = _to_decimal(threshold_percent_effective)
     threshold_price = Decimal("0")
     if po > 0:
         threshold_price = po * (Decimal("1") + thr)
@@ -667,25 +673,19 @@ def compute_price_for_item(
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
     if competitor_price is not None and competitor_price > 0:
-        # random discount in [discount_min, discount_max]
-        disc = Decimal(str(__import__("random").uniform(float(discount_min), float(discount_max))))
-        candidate = competitor_price * (Decimal("1") - disc)
-
-        # clamp delta between 2 and 15 UAH
+        candidate = competitor_price * (Decimal("1") - COMP_DISCOUNT_SHARE)
         delta = competitor_price - candidate
-        if delta < Decimal("2"):
-            candidate = competitor_price - Decimal("2")
-        elif delta > Decimal("15"):
-            candidate = competitor_price - Decimal("15")
-
+        if delta < COMP_DELTA_MIN_UAH:
+            candidate = competitor_price - COMP_DELTA_MIN_UAH
+        elif delta > COMP_DELTA_MAX_UAH:
+            candidate = competitor_price - COMP_DELTA_MAX_UAH
         # safety: never above competitor
         if candidate > competitor_price:
             candidate = competitor_price
-
         under_competitor = candidate
 
-    # 5) Ограничение: цена под конкурента не может быть выше rr
-    if under_competitor is not None and rr > 0:
+    # 5) RR ceiling (for non-RRP suppliers) applies ONLY when there is NO wholesale price (po<=0)
+    if under_competitor is not None and rr > 0 and po <= 0:
         under_competitor = min(under_competitor, rr)
 
     # 6) Выбор итоговой цены (без enterprise_settings диапазонов)
@@ -702,9 +702,6 @@ def compute_price_for_item(
     # Если конкурента нет
     if under_competitor is None:
         if threshold_price > 0:
-            # не поднимаем выше rr, если rr задан и меньше пороговой
-            if rr > 0 and rr < threshold_price:
-                return _round_money(rr)
             return _round_money(threshold_price)
         return _round_money(_fallback())
 
@@ -714,9 +711,6 @@ def compute_price_for_item(
 
     # under_competitor < threshold_price
     if threshold_price > 0:
-        # не поднимаем выше rr, если rr задан и меньше пороговой
-        if rr > 0 and rr < threshold_price:
-            return _round_money(rr)
         return _round_money(threshold_price)
 
     return _round_money(_fallback())
@@ -1053,42 +1047,41 @@ async def process_supplier(
             po = it.get("price_opt")
             competitor = comp_map.get((product_code, city))
 
-            # Определение базовой цены для диапазона
             rr_dec = _to_decimal(rr)
             po_dec = _to_decimal(po)
             competitor_dec = competitor if competitor is not None else Decimal("0")
-            if rr_dec > 0:
-                base_price = rr_dec
-            elif competitor_dec > 0:
-                base_price = competitor_dec
-            else:
-                base_price = po_dec
-            band = resolve_price_band(base_price)
 
-            # Расчёт эффективного порога
-            thr_supplier = supplier_threshold_percent
-            if band == "LOW":
-                thr_mult = THR_MULT_LOW
-                no_comp_mult = NO_COMP_MULT_LOW
-            elif band == "MID":
-                thr_mult = THR_MULT_MID
-                no_comp_mult = NO_COMP_MULT_MID
-            elif band == "HIGH":
-                thr_mult = THR_MULT_HIGH
-                no_comp_mult = NO_COMP_MULT_HIGH
-            else:
-                thr_mult = THR_MULT_PREMIUM
-                no_comp_mult = NO_COMP_MULT_PREMIUM
-            thr_effective = thr_supplier * thr_mult
-            if competitor is None or competitor_dec <= 0:
-                thr_effective = thr_effective * no_comp_mult
+            # Определяем band по себестоимости (по по_dec)
+            band = resolve_price_band(po_dec)
 
-            # Расчёт пороговой цены
-            threshold_price = Decimal("0")
+            # supplier_add_uah — абсолютная надбавка из таблицы (min_markup_threshold)
+            supplier_add_uah = supplier_threshold_percent
+
+            # Выбор абсолютной надбавки по бэнду
+            if competitor_dec > 0:
+                if band == "LOW":
+                    band_add_uah = THR_MULT_LOW
+                elif band == "MID":
+                    band_add_uah = THR_MULT_MID
+                elif band == "HIGH":
+                    band_add_uah = THR_MULT_HIGH
+                else:
+                    band_add_uah = THR_MULT_PREMIUM
+            else:
+                if band == "LOW":
+                    band_add_uah = NO_COMP_MULT_LOW
+                elif band == "MID":
+                    band_add_uah = NO_COMP_MULT_MID
+                elif band == "HIGH":
+                    band_add_uah = NO_COMP_MULT_HIGH
+                else:
+                    band_add_uah = NO_COMP_MULT_PREMIUM
+
+            # Расчёт thr_effective по Путь A
             if po_dec > 0:
-                threshold_price = po_dec * (Decimal("1") + thr_effective)
-            if band == "LOW":
-                threshold_price = max(threshold_price, po_dec + MIN_MARGIN_ABS_LOW)
+                thr_effective = BASE_THR + (band_add_uah + supplier_add_uah) / po_dec
+            else:
+                thr_effective = Decimal("0")
 
             price = compute_price_for_item(
                 competitor_price=competitor,
@@ -1103,8 +1096,8 @@ async def process_supplier(
 
             # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
             (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
-                "Price: supplier=%s city=%s product_code=%s band=%s thr_supplier=%s thr_effective=%s competitor_price=%s final_price=%s",
-                code, city, product_code, band, thr_supplier, thr_effective, competitor, price
+                "Price: supplier=%s city=%s product_code=%s band=%s supplier_add_uah=%s band_add_uah=%s thr_effective=%s competitor_price=%s final_price=%s",
+                code, city, product_code, band, supplier_add_uah, band_add_uah, thr_effective, competitor, price
             )
 
             # --- собрать несколько строк для нотификации: какие пороги реально применились ---
