@@ -152,12 +152,46 @@ async def _update_status(
 
 def _compute_time_window_minutes(min_age_minutes: Optional[int], now_kyiv: datetime) -> Tuple[int, str]:
     if min_age_minutes is not None:
+        logger.info("Biotus time window mode=override min_age_minutes=%s", min_age_minutes)
         return min_age_minutes, "override"
     default_minutes = _env_int("BIOTUS_TIME_DEFAULT_MINUTES", 30)
     switch_hour = _env_int("BIOTUS_TIME_SWITCH_HOUR", 12)
+    end_hour = _env_int("BIOTUS_TIME_SWITCH_END_HOUR", 13)
     after_switch_minutes = _env_int("BIOTUS_TIME_AFTER_SWITCH_MINUTES", 15)
-    if now_kyiv.hour >= switch_hour:
-        return after_switch_minutes, "after_switch"
+    if end_hour <= switch_hour:
+        logger.warning(
+            "Неверная конфигурация BIOTUS_TIME_SWITCH_END_HOUR=%s <= BIOTUS_TIME_SWITCH_HOUR=%s; "
+            "используется fallback: after_switch до конца дня",
+            end_hour,
+            switch_hour,
+        )
+        if now_kyiv.hour >= switch_hour:
+            logger.info(
+                "Biotus time window mode=after_switch reason=fallback_invalid_end_hour now_hour=%s switch_hour=%s",
+                now_kyiv.hour,
+                switch_hour,
+            )
+            return after_switch_minutes, "after_switch"
+        logger.info(
+            "Biotus time window mode=default reason=fallback_invalid_end_hour now_hour=%s switch_hour=%s",
+            now_kyiv.hour,
+            switch_hour,
+        )
+        return default_minutes, "default"
+    if switch_hour <= now_kyiv.hour < end_hour:
+        logger.info(
+            "Biotus time window mode=after_switch_window reason=within_window now_hour=%s window=%s-%s",
+            now_kyiv.hour,
+            switch_hour,
+            end_hour,
+        )
+        return after_switch_minutes, "after_switch_window"
+    logger.info(
+        "Biotus time window mode=default reason=outside_window now_hour=%s window=%s-%s",
+        now_kyiv.hour,
+        switch_hour,
+        end_hour,
+    )
     return default_minutes, "default"
 
 
