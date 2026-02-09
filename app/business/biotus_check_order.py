@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -199,6 +200,20 @@ def _to_kyiv(dt: datetime, tz: ZoneInfo) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=tz)
     return dt.astimezone(tz)
+
+
+def normalize_phone(phone: str) -> str:
+    if not phone:
+        return ""
+    if not isinstance(phone, str):
+        phone = str(phone)
+    return re.sub(r"\D+", "", phone)
+
+
+def _mask_phone(phone: str) -> str:
+    if not phone:
+        return "***"
+    return "***" + phone[-4:]
 
 
 def _extract_contact(order: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -416,6 +431,7 @@ async def process_biotus_orders(
     cutoff = now_kyiv - timedelta(minutes=window_minutes)
 
     updated = 0
+    skipped = 0
     np_api_key = _env_str("NP_API_KEY", "")
     matched: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
@@ -496,6 +512,21 @@ async def process_biotus_orders(
 
             matched.append(order)
 
+        if debug_samples:
+            for sample in debug_samples[:2]:
+                logger.info("DEBUG SAMPLE: %s", sample)
+
+        phone_counts: Dict[str, int] = {}
+        for order in matched:
+            phone, _, _ = _extract_contact(order)
+            normalized_phone = normalize_phone(phone)
+            if not normalized_phone:
+                continue
+            phone_counts[normalized_phone] = phone_counts.get(normalized_phone, 0) + 1
+
+        duplicate_phones = {phone for phone, count in phone_counts.items() if count > 1}
+        logger.info("Duplicate phones found in batch: %s", len(duplicate_phones))
+
         if dry_run:
             logger.info(
                 "DRY RUN: окно=%s минут (source=%s) cutoff=%s now_kyiv=%s",
@@ -505,14 +536,21 @@ async def process_biotus_orders(
                 now_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
             )
 
-        if debug_samples:
-            for sample in debug_samples[:2]:
-                logger.info("DEBUG SAMPLE: %s", sample)
-
         for order in matched:
             order_id = order.get("id")
             if not order_id:
                 logger.warning("Пропуск заказа без id: %s", order)
+                continue
+
+            phone, _, _ = _extract_contact(order)
+            normalized_phone = normalize_phone(phone)
+            if normalized_phone in duplicate_phones:
+                logger.info(
+                    "Skip order=%s: duplicate phone %s (multiple orders in batch)",
+                    order_id,
+                    _mask_phone(normalized_phone),
+                )
+                skipped += 1
                 continue
 
             if dry_run:
@@ -583,10 +621,13 @@ async def process_biotus_orders(
             updated += 1
             logger.info("Статус заказа %s обновлен -> %s, ТТН=%s", order_id, TARGET_STATUS_ID, ttn_number)
 
+        logger.info("Skipped orders due to duplicate phones: %s", skipped)
+
     return {
         "total": len(orders),
         "matched": len(matched),
         "updated": updated,
+        "skipped": skipped,
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": window_minutes,
         "window_source": window_source,
