@@ -30,6 +30,25 @@ DEFAULT_STATE_DIR = Path(os.getenv("D12_STATE_DIR") or "state_cache")
 # helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _safe_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    s = str(raw).replace("\u00A0", " ").strip()
+    if not s:
+        return float(default)
+    m = re.search(r"-?\d+(?:[.,]\d+)?", s)
+    if not m:
+        return float(default)
+    try:
+        return float(m.group(0).replace(",", "."))
+    except Exception:
+        return float(default)
+
+
+D12_MIN_STOCK_PRICE_OPT_UAH = _safe_env_float("D12_MIN_STOCK_PRICE_OPT_UAH", 300)
+
+
 def _norm_str(v: Any) -> str:
     s = ("" if v is None else str(v)).strip()
     if s.lower() == "none":
@@ -235,6 +254,8 @@ def _parse_stock_from_rows(rows: List[List[Any]]) -> List[Dict[str, Any]]:
     I (idx=8): price_retail
     """
     out: List[Dict[str, Any]] = []
+    min_price_opt = D12_MIN_STOCK_PRICE_OPT_UAH
+    filtered_low_price = 0
 
     for row in rows:
         code_sup = _norm_str(_get_cell(row, 1))
@@ -249,6 +270,10 @@ def _parse_stock_from_rows(rows: List[List[Any]]) -> List[Dict[str, Any]]:
         price_opt = round(float(_to_float(_get_cell(row, 6))), 2)
         price_retail = int(_to_float(_get_cell(row, 8)))
 
+        if min_price_opt > 0 and price_opt < min_price_opt:
+            filtered_low_price += 1
+            continue
+
         out.append(
             {
                 "code_sup": code_sup,
@@ -258,7 +283,11 @@ def _parse_stock_from_rows(rows: List[List[Any]]) -> List[Dict[str, Any]]:
             }
         )
 
-    logger.info("D12: Stock parsed (qty>0): %d rows", len(out))
+    logger.info(
+        "D12: Stock parsed (qty>0): %d rows (filtered low price: %d)",
+        len(out),
+        filtered_low_price,
+    )
     return out
 
 
