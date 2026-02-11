@@ -47,3 +47,4 @@ suziria_feed_to_excel.py
 peek_feeds.py
 competitors_min_price.py
 salesdrive_catalog_uploader.py
+excel_to_products_json.py
