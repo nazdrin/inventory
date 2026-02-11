@@ -18,6 +18,7 @@ SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"
 NP_BASE_URL = "https://api.novaposhta.ua/v2.0/json/"
 NEW_STATUS_ID = 1
 TARGET_STATUS_ID = 21
+DEFAULT_DUPLICATE_STATUS_ID = 20
 
 logging.basicConfig(
     level=logging.INFO,
@@ -130,7 +131,8 @@ async def _fetch_new_orders(api_key: str, client: httpx.AsyncClient) -> List[Dic
 async def _update_status(
     api_key: str,
     order_id: Any,
-    ttn_number: str,
+    status_id: int,
+    ttn_number: Optional[str],
     client: httpx.AsyncClient,
 ) -> None:
     url = f"{SALESDRIVE_BASE_URL.rstrip('/')}/api/order/update/"
@@ -139,13 +141,10 @@ async def _update_status(
         "Content-Type": "application/json",
         "X-Api-Key": api_key,
     }
-    payload = {
-        "id": order_id,
-        "data": {
-            "statusId": TARGET_STATUS_ID,
-            "novaposhta": {"ttn": ttn_number},
-        },
-    }
+    data: Dict[str, Any] = {"statusId": status_id}
+    if ttn_number:
+        data["novaposhta"] = {"ttn": ttn_number}
+    payload = {"id": order_id, "data": data}
     resp = await client.post(url, headers=headers, json=payload, timeout=30.0)
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"POST {url} -> {resp.status_code}: {resp.text[:500]}")
@@ -415,11 +414,13 @@ async def np_create_ttn(
 
 
 async def process_biotus_orders(
-    enterprise_code: str = "2547",
+    enterprise_code: Optional[str] = None,
     min_age_minutes: Optional[int] = None,
     verify_ssl: bool = True,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
+    if not enterprise_code:
+        enterprise_code = _env_str("BIOTUS_ENTERPRISE_CODE", "2547")
     async with get_async_db() as db:
         assert isinstance(db, AsyncSession)
         api_key = await _get_salesdrive_api_key(db, enterprise_code)
@@ -432,7 +433,9 @@ async def process_biotus_orders(
 
     updated = 0
     skipped = 0
+    duplicate_marked = 0
     np_api_key = _env_str("NP_API_KEY", "")
+    duplicate_status_id = _env_int("BIOTUS_DUPLICATE_STATUS_ID", DEFAULT_DUPLICATE_STATUS_ID)
     matched: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
 
@@ -525,7 +528,16 @@ async def process_biotus_orders(
             phone_counts[normalized_phone] = phone_counts.get(normalized_phone, 0) + 1
 
         duplicate_phones = {phone for phone, count in phone_counts.items() if count > 1}
-        logger.info("Duplicate phones found in batch: %s", len(duplicate_phones))
+        duplicate_orders = sum(
+            1
+            for order in matched
+            if normalize_phone(_extract_contact(order)[0]) in duplicate_phones
+        )
+        logger.info(
+            "Duplicate phones found in batch: %s (orders affected: %s)",
+            len(duplicate_phones),
+            duplicate_orders,
+        )
 
         if dry_run:
             logger.info(
@@ -546,11 +558,21 @@ async def process_biotus_orders(
             normalized_phone = normalize_phone(phone)
             if normalized_phone in duplicate_phones:
                 logger.info(
-                    "Skip order=%s: duplicate phone %s (multiple orders in batch)",
+                    "Duplicate phone -> set status %s, skip TTN (order=%s, phone=%s)",
+                    duplicate_status_id,
                     order_id,
                     _mask_phone(normalized_phone),
                 )
-                skipped += 1
+                duplicate_marked += 1
+                if dry_run:
+                    continue
+                await _update_status(
+                    api_key,
+                    order_id,
+                    status_id=duplicate_status_id,
+                    ttn_number=None,
+                    client=client,
+                )
                 continue
 
             if dry_run:
@@ -617,17 +639,25 @@ async def process_biotus_orders(
                 logger.error("Не удалось создать ТТН для заказа %s: %s", order_id, err)
                 continue
 
-            await _update_status(api_key, order_id, ttn_number, client=client)
+            await _update_status(
+                api_key,
+                order_id,
+                status_id=TARGET_STATUS_ID,
+                ttn_number=ttn_number,
+                client=client,
+            )
             updated += 1
             logger.info("Статус заказа %s обновлен -> %s, ТТН=%s", order_id, TARGET_STATUS_ID, ttn_number)
 
         logger.info("Skipped orders due to duplicate phones: %s", skipped)
+        logger.info("Orders marked as duplicate: %s", duplicate_marked)
 
     return {
         "total": len(orders),
         "matched": len(matched),
         "updated": updated,
         "skipped": skipped,
+        "duplicate_marked": duplicate_marked,
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": window_minutes,
         "window_source": window_source,
@@ -638,7 +668,11 @@ async def process_biotus_orders(
 def _parse_cli():
     import argparse
     p = argparse.ArgumentParser(description="Check Biotus orders in SalesDrive and update status")
-    p.add_argument("--enterprise-code", default="2547", help="enterprise_code для token в EnterpriseSettings")
+    p.add_argument(
+        "--enterprise-code",
+        default=_env_str("BIOTUS_ENTERPRISE_CODE", "2547"),
+        help="enterprise_code для token в EnterpriseSettings",
+    )
     p.add_argument(
         "--min-age-minutes",
         type=int,
