@@ -1035,6 +1035,7 @@ async def _build_products_block(
                 "name": display_name,
                 "costPerItem": str(r.price),  # исх. цена позиции
                 "amount": str(r.qty),
+                "expenses": "0",
                 "description": description,
                 "barcode": str(barcode) if barcode else "",
                 "discount": "",
@@ -1139,7 +1140,7 @@ async def build_salesdrive_payload(
 
     opt_total = Decimal(0)
 
-    for r in rows:
+    for idx, r in enumerate(rows):
         # визначаємо постачальника для конкретної позиції
         effective_supplier_code: Optional[str] = supplier_code
         if not effective_supplier_code and row_supplier_map:
@@ -1150,7 +1151,11 @@ async def build_salesdrive_payload(
             w_price = await _fetch_supplier_wholesale_price(session, effective_supplier_code, r.goodsCode)
 
         w_dec = _as_decimal(w_price or 0)
-        opt_total += w_dec * _as_decimal(r.qty)
+        line_opt = w_dec * _as_decimal(r.qty)
+        opt_total += line_opt
+
+        if idx < len(products):
+            products[idx]["expenses"] = str(line_opt)
 
     # В SalesDrive передаємо лише total
     opt_text = str(opt_total)
