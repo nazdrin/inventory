@@ -128,6 +128,21 @@ async def _get_feed_url_by_code(code: str) -> Optional[str]:
         return res.scalar_one_or_none()
 
 
+async def _get_profit_percent_by_code(code: str) -> Optional[float]:
+    async with get_async_db() as session:
+        res = await session.execute(
+            text("SELECT profit_percent FROM dropship_enterprises WHERE code = :code LIMIT 1"),
+            {"code": code},
+        )
+        value = res.scalar_one_or_none()
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # GOOGLE DRIVE
 # ──────────────────────────────────────────────────────────────────────────────
@@ -474,6 +489,8 @@ async def parse_feed_stock_to_json(
         return "[]"
 
     state = D10State.load(code)
+    profit_percent = await _get_profit_percent_by_code(code)
+    profit_percent_dec = (float(profit_percent) / 100.0) if profit_percent is not None else 0.0
 
     rows: List[Dict[str, Any]] = []
     items = _collect_item_nodes(root)
@@ -496,6 +513,8 @@ async def parse_feed_stock_to_json(
 
         qty = 1  # строго по ТЗ
         price_opt = _get_drop_price_for_code_sup(state, code_sup)
+        if price_opt <= 0.0 and profit_percent_dec > 0.0 and price_retail > 0:
+            price_opt = float(price_retail) / (1.0 + profit_percent_dec)
         price_opt = round(float(price_opt), 2)
 
         rows.append(
