@@ -1155,7 +1155,7 @@ async def build_salesdrive_payload(
         opt_total += line_opt
 
         if idx < len(products):
-            products[idx]["expenses"] = str(line_opt)
+            products[idx]["expenses"] = str(w_dec)
 
     # В SalesDrive передаємо лише total
     opt_text = str(opt_total)
