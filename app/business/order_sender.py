@@ -56,6 +56,21 @@ BRANCH_CITY_MAP = {
     "59791": "Lviv",
 }
 
+SUPPLIERLIST_MAP = {
+    "D1": 38,
+    "D2": 39,
+    "D3": 40,
+    "D4": 41,
+    "D5": 42,
+    "D6": 43,
+    "D7": 44,
+    "D8": 45,
+    "D9": 46,
+    "D10": 47,
+    "D11": 48,
+    "D12": 49,
+}
+
 def _notify_business(msg: str) -> None:
     try:
         send_notification(msg, "Business")  # ← второй аргумент — канал
@@ -1177,6 +1192,10 @@ async def build_salesdrive_payload(
     except (ValueError, TypeError):
         total_qty = 0
 
+    supplierlist_val = ""
+    if supplier_code:
+        supplierlist_val = SUPPLIERLIST_MAP.get(str(supplier_code), "")
+
     payload = {
         "getResultData": "1",
         "fName": fName,
@@ -1206,6 +1225,7 @@ async def build_salesdrive_payload(
         "opt": opt_text,                         # оптові ціни (wholesale_price) + total
         # qtyOrder: значок-предупреждение, если суммарное количество > 1
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
+        "supplierlist": supplierlist_val,
     }
     return payload
 

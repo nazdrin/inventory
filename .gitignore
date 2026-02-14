@@ -48,3 +48,4 @@ peek_feeds.py
 competitors_min_price.py
 salesdrive_catalog_uploader.py
 excel_to_products_json.py
+extract_offers.py
