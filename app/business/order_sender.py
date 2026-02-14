@@ -57,7 +57,7 @@ BRANCH_CITY_MAP = {
 }
 
 SUPPLIERLIST_MAP = {
-    "D1": 38,
+    "D1": "id_38",
     "D2": 39,
     "D3": 40,
     "D4": 41,
