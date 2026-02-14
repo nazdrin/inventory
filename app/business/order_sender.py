@@ -71,6 +71,21 @@ SUPPLIERLIST_MAP = {
     "D12": "id_49",
 }
 
+SUPPLIER_CITY_TAG_MAP = {
+    "D1": "Киев",
+    "D2": "Івано-Франковск",
+    "D3": "Кременчук",
+    "D4": "Львів",
+    "D5": "Чернівці",
+    "D6": "Киев",
+    "D7": "Киев",
+    "D8": "Киев",
+    "D9": "Львов",
+    "D10": "Вінниця",
+    "D11": "Киев",
+    "D12": "Киев",
+}
+
 def _notify_business(msg: str) -> None:
     try:
         send_notification(msg, "Business")  # ← второй аргумент — канал
@@ -1196,6 +1211,17 @@ async def build_salesdrive_payload(
     if supplier_code:
         supplierlist_val = SUPPLIERLIST_MAP.get(str(supplier_code), "")
 
+    supplier_city_tag = ""
+    if supplier_code:
+        supplier_city_tag = SUPPLIER_CITY_TAG_MAP.get(str(supplier_code), "")
+
+    city = BRANCH_CITY_MAP.get(str(branch), str(branch or ""))
+    if supplier_city_tag:
+        if isinstance(city, str) and "(" in city and city.endswith(")"):
+            city = city[:-1] + f", {supplier_city_tag})"
+        else:
+            city = f"{city} ({supplier_city_tag})"
+
     payload = {
         "getResultData": "1",
         "fName": fName,
@@ -1218,7 +1244,7 @@ async def build_salesdrive_payload(
         "meest": _build_meest_block(d),
         "rozetka_delivery": _build_rozetka_block(d),
         # Новые поля для интеграции с SalesDrive
-        "city": BRANCH_CITY_MAP.get(str(branch), str(branch or "")),
+        "city": city,
         "branch": str(branch or ""),              # серийный номер аптеки
         "tabletkiOrder": code_val,               # номер заказа Tabletki.ua (бывший utmSourceFull)
         "supplier": supplier_name or "",         # поставщик (бывший utmMedium/utmCampaign)
