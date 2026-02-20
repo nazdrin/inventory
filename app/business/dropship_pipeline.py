@@ -30,6 +30,7 @@ from pathlib import Path
 import tempfile
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 # Fix: Ensure AsyncSession is imported at the top, before usage
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -316,9 +317,26 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
     if None in (start_day, end_day, start_time, end_time):
         return False
 
-    current = now if now is not None else datetime.now()
-    if current.tzinfo is not None and current.utcoffset() is not None:
-        current = current.astimezone()
+    schedule_tz: Optional[ZoneInfo] = None
+    try:
+        schedule_tz = ZoneInfo("Europe/Kiev")
+    except Exception:
+        try:
+            schedule_tz = ZoneInfo("Europe/Kyiv")
+        except Exception:
+            schedule_tz = None
+
+    if now is None:
+        current = datetime.now(tz=schedule_tz) if schedule_tz else datetime.now()
+    else:
+        current = now
+        if schedule_tz:
+            if current.tzinfo is None or current.utcoffset() is None:
+                current = current.replace(tzinfo=schedule_tz)
+            else:
+                current = current.astimezone(schedule_tz)
+        elif current.tzinfo is not None and current.utcoffset() is not None:
+            current = current.astimezone()
     now_minutes = current.weekday() * 1440 + current.hour * 60 + current.minute
 
     start_minutes = (start_day - 1) * 1440 + start_time
