@@ -247,6 +247,87 @@ def _split_cities(city_field: str) -> List[str]:
     parts = re.split(r"[;,|]", city_field)
     return [p.strip() for p in parts if p.strip()]
 
+def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool:
+    # .env:
+    # SUPPLIER_SCHEDULE_ENABLED=true|false
+    # SUPPLIER_{CODE}_BLOCK_START_DAY=1..7, SUPPLIER_{CODE}_BLOCK_START_TIME=HH:MM
+    # SUPPLIER_{CODE}_BLOCK_END_DAY=1..7,   SUPPLIER_{CODE}_BLOCK_END_TIME=HH:MM
+    if os.getenv("SUPPLIER_SCHEDULE_ENABLED", "").strip().lower() != "true":
+        return False
+
+    code = (supplier_code or "").strip().upper()
+    prefix = f"SUPPLIER_{code}_BLOCK_"
+    start_day_raw = os.getenv(f"{prefix}START_DAY")
+    start_time_raw = os.getenv(f"{prefix}START_TIME")
+    end_day_raw = os.getenv(f"{prefix}END_DAY")
+    end_time_raw = os.getenv(f"{prefix}END_TIME")
+
+    # Неполный набор переменных для поставщика => блокировка не применяется.
+    if not all([start_day_raw, start_time_raw, end_day_raw, end_time_raw]):
+        return False
+
+    warned = False
+
+    def _warn_once(msg: str, *args: Any) -> None:
+        nonlocal warned
+        if warned:
+            return
+        warned = True
+        logger.warning(msg, *args)
+
+    def _parse_day(raw: str, label: str) -> Optional[int]:
+        try:
+            day = int(raw)
+        except Exception:
+            _warn_once(
+                "Некорректный %s для поставщика %s: %r. Блокировка отключена для этого вызова.",
+                label, code, raw
+            )
+            return None
+        if day < 1 or day > 7:
+            _warn_once(
+                "Некорректный %s для поставщика %s: %r (ожидается 1..7). Блокировка отключена для этого вызова.",
+                label, code, raw
+            )
+            return None
+        return day
+
+    def _parse_time_minutes(raw: str, label: str) -> Optional[int]:
+        try:
+            parts = raw.split(":")
+            if len(parts) != 2:
+                raise ValueError("format")
+            hour = int(parts[0])
+            minute = int(parts[1])
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                raise ValueError("range")
+            return hour * 60 + minute
+        except Exception:
+            _warn_once(
+                "Некорректный %s для поставщика %s: %r (ожидается HH:MM). Блокировка отключена для этого вызова.",
+                label, code, raw
+            )
+            return None
+
+    start_day = _parse_day(start_day_raw, "BLOCK_START_DAY")
+    end_day = _parse_day(end_day_raw, "BLOCK_END_DAY")
+    start_time = _parse_time_minutes(start_time_raw, "BLOCK_START_TIME")
+    end_time = _parse_time_minutes(end_time_raw, "BLOCK_END_TIME")
+    if None in (start_day, end_day, start_time, end_time):
+        return False
+
+    current = now if now is not None else datetime.now()
+    if current.tzinfo is not None and current.utcoffset() is not None:
+        current = current.astimezone()
+    now_minutes = current.weekday() * 1440 + current.hour * 60 + current.minute
+
+    start_minutes = (start_day - 1) * 1440 + start_time
+    end_minutes = (end_day - 1) * 1440 + end_time
+
+    if start_minutes <= end_minutes:
+        return start_minutes <= now_minutes <= end_minutes
+    return now_minutes >= start_minutes or now_minutes <= end_minutes
+
 # --------------------------------------------------------------------------------------
 # Реестр парсеров (подставьте свои реализации)
 # --------------------------------------------------------------------------------------
@@ -1323,6 +1404,9 @@ async def run_pipeline(
         else:
             for ent in suppliers:
                 try:
+                    if is_supplier_blocked(ent.code):
+                        logger.info("Выгрузка для поставщика %s остановлена по расписанию.", ent.code)
+                        continue
                     await process_supplier(session, ent, PARSERS)
                     await session.commit()
                 except Exception as exc:
