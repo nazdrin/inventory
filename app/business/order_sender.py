@@ -56,6 +56,36 @@ BRANCH_CITY_MAP = {
     "59791": "Lviv",
 }
 
+SUPPLIERLIST_MAP = {
+    "D1": "id_38",
+    "D2": "id_39",
+    "D3": "id_40",
+    "D4": "id_41",
+    "D5": "id_42",
+    "D6": "id_43",
+    "D7": "id_44",
+    "D8": "id_45",
+    "D9": "id_46",
+    "D10": "id_47",
+    "D11": "id_48",
+    "D12": "id_49",
+}
+
+SUPPLIER_CITY_TAG_MAP = {
+    "D1": "Київ",
+    "D2": "Івано-Франківськ",
+    "D3": "Кременчук",
+    "D4": "Львів",
+    "D5": "Чернівці",
+    "D6": "Київ",
+    "D7": "Київ",
+    "D8": "Київ",
+    "D9": "Львів",
+    "D10": "Вінниця",
+    "D11": "Київ",
+    "D12": "Київ",
+}
+
 def _notify_business(msg: str) -> None:
     try:
         send_notification(msg, "Business")  # ← второй аргумент — канал
@@ -1035,6 +1065,7 @@ async def _build_products_block(
                 "name": display_name,
                 "costPerItem": str(r.price),  # исх. цена позиции
                 "amount": str(r.qty),
+                "expenses": "0",
                 "description": description,
                 "barcode": str(barcode) if barcode else "",
                 "discount": "",
@@ -1139,7 +1170,7 @@ async def build_salesdrive_payload(
 
     opt_total = Decimal(0)
 
-    for r in rows:
+    for idx, r in enumerate(rows):
         # визначаємо постачальника для конкретної позиції
         effective_supplier_code: Optional[str] = supplier_code
         if not effective_supplier_code and row_supplier_map:
@@ -1150,7 +1181,11 @@ async def build_salesdrive_payload(
             w_price = await _fetch_supplier_wholesale_price(session, effective_supplier_code, r.goodsCode)
 
         w_dec = _as_decimal(w_price or 0)
-        opt_total += w_dec * _as_decimal(r.qty)
+        line_opt = w_dec * _as_decimal(r.qty)
+        opt_total += line_opt
+
+        if idx < len(products):
+            products[idx]["expenses"] = str(w_dec)
 
     # В SalesDrive передаємо лише total
     opt_text = str(opt_total)
@@ -1171,6 +1206,21 @@ async def build_salesdrive_payload(
         total_qty = sum(int(r.qty) for r in rows)
     except (ValueError, TypeError):
         total_qty = 0
+
+    supplierlist_val = ""
+    if supplier_code:
+        supplierlist_val = SUPPLIERLIST_MAP.get(str(supplier_code), "")
+
+    supplier_city_tag = ""
+    if supplier_code:
+        supplier_city_tag = SUPPLIER_CITY_TAG_MAP.get(str(supplier_code), "")
+
+    city = BRANCH_CITY_MAP.get(str(branch), str(branch or ""))
+    if supplier_city_tag:
+        if isinstance(city, str) and "(" in city and city.endswith(")"):
+            city = city[:-1] + f", {supplier_city_tag})"
+        else:
+            city = f"{city} ({supplier_city_tag})"
 
     payload = {
         "getResultData": "1",
@@ -1194,13 +1244,14 @@ async def build_salesdrive_payload(
         "meest": _build_meest_block(d),
         "rozetka_delivery": _build_rozetka_block(d),
         # Новые поля для интеграции с SalesDrive
-        "city": BRANCH_CITY_MAP.get(str(branch), str(branch or "")),
+        "city": city,
         "branch": str(branch or ""),              # серийный номер аптеки
         "tabletkiOrder": code_val,               # номер заказа Tabletki.ua (бывший utmSourceFull)
         "supplier": supplier_name or "",         # поставщик (бывший utmMedium/utmCampaign)
         "opt": opt_text,                         # оптові ціни (wholesale_price) + total
         # qtyOrder: значок-предупреждение, если суммарное количество > 1
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
+        "supplierlist": supplierlist_val,
     }
     return payload
 
