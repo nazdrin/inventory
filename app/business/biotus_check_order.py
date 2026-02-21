@@ -73,6 +73,27 @@ def _env_str(name: str, default: str) -> str:
     return raw
 
 
+def _parse_csv_items(value: str) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _resolve_allowed_suppliers(suppliers_csv: Optional[str]) -> List[str]:
+    raw = suppliers_csv
+    if raw is None:
+        raw = _env_str("ALLOWED_SUPPLIERS", "Biotus,DOBAVKI.UA")
+    parsed = _parse_csv_items(raw)
+    if parsed:
+        return parsed
+    logger.warning(
+        "ALLOWED_SUPPLIERS пустой после парсинга (%r), используется default=%s",
+        raw,
+        "Biotus,DOBAVKI.UA",
+    )
+    return ["Biotus", "DOBAVKI.UA"]
+
+
 def _seat_dimensions_cm(volume_m3: float) -> Tuple[int, int, int]:
     if volume_m3 <= 0:
         return 1, 1, 1
@@ -152,7 +173,7 @@ async def _update_status(
 
 def _compute_time_window_minutes(min_age_minutes: Optional[int], now_kyiv: datetime) -> Tuple[int, str]:
     if min_age_minutes is not None:
-        logger.info("Biotus time window mode=override min_age_minutes=%s", min_age_minutes)
+        logger.info("Orders time window mode=override min_age_minutes=%s", min_age_minutes)
         return min_age_minutes, "override"
     default_minutes = _env_int("BIOTUS_TIME_DEFAULT_MINUTES", 30)
     switch_hour = _env_int("BIOTUS_TIME_SWITCH_HOUR", 12)
@@ -167,27 +188,27 @@ def _compute_time_window_minutes(min_age_minutes: Optional[int], now_kyiv: datet
         )
         if now_kyiv.hour >= switch_hour:
             logger.info(
-                "Biotus time window mode=after_switch reason=fallback_invalid_end_hour now_hour=%s switch_hour=%s",
+                "Orders time window mode=after_switch reason=fallback_invalid_end_hour now_hour=%s switch_hour=%s",
                 now_kyiv.hour,
                 switch_hour,
             )
             return after_switch_minutes, "after_switch"
         logger.info(
-            "Biotus time window mode=default reason=fallback_invalid_end_hour now_hour=%s switch_hour=%s",
+            "Orders time window mode=default reason=fallback_invalid_end_hour now_hour=%s switch_hour=%s",
             now_kyiv.hour,
             switch_hour,
         )
         return default_minutes, "default"
     if switch_hour <= now_kyiv.hour < end_hour:
         logger.info(
-            "Biotus time window mode=after_switch_window reason=within_window now_hour=%s window=%s-%s",
+            "Orders time window mode=after_switch_window reason=within_window now_hour=%s window=%s-%s",
             now_kyiv.hour,
             switch_hour,
             end_hour,
         )
         return after_switch_minutes, "after_switch_window"
     logger.info(
-        "Biotus time window mode=default reason=outside_window now_hour=%s window=%s-%s",
+        "Orders time window mode=default reason=outside_window now_hour=%s window=%s-%s",
         now_kyiv.hour,
         switch_hour,
         end_hour,
@@ -418,6 +439,7 @@ async def process_biotus_orders(
     min_age_minutes: Optional[int] = None,
     verify_ssl: bool = True,
     dry_run: bool = False,
+    suppliers: Optional[str] = None,
 ) -> Dict[str, Any]:
     if not enterprise_code:
         enterprise_code = _env_str("BIOTUS_ENTERPRISE_CODE", "2547")
@@ -436,8 +458,12 @@ async def process_biotus_orders(
     duplicate_marked = 0
     np_api_key = _env_str("NP_API_KEY", "")
     duplicate_status_id = _env_int("BIOTUS_DUPLICATE_STATUS_ID", DEFAULT_DUPLICATE_STATUS_ID)
+    allowed_suppliers = _resolve_allowed_suppliers(suppliers)
+    allowed_suppliers_set = set(allowed_suppliers)
     matched: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
+    supplier_seen_counts: Dict[str, int] = {}
+    supplier_matched_counts: Dict[str, int] = {}
 
     async with httpx.AsyncClient(verify=verify_ssl) as client:
         orders = await _fetch_new_orders(api_key, client)
@@ -445,14 +471,17 @@ async def process_biotus_orders(
         for order in orders:
             order_id = order.get("id")
             supplier = order.get("supplier")
-            if supplier != "Biotus":
+            supplier_name = str(supplier or "").strip()
+            supplier_seen_counts[supplier_name] = supplier_seen_counts.get(supplier_name, 0) + 1
+            if supplier_name not in allowed_suppliers_set:
                 if len(debug_samples) < 2:
                     debug_samples.append(
                         {
                             "id": order_id,
-                            "reason": "supplier_not_biotus",
+                            "reason": "supplier_not_allowed",
                             "supplier": supplier,
-                            "createTime": order.get("createTime"),
+                            "allowed_suppliers": allowed_suppliers,
+                            "orderTime": order.get("orderTime"),
                         }
                     )
                 continue
@@ -514,6 +543,7 @@ async def process_biotus_orders(
                 continue
 
             matched.append(order)
+            supplier_matched_counts[supplier_name] = supplier_matched_counts.get(supplier_name, 0) + 1
 
         if debug_samples:
             for sample in debug_samples[:2]:
@@ -546,6 +576,12 @@ async def process_biotus_orders(
                 window_source,
                 cutoff.strftime("%Y-%m-%d %H:%M:%S"),
                 now_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            logger.info(
+                "DRY RUN supplier filter: allowed=%s seen=%s matched=%s",
+                allowed_suppliers,
+                supplier_seen_counts,
+                supplier_matched_counts,
             )
 
         for order in matched:
@@ -658,6 +694,7 @@ async def process_biotus_orders(
         "updated": updated,
         "skipped": skipped,
         "duplicate_marked": duplicate_marked,
+        "allowed_suppliers": allowed_suppliers,
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": window_minutes,
         "window_source": window_source,
@@ -667,7 +704,7 @@ async def process_biotus_orders(
 
 def _parse_cli():
     import argparse
-    p = argparse.ArgumentParser(description="Check Biotus orders in SalesDrive and update status")
+    p = argparse.ArgumentParser(description="Check orders in SalesDrive and update status")
     p.add_argument(
         "--enterprise-code",
         default=_env_str("BIOTUS_ENTERPRISE_CODE", "2547"),
@@ -681,6 +718,11 @@ def _parse_cli():
     )
     p.add_argument("--dry-run", action="store_true", help="Только показать, что бы обновили")
     p.add_argument("--no-ssl-verify", action="store_true", help="Отключить проверку SSL")
+    p.add_argument(
+        "--suppliers",
+        default=None,
+        help='CSV список поставщиков; переопределяет ALLOWED_SUPPLIERS (например "Biotus,DOBAVKI.UA")',
+    )
     return p.parse_args()
 
 
@@ -692,6 +734,7 @@ if __name__ == "__main__":
             min_age_minutes=args.min_age_minutes,
             verify_ssl=not args.no_ssl_verify,
             dry_run=args.dry_run,
+            suppliers=args.suppliers,
         )
     )
     import json
