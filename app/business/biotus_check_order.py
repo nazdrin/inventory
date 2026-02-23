@@ -79,19 +79,28 @@ def _parse_csv_items(value: str) -> List[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _resolve_allowed_suppliers(suppliers_csv: Optional[str]) -> List[str]:
-    raw = suppliers_csv
+def _resolve_allowed_supplier_ids(suppliers: Optional[str]) -> List[int]:
+    raw = suppliers
     if raw is None:
-        raw = _env_str("ALLOWED_SUPPLIERS", "Biotus,DOBAVKI.UA")
-    parsed = _parse_csv_items(raw)
+        raw = _env_str("ALLOWED_SUPPLIERS", "38;41")
+    parts = str(raw).replace(",", ";").split(";")
+    parsed: List[int] = []
+    for part in parts:
+        item = part.strip()
+        if not item:
+            continue
+        try:
+            parsed.append(int(item))
+        except (TypeError, ValueError):
+            continue
     if parsed:
         return parsed
     logger.warning(
-        "ALLOWED_SUPPLIERS пустой после парсинга (%r), используется default=%s",
+        "ALLOWED_SUPPLIERS пустой после разбора (%r), используется default=%s",
         raw,
-        "Biotus,DOBAVKI.UA",
+        "38;41",
     )
-    return ["Biotus", "DOBAVKI.UA"]
+    return [38, 41]
 
 
 def _seat_dimensions_cm(volume_m3: float) -> Tuple[int, int, int]:
@@ -458,29 +467,40 @@ async def process_biotus_orders(
     duplicate_marked = 0
     np_api_key = _env_str("NP_API_KEY", "")
     duplicate_status_id = _env_int("BIOTUS_DUPLICATE_STATUS_ID", DEFAULT_DUPLICATE_STATUS_ID)
-    allowed_suppliers = _resolve_allowed_suppliers(suppliers)
-    allowed_suppliers_set = set(allowed_suppliers)
+    allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
+    allowed_supplier_ids_set = set(allowed_supplier_ids)
     matched: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
-    supplier_seen_counts: Dict[str, int] = {}
-    supplier_matched_counts: Dict[str, int] = {}
+    supplier_seen_counts: Dict[int, int] = {}
+    supplier_matched_counts: Dict[int, int] = {}
 
     async with httpx.AsyncClient(verify=verify_ssl) as client:
         orders = await _fetch_new_orders(api_key, client)
 
         for order in orders:
             order_id = order.get("id")
-            supplier = order.get("supplier")
-            supplier_name = str(supplier or "").strip()
-            supplier_seen_counts[supplier_name] = supplier_seen_counts.get(supplier_name, 0) + 1
-            if supplier_name not in allowed_suppliers_set:
+            supplier_id_raw = order.get("supplierlist")
+            supplier_id: Optional[int]
+            if isinstance(supplier_id_raw, int):
+                supplier_id = supplier_id_raw
+            elif isinstance(supplier_id_raw, str):
+                try:
+                    supplier_id = int(supplier_id_raw.strip())
+                except ValueError:
+                    supplier_id = None
+            else:
+                supplier_id = None
+
+            if supplier_id is not None:
+                supplier_seen_counts[supplier_id] = supplier_seen_counts.get(supplier_id, 0) + 1
+            if supplier_id not in allowed_supplier_ids_set:
                 if len(debug_samples) < 2:
                     debug_samples.append(
                         {
                             "id": order_id,
                             "reason": "supplier_not_allowed",
-                            "supplier": supplier,
-                            "allowed_suppliers": allowed_suppliers,
+                            "supplierlist": supplier_id_raw,
+                            "allowed_suppliers": allowed_supplier_ids,
                             "orderTime": order.get("orderTime"),
                         }
                     )
@@ -493,7 +513,7 @@ async def process_biotus_orders(
                         {
                             "id": order_id,
                             "reason": "missing_createTime",
-                            "supplier": supplier,
+                            "supplierlist": supplier_id_raw,
                             "orderTime": order.get("orderTime"),
                         }
                     )
@@ -505,7 +525,7 @@ async def process_biotus_orders(
                         {
                             "id": order_id,
                             "reason": "created_in_future",
-                            "supplier": supplier,
+                            "supplierlist": supplier_id_raw,
                             "orderTime": created_at_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
                             "now_kyiv": now_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
                         }
@@ -517,7 +537,7 @@ async def process_biotus_orders(
                         {
                             "id": order_id,
                             "reason": "created_too_new_today",
-                            "supplier": supplier,
+                            "supplierlist": supplier_id_raw,
                             "orderTime": created_at_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
                             "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
                         }
@@ -532,7 +552,7 @@ async def process_biotus_orders(
                         {
                             "id": order_id,
                             "reason": "buyout_not_ok",
-                            "supplier": supplier,
+                            "supplierlist": supplier_id_raw,
                             "buyoutPercent": (
                                 client_rating.get("buyoutPercent")
                                 if isinstance(client_rating, dict)
@@ -543,7 +563,7 @@ async def process_biotus_orders(
                 continue
 
             matched.append(order)
-            supplier_matched_counts[supplier_name] = supplier_matched_counts.get(supplier_name, 0) + 1
+            supplier_matched_counts[supplier_id] = supplier_matched_counts.get(supplier_id, 0) + 1
 
         if debug_samples:
             for sample in debug_samples[:2]:
@@ -579,7 +599,7 @@ async def process_biotus_orders(
             )
             logger.info(
                 "DRY RUN supplier filter: allowed=%s seen=%s matched=%s",
-                allowed_suppliers,
+                allowed_supplier_ids,
                 supplier_seen_counts,
                 supplier_matched_counts,
             )
@@ -694,7 +714,7 @@ async def process_biotus_orders(
         "updated": updated,
         "skipped": skipped,
         "duplicate_marked": duplicate_marked,
-        "allowed_suppliers": allowed_suppliers,
+        "allowed_suppliers": allowed_supplier_ids,
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": window_minutes,
         "window_source": window_source,
@@ -721,7 +741,7 @@ def _parse_cli():
     p.add_argument(
         "--suppliers",
         default=None,
-        help='CSV список поставщиков; переопределяет ALLOWED_SUPPLIERS (например "Biotus,DOBAVKI.UA")',
+        help='Список кодов supplierlist; переопределяет ALLOWED_SUPPLIERS (например "38;41")',
     )
     return p.parse_args()
 
