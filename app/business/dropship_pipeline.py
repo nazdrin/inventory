@@ -5,6 +5,7 @@ import logging
 import re
 import argparse
 import os
+import random
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "100"))
 PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "400"))
@@ -233,6 +234,53 @@ def _round_price_export(x: Decimal) -> Decimal:
     step = Decimal("0.50")
     q = (d / step).to_integral_value(rounding=ROUND_CEILING) * step
     return q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _env_decimal(name: str, default: str) -> Decimal:
+    raw = (os.getenv(name, default) or default).strip()
+    try:
+        return Decimal(raw)
+    except Exception:
+        logging.getLogger("dropship").warning(
+            "Invalid decimal env %s=%r, fallback to %s", name, raw, default
+        )
+        return Decimal(default)
+
+
+PRICE_JITTER_RANGE_UAH = _env_decimal("PRICE_JITTER_RANGE_UAH", "1.0")
+PRICE_JITTER_STEP_UAH = _env_decimal("PRICE_JITTER_STEP_UAH", "0.5")
+
+
+def _price_jitter_enabled() -> bool:
+    return os.getenv("PRICE_JITTER_ENABLED", "0") == "1"
+
+
+def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
+    if not _price_jitter_enabled():
+        return price, Decimal("0")
+
+    p = _to_decimal(price)
+    jitter_range = abs(_to_decimal(PRICE_JITTER_RANGE_UAH))
+    jitter_step = abs(_to_decimal(PRICE_JITTER_STEP_UAH))
+
+    if jitter_range <= 0 or jitter_step <= 0:
+        return p, Decimal("0")
+
+    deltas: list[Decimal] = []
+    cur = -jitter_range
+    # include +range point with small epsilon guard for Decimal stepping
+    epsilon = jitter_step / Decimal("1000")
+    while cur <= jitter_range + epsilon:
+        deltas.append(cur)
+        cur += jitter_step
+    if not deltas:
+        return p, Decimal("0")
+
+    delta = random.choice(deltas)
+    new_price = p + delta
+    if new_price <= 0:
+        return p, Decimal("0")
+    return new_price, delta
 
 def resolve_price_band(base_price: Decimal) -> str:
     if base_price <= PRICE_BAND_LOW_MAX:
@@ -1197,6 +1245,16 @@ async def process_supplier(
                 threshold_percent_effective=thr_effective,
             )
             price = _round_price_export(price)
+            if _price_jitter_enabled():
+                base_price = price
+                price, delta = _apply_price_jitter(price)
+                price = _round_price_export(price)
+                logger.debug(
+                    "price jitter applied: base=%s, delta=%s, final=%s",
+                    base_price,
+                    delta,
+                    price,
+                )
 
             # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
             (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
