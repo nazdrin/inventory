@@ -150,7 +150,7 @@ from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorP
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
-from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
+from app.business.feed_dobavki import parse_d4_feed_to_json
 from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
 from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
@@ -350,6 +350,11 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
 # Реестр парсеров (подставьте свои реализации)
 # --------------------------------------------------------------------------------------
 ParserFn = Callable[..., List[dict[str, Any]]]
+
+
+async def parse_feed_D4(*, code: str = "D4", timeout: int = 20, **kwargs) -> str:
+    # D4 now supports Drive-first strategy inside unified parser; stock pipeline must force stock mode.
+    return await parse_d4_feed_to_json(mode="stock", code=code, timeout=timeout)
 
 async def parse_feed_stock_to_json_template(*, code: str, timeout: int = 20, **kwargs) -> List[dict]:
     """
