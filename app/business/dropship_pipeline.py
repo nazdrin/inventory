@@ -247,12 +247,74 @@ def _env_decimal(name: str, default: str) -> Decimal:
         return Decimal(default)
 
 
+def _env_optional_decimal(name: str) -> Decimal | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return Decimal(raw)
+    except Exception:
+        logging.getLogger("dropship").warning(
+            "Invalid decimal env %s=%r, ignored", name, raw
+        )
+        return None
+
+
 PRICE_JITTER_RANGE_UAH = _env_decimal("PRICE_JITTER_RANGE_UAH", "1.0")
 PRICE_JITTER_STEP_UAH = _env_decimal("PRICE_JITTER_STEP_UAH", "0.5")
+PRICE_JITTER_MIN_UAH = _env_optional_decimal("PRICE_JITTER_MIN_UAH")
+PRICE_JITTER_MAX_UAH = _env_optional_decimal("PRICE_JITTER_MAX_UAH")
+_PRICE_JITTER_WARNED: set[str] = set()
 
 
 def _price_jitter_enabled() -> bool:
     return os.getenv("PRICE_JITTER_ENABLED", "0") == "1"
+
+
+def _warn_price_jitter_once(key: str, msg: str, *args: Any) -> None:
+    if key in _PRICE_JITTER_WARNED:
+        return
+    _PRICE_JITTER_WARNED.add(key)
+    logger.warning(msg, *args)
+
+
+def _build_price_jitter_deltas() -> list[Decimal]:
+    jitter_step = _to_decimal(PRICE_JITTER_STEP_UAH)
+    if jitter_step <= 0:
+        _warn_price_jitter_once(
+            "step_non_positive",
+            "price jitter disabled: PRICE_JITTER_STEP_UAH must be > 0, got %s",
+            jitter_step,
+        )
+        return []
+
+    jitter_min = PRICE_JITTER_MIN_UAH
+    jitter_max = PRICE_JITTER_MAX_UAH
+
+    # Backward compatibility: if MIN/MAX not fully set, use symmetric range [-R; +R].
+    if jitter_min is None or jitter_max is None:
+        jitter_range = abs(_to_decimal(PRICE_JITTER_RANGE_UAH))
+        jitter_min = -jitter_range
+        jitter_max = jitter_range
+
+    if jitter_min > jitter_max:
+        _warn_price_jitter_once(
+            "invalid_min_max",
+            "price jitter disabled: PRICE_JITTER_MIN_UAH (%s) > PRICE_JITTER_MAX_UAH (%s)",
+            jitter_min,
+            jitter_max,
+        )
+        return []
+
+    deltas: list[Decimal] = []
+    cur = jitter_min
+    while cur <= jitter_max:
+        deltas.append(cur)
+        cur += jitter_step
+    return deltas
 
 
 def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
@@ -260,19 +322,7 @@ def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
         return price, Decimal("0")
 
     p = _to_decimal(price)
-    jitter_range = abs(_to_decimal(PRICE_JITTER_RANGE_UAH))
-    jitter_step = abs(_to_decimal(PRICE_JITTER_STEP_UAH))
-
-    if jitter_range <= 0 or jitter_step <= 0:
-        return p, Decimal("0")
-
-    deltas: list[Decimal] = []
-    cur = -jitter_range
-    # include +range point with small epsilon guard for Decimal stepping
-    epsilon = jitter_step / Decimal("1000")
-    while cur <= jitter_range + epsilon:
-        deltas.append(cur)
-        cur += jitter_step
+    deltas = _build_price_jitter_deltas()
     if not deltas:
         return p, Decimal("0")
 
@@ -1249,12 +1299,13 @@ async def process_supplier(
                 base_price = price
                 price, delta = _apply_price_jitter(price)
                 price = _round_price_export(price)
-                logger.debug(
-                    "price jitter applied: base=%s, delta=%s, final=%s",
-                    base_price,
-                    delta,
-                    price,
-                )
+                if delta != 0:
+                    logger.debug(
+                        "price jitter applied: base=%s, delta=%s, final=%s",
+                        base_price,
+                        delta,
+                        price,
+                    )
 
             # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
             (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
