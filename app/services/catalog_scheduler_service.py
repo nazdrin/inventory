@@ -5,6 +5,7 @@ import time
 import pytz
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
+from typing import Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.exc import OperationalError
@@ -39,6 +40,9 @@ from app.services.notification_service import send_notification
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# In-memory cooldown after timeout to avoid immediate restart loops.
+TIMEOUT_COOLDOWN_UNTIL: Dict[str, datetime] = {}
 
 # Словарь для вызова соответствующих обработчиков
 PROCESSORS = {
@@ -111,31 +115,65 @@ async def get_enterprises_for_catalog(db: AsyncSession):
 
 async def process_catalog_for_enterprise(db: AsyncSession, enterprise: EnterpriseSettings):
     try:
+        cooldown_until = TIMEOUT_COOLDOWN_UNTIL.get(enterprise.enterprise_code)
+        now_utc = datetime.now(timezone.utc)
+        if cooldown_until and now_utc < cooldown_until:
+            logging.warning(
+                "Skipping enterprise %s due to timeout cooldown until %s",
+                enterprise.enterprise_code,
+                cooldown_until.isoformat(),
+            )
+            return
+
         processor = PROCESSORS.get(enterprise.data_format)
         if processor:
-            await processor(enterprise.enterprise_code, "catalog")
+            default_timeout = "7200" if enterprise.data_format == "Dntrade" else "1800"
+            timeout_sec = int(
+                os.getenv(
+                    "DNTRADE_CATALOG_PROCESS_TIMEOUT_SEC" if enterprise.data_format == "Dntrade" else "CATALOG_PROCESS_TIMEOUT_SEC",
+                    default_timeout,
+                )
+            )
+            await asyncio.wait_for(
+                processor(enterprise.enterprise_code, "catalog"),
+                timeout=timeout_sec,
+            )
+            TIMEOUT_COOLDOWN_UNTIL.pop(enterprise.enterprise_code, None)
             logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
         elif enterprise.data_format in ["Unipro", "Blank"]:
             logging.info(f"Skipping processing for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
         else:
             logging.warning(f"Unsupported data format or transfer method for Enterprise Code={enterprise.enterprise_code}")
 
+    except asyncio.TimeoutError:
+        cooldown_minutes = int(
+            os.getenv(
+                "DNTRADE_CATALOG_TIMEOUT_COOLDOWN_MIN" if enterprise.data_format == "Dntrade" else "CATALOG_TIMEOUT_COOLDOWN_MIN",
+                "30",
+            )
+        )
+        TIMEOUT_COOLDOWN_UNTIL[enterprise.enterprise_code] = datetime.now(timezone.utc) + timedelta(minutes=cooldown_minutes)
+        await notify_error(
+            f"Таймаут обработки каталога ({timeout_sec}s) для предприятия {enterprise.enterprise_code}",
+            enterprise.enterprise_code,
+        )
+        await create_error_report("Catalog processing timeout", enterprise.enterprise_code)
     except Exception as e:
         await notify_error(f"Ошибка обработки данных для предприятия {enterprise.enterprise_code}: {str(e)}", enterprise.enterprise_code)
         await create_error_report(str(e), enterprise.enterprise_code)
 
 async def schedule_catalog_tasks():
     try:
-        async with get_async_db() as db:
-            interval = 1  # Интервал выполнения расписания в минутах
-            while True:
+        interval = 1  # Интервал выполнения расписания в минутах
+        while True:
+            async with get_async_db() as db:
                 logging.info("Starting catalog scheduler loop...")
                 enterprises = await get_enterprises_for_catalog(db)
 
                 for enterprise in enterprises:
                     await process_catalog_for_enterprise(db, enterprise)
 
-                await asyncio.sleep(interval * 60)
+            await asyncio.sleep(interval * 60)
     except Exception as main_error:
         await notify_error(f"🔥 Критическая ошибка в планировщике: {str(main_error)}")
     finally:

@@ -1,29 +1,24 @@
-import sys
-import requests
 import json
-import asyncio
-from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
-from app.services.database_service import process_database_service
-from sqlalchemy.future import select
-from collections import Counter
-import tempfile
-import os
 import logging
+import os
+import tempfile
+from typing import Optional, Tuple
+
+import aiohttp
 from dotenv import load_dotenv
+from sqlalchemy.future import select
+
+from app.database import EnterpriseSettings, get_async_db
+from app.dntrade_data_service.client import DEFAULT_LIMIT, fetch_products_page
+from app.services.database_service import process_database_service
+
 load_dotenv()
 
 DEFAULT_VAT = 20
-LIMIT = 100  # Лимит количества записей за один запрос
-def log_progress(offset, count):
-#     """Логирование процесса обновляемой строкой в консоли"""
-    sys.stdout.write(f"\rЗапрос: offset={offset} | Получено: {count} записей")
-    sys.stdout.flush()
-
-async def fetch_developer_settings():
-    """Получение API_ENDPOINT из DeveloperSettings."""
-    async with get_async_db() as session:
-        result = await session.execute(select(DeveloperSettings))
-        return result.scalars().first()
+LIMIT = DEFAULT_LIMIT
+MAX_PAGES = int(os.getenv("DNTRADE_CATALOG_MAX_PAGES", "2000"))
+MAX_REPEAT_PAGES = int(os.getenv("DNTRADE_CATALOG_MAX_REPEAT_PAGES", "3"))
+logger = logging.getLogger(__name__)
 
 async def fetch_enterprise_settings(enterprise_code):
     """Получение настроек предприятия по enterprise_code из EnterpriseSettings."""
@@ -33,39 +28,19 @@ async def fetch_enterprise_settings(enterprise_code):
         )
         return result.scalars().first()
 
-def fetch_products(api_endpoint, api_key, offset=0, limit=LIMIT):
-    """Запрос данных продуктов через API с использованием query-параметров."""
-    headers = {
-        "ApiKey": api_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
 
-    url = f"{api_endpoint}?limit={limit}&offset={offset}"
-
-    try:
-        response = requests.post(url, headers=headers)
-
-        if response.status_code != 200:
-            return None  # Ошибка запроса, игнорируем
-
-        data = response.json()
-        return data if isinstance(data, dict) else None
-    except requests.RequestException:
-        return None
-
-
-def transform_products(products, branch_id):
+def transform_products(products):
     """Трансформация данных продуктов в целевой формат."""
     transformed = []
     seen_product_ids = set()
-    product_id_counts = Counter(product.get("product_id") for product in products)
-    
+
     for product in products:
         product_id = product.get("product_id")
+        if not product_id:
+            continue
         if product_id in seen_product_ids:
             continue  # Пропускаем дублирующийся product_id
-        
+
         producer = product.get("short_description")
         if not producer or producer in [None, "", 0]:  # Фильтрация некорректных значений
             producer = ""
@@ -75,7 +50,6 @@ def transform_products(products, branch_id):
             "vat": DEFAULT_VAT,
             "producer": producer,
             "barcode": product.get("barcode"),
-            # "branch_id": branch_id
         })
         seen_product_ids.add(product_id)  # Запоминаем обработанный product_id
     return transformed
@@ -101,46 +75,103 @@ def save_to_json(data, enterprise_code, file_type):
 
 async def run_service(enterprise_code, file_type):
     """Основной сервис выполнения задачи."""
-    developer_settings = await fetch_developer_settings()
-    if not developer_settings:
-        return
-
-    api_endpoint = developer_settings.telegram_token_developer
-
+    logger.info("Dntrade catalog start: enterprise_code=%s", enterprise_code)
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
     if not enterprise_settings:
+        logger.warning("Dntrade catalog stop: enterprise settings not found for %s", enterprise_code)
         return
 
-    branch_id = enterprise_settings.branch_id
     api_key = enterprise_settings.token
     if not api_key:
+        logger.warning("Dntrade catalog stop: empty token for %s", enterprise_code)
         return
 
     all_products = []
     offset = 0
+    pages_fetched = 0
+    repeated_page_count = 0
+    last_fingerprint: Optional[Tuple[int, str, str]] = None
 
-    while True:
-        response = fetch_products(api_endpoint, api_key, offset=offset, limit=LIMIT)
+    async with aiohttp.ClientSession() as session:
+        while True:
+            if pages_fetched >= MAX_PAGES:
+                logger.warning(
+                    "Dntrade catalog stop: max pages reached (%s) for enterprise_code=%s",
+                    MAX_PAGES,
+                    enterprise_code,
+                )
+                break
+            response = await fetch_products_page(
+                session=session,
+                api_key=api_key,
+                offset=offset,
+                limit=LIMIT,
+            )
 
-        if response is None:
-            break  # Если нет ответа от API, прерываем цикл
+            if response is None:
+                logger.warning(
+                    "Dntrade catalog stop: empty/invalid response at offset=%s enterprise_code=%s",
+                    offset,
+                    enterprise_code,
+                )
+                break  # Если нет ответа от API, прерываем цикл
 
-        products = response.get("products", [])
-        if not products:
-            break  # Если список продуктов пуст, заканчиваем
+            products = response.get("products", [])
+            if not products:
+                logger.info(
+                    "Dntrade catalog stop: no more products at offset=%s enterprise_code=%s",
+                    offset,
+                    enterprise_code,
+                )
+                break  # Если список продуктов пуст, заканчиваем
 
-        all_products.extend(products)
-        log_progress(offset, len(products))
-        offset += LIMIT  # Увеличиваем offset
+            first_id = str(products[0].get("product_id", ""))
+            last_id = str(products[-1].get("product_id", ""))
+            current_fingerprint = (len(products), first_id, last_id)
+            if current_fingerprint == last_fingerprint:
+                repeated_page_count += 1
+                if repeated_page_count >= MAX_REPEAT_PAGES:
+                    logger.warning(
+                        "Dntrade catalog stop: repeating page detected %s times at offset=%s enterprise_code=%s",
+                        repeated_page_count,
+                        offset,
+                        enterprise_code,
+                    )
+                    break
+            else:
+                repeated_page_count = 0
+            last_fingerprint = current_fingerprint
+
+            all_products.extend(products)
+            offset += len(products)  # Увеличиваем offset на реальный размер страницы
+            pages_fetched += 1
+
+            if pages_fetched % 10 == 0:
+                logger.info(
+                    "Dntrade catalog progress: enterprise_code=%s pages=%s products=%s offset=%s",
+                    enterprise_code,
+                    pages_fetched,
+                    len(all_products),
+                    offset,
+                )
 
     if not all_products:
+        logger.warning("Dntrade catalog stop: no products fetched for %s", enterprise_code)
         return  # Нет данных для сохранения
 
-    transformed_data = transform_products(all_products, branch_id)
+    transformed_data = transform_products(all_products)
     file_type = "catalog"
     json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
 
     if not json_file_path:
+        logger.error("Dntrade catalog stop: failed to write json for %s", enterprise_code)
         return  # Ошибка сохранения JSON
 
     await process_database_service(json_file_path, file_type, enterprise_code)
+    logger.info(
+        "Dntrade catalog done: enterprise_code=%s fetched_products=%s transformed=%s pages=%s",
+        enterprise_code,
+        len(all_products),
+        len(transformed_data),
+        pages_fetched,
+    )

@@ -93,6 +93,10 @@ async def get_enterprises_for_stock(db: AsyncSession):
                 if enterprise.last_stock_upload else now) <= now
         ]
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         await notify_error(f"Ошибка при получении списка предприятий для обновления остатков: {str(e)}")
         return []
 
@@ -121,15 +125,15 @@ async def schedule_stock_tasks():
     """
     interval_minutes = 1
     try:
-        async with get_async_db() as db:
-            while True:
+        while True:
+            async with get_async_db() as db:
                 logging.info("🚀 Запуск планировщика остатков...")
                 enterprises = await get_enterprises_for_stock(db)
                 for enterprise in enterprises:
                     await process_stock_for_enterprise(db, enterprise)
 
-                logging.info("⏳ Ожидание 1 минуты перед следующим циклом стока...")
-                await asyncio.sleep(interval_minutes * 60)
+            logging.info("⏳ Ожидание 1 минуты перед следующим циклом стока...")
+            await asyncio.sleep(interval_minutes * 60)
     except Exception as main_error:
         await notify_error(f"🔥 Критическая ошибка в планировщике стока: {str(main_error)}", "stock_scheduler")
     finally:
