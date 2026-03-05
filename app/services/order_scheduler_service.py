@@ -35,6 +35,10 @@ async def get_enterprises_for_order_fetcher(db):
         )
         return [row[0] for row in result.fetchall()]
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         await notify_error(f"Ошибка получения списка предприятий для fetcher: {e}")
         return []
 
@@ -45,8 +49,8 @@ async def schedule_order_fetcher_tasks():
     """
     interval_minutes = 1
     try:
-        async with get_async_db() as db:
-            while True:
+        while True:
+            async with get_async_db() as db:
                 logging.info("📥 Поиск предприятий с флагом order_fetcher=True...")
                 fetcher_enterprises = await get_enterprises_for_order_fetcher(db)
 
@@ -78,8 +82,8 @@ async def schedule_order_fetcher_tasks():
                 else:
                     logging.info("📭 Предприятия с order_fetcher=True не найдены – заказов не будет загружено")
 
-                logging.info("⏳ Ожидание 1 минуты перед следующим циклом заказов...")
-                await asyncio.sleep(interval_minutes * 60)
+            logging.info("⏳ Ожидание 1 минуты перед следующим циклом заказов...")
+            await asyncio.sleep(interval_minutes * 60)
     except Exception as main_error:
         await notify_error(f"🔥 Критическая ошибка в планировщике заказов: {str(main_error)}", "order_scheduler")
     finally:
