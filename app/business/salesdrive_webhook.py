@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 from app.database import get_async_db, EnterpriseSettings
 from app.models import MappingBranch
 from app.services.order_sender import send_orders_to_tabletki
-from app.services.send_TTN import send_ttn  # async def send_ttn(session, id, enterprise_code, ttn, deliveryServiceAlias, phoneNumber)
+from app.services.send_TTN import send_ttn  # async def send_ttn(...) -> bool
 from app.services.telegram_bot import notify_call_request
 
 logger = logging.getLogger("salesdrive")
@@ -223,7 +223,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
                 phone_number = re.sub(r"\D+", "", str(phone_raw or ""))
 
                 try:
-                    await send_ttn(
+                    sent = await send_ttn(
                         session=session,
                         id=external_id,
                         enterprise_code=enterprise_code,
@@ -231,8 +231,12 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
                         deliveryServiceAlias=alias,
                         phoneNumber=phone_number
                     )
-                    logger.info("📦 TTN отправлен: id=%s, ttn=%s, alias=%s, phone=%s",
-                                external_id, ttn, alias, phone_number)
+                    if sent:
+                        logger.info("📦 TTN отправлен/обновлён: id=%s, ttn=%s, alias=%s, phone=%s",
+                                    external_id, ttn, alias, phone_number)
+                    else:
+                        logger.info("ℹ️ TTN не отправлен: id=%s, ttn=%s (совпадает, пустой или была ошибка)",
+                                    external_id, ttn)
                 except Exception as e:
                     logger.exception("❌ Ошибка send_ttn: %s", e)
         else:

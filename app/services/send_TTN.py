@@ -5,9 +5,15 @@ from sqlalchemy import select
 from app.models import DeveloperSettings, EnterpriseSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
-async def send_ttn(session: AsyncSession, id: str, enterprise_code: str, ttn: str, deliveryServiceAlias: str, phoneNumber: str):
+def _normalize_ttn(value: str) -> str:
+    return "".join(str(value or "").split()).upper()
+
+
+async def send_ttn(session: AsyncSession, id: str, enterprise_code: str, ttn: str, deliveryServiceAlias: str, phoneNumber: str) -> bool:
     """
-    Отправляет TTN в Tabletki.ua, если он еще не зарегистрирован
+    Отправляет TTN в Tabletki.ua.
+    Если текущий TTN совпадает с новым, отправка пропускается.
+    Возвращает True, если запрос на отправку был выполнен успешно.
     """
     logging.info(f"📦 Проверка TTN для заказа {id}...")
 
@@ -23,7 +29,7 @@ async def send_ttn(session: AsyncSession, id: str, enterprise_code: str, ttn: st
 
     if not enterprise:
         logging.error(f"❌ Не найдены настройки EnterpriseSettings для enterprise_code={enterprise_code}")
-        return
+        return False
 
     auth_header = base64.b64encode(
         f"{enterprise.tabletki_login}:{enterprise.tabletki_password}".encode()
@@ -39,20 +45,28 @@ async def send_ttn(session: AsyncSession, id: str, enterprise_code: str, ttn: st
         status_resp = await client.get(status_url, headers=headers)
         if status_resp.status_code != 200:
             logging.error(f"❌ Ошибка получения статуса TTN: {status_resp.status_code}")
-            return
+            return False
 
         status_data = status_resp.json()
-        if status_data.get("ttN_Number"):
-            logging.info(f"✅ TTN уже зарегистрирован: {status_data['ttN_Number']}")
-            return
+        current_ttn = str(status_data.get("ttN_Number") or "").strip()
+        incoming_ttn = str(ttn or "").strip()
+        if not incoming_ttn:
+            logging.info("ℹ️ Новый TTN пустой — отправка пропущена.")
+            return False
 
-        # Отправка TTN, если не зарегистрирован
+        if current_ttn:
+            if _normalize_ttn(current_ttn) == _normalize_ttn(incoming_ttn):
+                logging.info(f"✅ TTN уже актуален: {current_ttn} (совпадает с входящим)")
+                return False
+            logging.info(f"🔄 TTN будет обновлён: {current_ttn} -> {incoming_ttn}")
+
+        # Отправка нового/обновленного TTN
         post_headers = headers.copy()
         post_headers["Content-Type"] = "application/json-patch+json"
         payload = [
             {
                 "id": id,
-                "ttn": ttn,
+                "ttn": incoming_ttn,
                 "deliveryServiceAlias": deliveryServiceAlias,
                 "phoneNumber": phoneNumber
             }
@@ -61,6 +75,8 @@ async def send_ttn(session: AsyncSession, id: str, enterprise_code: str, ttn: st
         post_resp = await client.post(post_url, json=payload, headers=post_headers)
 
         if post_resp.status_code == 200:
-            logging.info(f"📦 TTN успешно отправлен: {ttn}, {deliveryServiceAlias}, {phoneNumber}")
+            logging.info(f"📦 TTN успешно отправлен: {incoming_ttn}, {deliveryServiceAlias}, {phoneNumber}")
+            return True
         else:
             logging.error(f"❌ Ошибка отправки TTN: {post_resp.status_code}, {post_resp.text}")
+            return False
