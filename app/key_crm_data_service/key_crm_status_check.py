@@ -102,7 +102,7 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
 
                     phone_number = seller_order.get("shipping", {}).get("recipient_phone", order.get("customerPhone"))
 
-                    await send_ttn(
+                    sent = await send_ttn(
                         session=session,
                         id=order["id"],
                         enterprise_code=enterprise_code,
@@ -110,4 +110,7 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
                         deliveryServiceAlias=delivery_alias,
                         phoneNumber=phone_number
                     )
-                    logging.info(f"📦 Відправлено TTN: {tracking_code}, {delivery_alias}, {phone_number}")
+                    if sent:
+                        logging.info(f"📦 Відправлено/оновлено TTN: {tracking_code}, {delivery_alias}, {phone_number}")
+                    else:
+                        logging.info(f"ℹ️ TTN не відправлено: {tracking_code} (співпадає, порожній або була помилка)")
