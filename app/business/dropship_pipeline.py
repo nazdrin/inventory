@@ -5,6 +5,7 @@ import logging
 import re
 import argparse
 import os
+import random
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "100"))
 PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "400"))
@@ -150,7 +151,7 @@ from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorP
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
-from app.business.feed_dobavki import parse_d4_stock_to_json as parse_feed_D4
+from app.business.feed_dobavki import parse_d4_feed_to_json
 from app.business.feed_monstr import parse_feed_stock_to_json as parse_feed_D5
 from app.business.feed_sportatlet import parse_d6_stock_to_json as parse_feed_D6
 from app.business.feed_pediakid import parse_pediakid_stock_to_json as parse_feed_D7
@@ -233,6 +234,103 @@ def _round_price_export(x: Decimal) -> Decimal:
     step = Decimal("0.50")
     q = (d / step).to_integral_value(rounding=ROUND_CEILING) * step
     return q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _env_decimal(name: str, default: str) -> Decimal:
+    raw = (os.getenv(name, default) or default).strip()
+    try:
+        return Decimal(raw)
+    except Exception:
+        logging.getLogger("dropship").warning(
+            "Invalid decimal env %s=%r, fallback to %s", name, raw, default
+        )
+        return Decimal(default)
+
+
+def _env_optional_decimal(name: str) -> Decimal | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return Decimal(raw)
+    except Exception:
+        logging.getLogger("dropship").warning(
+            "Invalid decimal env %s=%r, ignored", name, raw
+        )
+        return None
+
+
+PRICE_JITTER_RANGE_UAH = _env_decimal("PRICE_JITTER_RANGE_UAH", "1.0")
+PRICE_JITTER_STEP_UAH = _env_decimal("PRICE_JITTER_STEP_UAH", "0.5")
+PRICE_JITTER_MIN_UAH = _env_optional_decimal("PRICE_JITTER_MIN_UAH")
+PRICE_JITTER_MAX_UAH = _env_optional_decimal("PRICE_JITTER_MAX_UAH")
+_PRICE_JITTER_WARNED: set[str] = set()
+
+
+def _price_jitter_enabled() -> bool:
+    return os.getenv("PRICE_JITTER_ENABLED", "0") == "1"
+
+
+def _warn_price_jitter_once(key: str, msg: str, *args: Any) -> None:
+    if key in _PRICE_JITTER_WARNED:
+        return
+    _PRICE_JITTER_WARNED.add(key)
+    logger.warning(msg, *args)
+
+
+def _build_price_jitter_deltas() -> list[Decimal]:
+    jitter_step = _to_decimal(PRICE_JITTER_STEP_UAH)
+    if jitter_step <= 0:
+        _warn_price_jitter_once(
+            "step_non_positive",
+            "price jitter disabled: PRICE_JITTER_STEP_UAH must be > 0, got %s",
+            jitter_step,
+        )
+        return []
+
+    jitter_min = PRICE_JITTER_MIN_UAH
+    jitter_max = PRICE_JITTER_MAX_UAH
+
+    # Backward compatibility: if MIN/MAX not fully set, use symmetric range [-R; +R].
+    if jitter_min is None or jitter_max is None:
+        jitter_range = abs(_to_decimal(PRICE_JITTER_RANGE_UAH))
+        jitter_min = -jitter_range
+        jitter_max = jitter_range
+
+    if jitter_min > jitter_max:
+        _warn_price_jitter_once(
+            "invalid_min_max",
+            "price jitter disabled: PRICE_JITTER_MIN_UAH (%s) > PRICE_JITTER_MAX_UAH (%s)",
+            jitter_min,
+            jitter_max,
+        )
+        return []
+
+    deltas: list[Decimal] = []
+    cur = jitter_min
+    while cur <= jitter_max:
+        deltas.append(cur)
+        cur += jitter_step
+    return deltas
+
+
+def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
+    if not _price_jitter_enabled():
+        return price, Decimal("0")
+
+    p = _to_decimal(price)
+    deltas = _build_price_jitter_deltas()
+    if not deltas:
+        return p, Decimal("0")
+
+    delta = random.choice(deltas)
+    new_price = p + delta
+    if new_price <= 0:
+        return p, Decimal("0")
+    return new_price, delta
 
 def resolve_price_band(base_price: Decimal) -> str:
     if base_price <= PRICE_BAND_LOW_MAX:
@@ -350,6 +448,11 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
 # Реестр парсеров (подставьте свои реализации)
 # --------------------------------------------------------------------------------------
 ParserFn = Callable[..., List[dict[str, Any]]]
+
+
+async def parse_feed_D4(*, code: str = "D4", timeout: int = 20, **kwargs) -> str:
+    # D4 now supports Drive-first strategy inside unified parser; stock pipeline must force stock mode.
+    return await parse_d4_feed_to_json(mode="stock", code=code, timeout=timeout)
 
 async def parse_feed_stock_to_json_template(*, code: str, timeout: int = 20, **kwargs) -> List[dict]:
     """
@@ -1192,6 +1295,17 @@ async def process_supplier(
                 threshold_percent_effective=thr_effective,
             )
             price = _round_price_export(price)
+            if _price_jitter_enabled():
+                base_price = price
+                price, delta = _apply_price_jitter(price)
+                price = _round_price_export(price)
+                if delta != 0:
+                    logger.debug(
+                        "price jitter applied: base=%s, delta=%s, final=%s",
+                        base_price,
+                        delta,
+                        price,
+                    )
 
             # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
             (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(

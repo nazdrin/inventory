@@ -610,6 +610,18 @@ async def process_biotus_orders(
                 logger.warning("Пропуск заказа без id: %s", order)
                 continue
 
+            supplier_id_raw = order.get("supplierlist")
+            supplier_id: Optional[int]
+            if isinstance(supplier_id_raw, int):
+                supplier_id = supplier_id_raw
+            elif isinstance(supplier_id_raw, str):
+                try:
+                    supplier_id = int(supplier_id_raw.strip())
+                except ValueError:
+                    supplier_id = None
+            else:
+                supplier_id = None
+
             phone, _, _ = _extract_contact(order)
             normalized_phone = normalize_phone(phone)
             if normalized_phone in duplicate_phones:
@@ -628,6 +640,31 @@ async def process_biotus_orders(
                     status_id=duplicate_status_id,
                     ttn_number=None,
                     client=client,
+                )
+                continue
+
+            if supplier_id == 40:
+                if dry_run:
+                    logger.info(
+                        "DRY RUN: supplier=40, обновил бы статус заказа %s -> %s без ТТН",
+                        order_id,
+                        TARGET_STATUS_ID,
+                    )
+                    updated += 1
+                    continue
+
+                await _update_status(
+                    api_key,
+                    order_id,
+                    status_id=TARGET_STATUS_ID,
+                    ttn_number=None,
+                    client=client,
+                )
+                updated += 1
+                logger.info(
+                    "Заказ %s (supplier=40) обновлен -> %s без формирования ТТН",
+                    order_id,
+                    TARGET_STATUS_ID,
                 )
                 continue
 
