@@ -160,6 +160,7 @@ from app.business.feed_ortomedika import parse_feed_stock_to_json as parse_feed_
 from app.business.feed_zoohub import parse_feed_stock_to_json as parse_feed_D10
 from app.business.feed_toros import parse_feed_stock_to_json as parse_feed_D11
 from app.business.feed_vetstar import parse_feed_stock_to_json as parse_feed_D12
+from app.business.feed_zoocomplex import parse_zoocomplex_stock_to_json as parse_feed_D13
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -475,6 +476,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D10": parse_feed_D10,
     "D11": parse_feed_D11,
     "D12": parse_feed_D12,
+    "D13": parse_feed_D13,
 }
 
 # --------------------------------------------------------------------------------------
