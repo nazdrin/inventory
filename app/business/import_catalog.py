@@ -38,6 +38,7 @@ try:
     from app.business.feed_zoohub import parse_feed_to_json as parse_feed_D10
     from app.business.feed_toros import parse_feed_to_json as parse_feed_D11
     from app.business.feed_vetstar import parse_feed_to_json as parse_feed_D12
+    from app.business.feed_zoocomplex import parse_zoocomplex_catalog_to_json as parse_feed_D13
 except Exception:
     parse_feed_D1 = None  # если модуля нет — пропустим D1
 
@@ -55,6 +56,7 @@ PARSER_REGISTRY: Dict[str, Any] = {
     "D10": parse_feed_D10,
     "D11": parse_feed_D11,
     "D12": parse_feed_D12,
+    "D13": parse_feed_D13,
 }
 
 
