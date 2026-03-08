@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, List, Dict, Literal
 
 import httpx
@@ -53,6 +54,14 @@ def _to_float(val: Optional[str]) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _round_to_int_math(val: float) -> int:
+    """Математическое округление до целого (0.5 -> вверх)."""
+    try:
+        return int(Decimal(str(val)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except Exception:
+        return 0
 
 
 def _extract_barcode(el: ET.Element) -> Optional[str]:
@@ -280,6 +289,7 @@ async def parse_dsn_stock_to_json(*, code: str = "D2", timeout: int = 30) -> str
         price_opt = price_retail / (1.0 + profit_percent)
         if price_opt < 0:
             price_opt = 0.0
+        price_opt = _round_to_int_math(price_opt)
 
         rows.append({
             "code_sup": sku,
