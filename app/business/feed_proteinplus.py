@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, List, Dict, Literal, Any
 
 import httpx
@@ -50,6 +51,14 @@ def _to_float(val: Optional[str]) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _round_to_int_math(val: float) -> int:
+    """Математическое округление до целого (0.5 -> вверх)."""
+    try:
+        return int(Decimal(str(val)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except Exception:
+        return 0
 
 
 async def _get_feed_url_by_code(code: str = "D3") -> Optional[str]:
@@ -322,7 +331,7 @@ async def parse_feed_stock_to_json(
         price_retail_int = int(price_retail)
 
         vendor_price_raw = _get_text(offer, ["vendorPrice"]) or offer.get("vendorPrice")
-        price_opt = round(_to_float(vendor_price_raw), 2)
+        price_opt = _round_to_int_math(_to_float(vendor_price_raw))
 
         rows.append(
             {
