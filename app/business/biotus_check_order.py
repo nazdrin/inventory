@@ -286,14 +286,10 @@ def _parse_supplier_id(order: Dict[str, Any]) -> Optional[int]:
 
 
 def _extract_order_note(order: Dict[str, Any]) -> str:
-    for key in ("primecanie", "comment", "note"):
-        value = order.get(key)
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            return text
-    return ""
+    value = order.get("primecanie")
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _has_note_marker(order: Dict[str, Any], marker: str) -> bool:
@@ -305,15 +301,8 @@ def _has_note_marker(order: Dict[str, Any], marker: str) -> bool:
 
 
 def _compose_note_with_marker(existing_note: str, marker: str) -> str:
-    existing = (existing_note or "").strip()
-    marker_clean = (marker or "").strip()
-    if not marker_clean:
-        return existing
-    if not existing:
-        return marker_clean
-    if marker_clean.lower() in existing.lower():
-        return existing
-    return f"{existing}\n{marker_clean}"
+    _ = existing_note
+    return (marker or "").strip()
 
 
 def _to_qty_ship(value: Any) -> float:
@@ -989,7 +978,7 @@ async def process_biotus_orders(
                         continue
 
                     try:
-                        updated_note = _compose_note_with_marker(_extract_order_note(order), fallback_note_marker)
+                        updated_note = _compose_note_with_marker("", fallback_note_marker)
                         await _update_note_only(
                             api_key=api_key,
                             order_id=order_id,
