@@ -6,7 +6,7 @@ import re
 import argparse
 import os
 import random
-from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
+from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING, ROUND_FLOOR
 PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "100"))
 PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "400"))
 PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "999999"))
@@ -220,21 +220,45 @@ def _as_share(x: Optional[float | Decimal]) -> Decimal:
 def _round_money(x: Decimal) -> Decimal:
     return x.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-# Округление итоговой цены для экспорта/записи (до 1 знака, но с двумя знаками после запятой)
-def _round_price_export(x: Decimal) -> Decimal:
-    """
-    Округление итоговой цены ВВЕРХ до ближайших 0.50 (50 копеек),
-    например 10.21 -> 10.50, 10.51 -> 11.00.
-    """
+# Округление итоговой цены для экспорта/записи.
+def _round_price_to_step_up(x: Decimal, step: Decimal) -> Decimal:
     if x is None:
         return Decimal("0.00")
     d = _to_decimal(x)
     if d <= 0:
         return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    step = Decimal("0.50")
     q = (d / step).to_integral_value(rounding=ROUND_CEILING) * step
     return q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _round_price_to_step_down(x: Decimal, step: Decimal) -> Decimal:
+    d = _to_decimal(x)
+    if d <= 0:
+        return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    q = (d / step).to_integral_value(rounding=ROUND_FLOOR) * step
+    return q.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _price_round_step_for_supplier(supplier_code: str) -> Decimal:
+    if str(supplier_code).upper() == "D3":
+        return Decimal("1.00")
+    return Decimal("0.50")
+
+
+def _round_price_export_for_supplier(x: Decimal, supplier_code: str) -> Decimal:
+    return _round_price_to_step_up(x, _price_round_step_for_supplier(supplier_code))
+
+
+def _cap_price_not_above_competitor(competitor_price: Decimal, supplier_code: str) -> Decimal:
+    comp = _to_decimal(competitor_price)
+    if comp <= 0:
+        return Decimal("0.00")
+    step = _price_round_step_for_supplier(supplier_code)
+    capped = _round_price_to_step_down(comp, step)
+    if capped <= 0:
+        return comp.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return capped
 
 
 def _env_decimal(name: str, default: str) -> Decimal:
@@ -826,7 +850,7 @@ def rule_porog_by_band(rules: list[dict], band_id: str) -> Optional[Decimal]:
 
 
 # --- Новая логика расчёта цены ---
-def compute_price_for_item(
+def _compute_price_for_item_with_source(
     *,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
@@ -835,7 +859,7 @@ def compute_price_for_item(
     price_retail: Optional[float | Decimal],
     price_opt: Optional[float | Decimal],
     threshold_percent_effective: Optional[float | Decimal],
-) -> Decimal:
+) -> tuple[Decimal, str]:
     """
     Новая логика (для НЕ-RRP):
 
@@ -852,18 +876,18 @@ def compute_price_for_item(
 
     # 1) ЖЁСТКАЯ РРЦ
     if is_rrp and rr > 0:
-        return _round_money(rr)
+        return _round_money(rr), "rrp"
 
     # 1.1) ЖЁСТКИЙ "демпинг": price = price_opt * (1 + retail_markup)
     # Приоритет ниже РРЦ, но выше режима конкурентов/порогов.
     if is_dumping:
         mu = _as_share(retail_markup)  # 25 -> 0.25; 0.25 -> 0.25; None -> 0
         if po > 0:
-            return _round_money(po * (Decimal("1") + mu))
+            return _round_money(po * (Decimal("1") + mu)), "dumping_po"
         # Если оптовой нет — fallback на rr (если есть), иначе 0
         if rr > 0:
-            return _round_money(rr)
-        return Decimal("0")
+            return _round_money(rr), "dumping_rr"
+        return Decimal("0"), "dumping_zero"
 
     # 2) Эффективный порог (УЖЕ доля/коэффициент, а не проценты). Может быть > 1 для дешёвых товаров.
     thr = _to_decimal(threshold_percent_effective)
@@ -894,30 +918,54 @@ def compute_price_for_item(
 
     # 6) Выбор итоговой цены (без enterprise_settings диапазонов)
     # Если rr отсутствует/0, то в местах где rr требуется, берём threshold_price.
-    def _fallback() -> Decimal:
+    def _fallback() -> tuple[Decimal, str]:
         if rr > 0:
-            return rr
+            return rr, "fallback_rr"
         if threshold_price > 0:
-            return threshold_price
+            return threshold_price, "fallback_threshold"
         if under_competitor is not None and under_competitor > 0:
-            return under_competitor
-        return Decimal("0")
+            return under_competitor, "fallback_under_competitor"
+        return Decimal("0"), "fallback_zero"
 
     # Если конкурента нет
     if under_competitor is None:
         if threshold_price > 0:
-            return _round_money(threshold_price)
-        return _round_money(_fallback())
+            return _round_money(threshold_price), "no_comp_threshold"
+        fallback_price, fallback_source = _fallback()
+        return _round_money(fallback_price), f"no_comp_{fallback_source}"
 
     # Конкурент есть
     if threshold_price > 0 and under_competitor >= threshold_price:
-        return _round_money(under_competitor)
+        return _round_money(under_competitor), "under_competitor"
 
     # under_competitor < threshold_price
     if threshold_price > 0:
-        return _round_money(threshold_price)
+        return _round_money(threshold_price), "threshold_floor"
 
-    return _round_money(_fallback())
+    fallback_price, fallback_source = _fallback()
+    return _round_money(fallback_price), f"comp_{fallback_source}"
+
+
+def compute_price_for_item(
+    *,
+    competitor_price: Optional[Decimal],
+    is_rrp: bool,
+    is_dumping: bool,
+    retail_markup: Optional[float | Decimal],
+    price_retail: Optional[float | Decimal],
+    price_opt: Optional[float | Decimal],
+    threshold_percent_effective: Optional[float | Decimal],
+) -> Decimal:
+    price, _ = _compute_price_for_item_with_source(
+        competitor_price=competitor_price,
+        is_rrp=is_rrp,
+        is_dumping=is_dumping,
+        retail_markup=retail_markup,
+        price_retail=price_retail,
+        price_opt=price_opt,
+        threshold_percent_effective=threshold_percent_effective,
+    )
+    return price
 
 # --------------------------------------------------------------------------------------
 # 4) UPSERT в offers
@@ -1287,7 +1335,7 @@ async def process_supplier(
             else:
                 thr_effective = Decimal("0")
 
-            price = compute_price_for_item(
+            price, price_source = _compute_price_for_item_with_source(
                 competitor_price=competitor,
                 is_rrp=is_rrp,
                 is_dumping=is_dumping,
@@ -1296,11 +1344,11 @@ async def process_supplier(
                 price_opt=po,
                 threshold_percent_effective=thr_effective,
             )
-            price = _round_price_export(price)
+            price = _round_price_export_for_supplier(price, code)
             if _price_jitter_enabled():
                 base_price = price
                 price, delta = _apply_price_jitter(price)
-                price = _round_price_export(price)
+                price = _round_price_export_for_supplier(price, code)
                 if delta != 0:
                     logger.debug(
                         "price jitter applied: base=%s, delta=%s, final=%s",
@@ -1308,6 +1356,21 @@ async def process_supplier(
                         delta,
                         price,
                     )
+            # If final price originated from "under competitor" branch, never allow price to exceed competitor after jitter.
+            if (
+                competitor_dec > 0
+                and price > competitor_dec
+                and price_source in {"under_competitor", "comp_fallback_under_competitor"}
+            ):
+                capped = _cap_price_not_above_competitor(competitor_dec, code)
+                logger.debug(
+                    "price capped by competitor: source=%s before=%s competitor=%s after=%s",
+                    price_source,
+                    price,
+                    competitor_dec,
+                    capped,
+                )
+                price = capped
 
             # Лог: supplier, city, product_code, band, thr_supplier, thr_effective, competitor_price, final_price
             (logger.info if VERBOSE_ITEM_LOGS else logger.debug)(
