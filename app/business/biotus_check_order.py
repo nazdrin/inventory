@@ -20,6 +20,7 @@ NP_BASE_URL = "https://api.novaposhta.ua/v2.0/json/"
 NEW_STATUS_ID = 1
 TARGET_STATUS_ID = 21
 DEFAULT_DUPLICATE_STATUS_ID = 20
+DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS = [9, 19, 18, 20]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,6 +80,28 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int_list(name: str, default: List[int]) -> List[int]:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+
+    parts = [item.strip() for item in str(raw).replace(";", ",").split(",")]
+    parsed: List[int] = []
+    for part in parts:
+        if not part:
+            continue
+        try:
+            parsed.append(int(part))
+        except (TypeError, ValueError):
+            logger.warning("Неверное значение в %s: %r (пропущено)", name, part)
+
+    if parsed:
+        return parsed
+
+    logger.warning("Неверное значение %s=%r, используется default=%s", name, raw, default)
+    return default
 
 
 def _parse_csv_items(value: str) -> List[str]:
@@ -406,6 +429,133 @@ def _eligible_for_fallback_by_timeout(
     return True, "eligible_by_timeout"
 
 
+async def _get_tabletki_credentials_by_enterprise(enterprise_code: str) -> Tuple[str, str]:
+    async with get_async_db() as db:
+        assert isinstance(db, AsyncSession)
+        q = (
+            select(EnterpriseSettings.tabletki_login, EnterpriseSettings.tabletki_password)
+            .where(EnterpriseSettings.enterprise_code == str(enterprise_code))
+            .limit(1)
+        )
+        row = (await db.execute(q)).first()
+        if not row:
+            return "", ""
+        return str(row[0] or ""), str(row[1] or "")
+
+
+async def _process_fallback_orders_batch(
+    *,
+    source: str,
+    orders: List[Dict[str, Any]],
+    api_key: str,
+    client: httpx.AsyncClient,
+    now_kyiv: datetime,
+    kyiv_tz: ZoneInfo,
+    timeout_minutes: int,
+    note_marker: str,
+    dry_run: bool,
+    tabletki_login: str,
+    tabletki_password: str,
+    tabletki_cancel_reason_default: int,
+) -> Dict[str, int]:
+    counters = {
+        "total_candidates": 0,
+        "eligible_timeout": 0,
+        "skipped_note_marker": 0,
+        "skipped_too_new": 0,
+        "sent_tabletki": 0,
+        "note_updated": 0,
+        "errors": 0,
+    }
+
+    for order in orders:
+        order_id = order.get("id")
+        if not order_id:
+            continue
+        counters["total_candidates"] += 1
+
+        if _has_note_marker(order, note_marker):
+            counters["skipped_note_marker"] += 1
+            continue
+
+        eligible, timeout_reason = _eligible_for_fallback_by_timeout(
+            order=order,
+            now_kyiv=now_kyiv,
+            kyiv_tz=kyiv_tz,
+            timeout_minutes=timeout_minutes,
+        )
+        if not eligible:
+            if timeout_reason in {
+                "too_new_for_fallback",
+                "missing_orderTime_for_fallback",
+                "created_in_future_for_fallback",
+            }:
+                counters["skipped_too_new"] += 1
+            continue
+        counters["eligible_timeout"] += 1
+
+        tabletki_order = _build_tabletki_order_payload(order)
+        if not tabletki_order.get("id"):
+            counters["errors"] += 1
+            logger.warning("Fallback[%s] skip order without externalId/id: order_id=%s", source, order_id)
+            continue
+        if not tabletki_order.get("rows"):
+            counters["errors"] += 1
+            logger.warning("Fallback[%s] skip order without valid rows: order_id=%s", source, order_id)
+            continue
+
+        if dry_run:
+            logger.info(
+                "DRY RUN fallback[%s]: would send to Tabletki and mark SalesDrive note for order=%s",
+                source,
+                order_id,
+            )
+            counters["sent_tabletki"] += 1
+            continue
+
+        try:
+            async with get_async_db() as db:
+                assert isinstance(db, AsyncSession)
+                await send_orders_to_tabletki(
+                    session=db,
+                    orders=[tabletki_order],
+                    tabletki_login=tabletki_login,
+                    tabletki_password=tabletki_password,
+                    cancel_reason=tabletki_cancel_reason_default,
+                )
+            counters["sent_tabletki"] += 1
+        except Exception as exc:
+            counters["errors"] += 1
+            logger.exception("Fallback[%s] send to Tabletki failed for order=%s: %s", source, order_id, exc)
+            continue
+
+        try:
+            await _update_note_only(
+                api_key=api_key,
+                order_id=order_id,
+                note_text=_compose_note_with_marker("", note_marker),
+                client=client,
+            )
+            counters["note_updated"] += 1
+        except Exception as exc:
+            counters["errors"] += 1
+            logger.exception("Fallback[%s] note update failed for order=%s: %s", source, order_id, exc)
+
+    logger.info(
+        "Fallback batch[%s]: candidates=%s eligible_timeout=%s sent=%s note_updated=%s "
+        "skipped_note=%s skipped_too_new=%s errors=%s",
+        source,
+        counters["total_candidates"],
+        counters["eligible_timeout"],
+        counters["sent_tabletki"],
+        counters["note_updated"],
+        counters["skipped_note_marker"],
+        counters["skipped_too_new"],
+        counters["errors"],
+    )
+    return counters
+
+
 def normalize_phone(phone: str) -> str:
     if not phone:
         return ""
@@ -649,6 +799,10 @@ async def process_biotus_orders(
         "BIOTUS_UNHANDLED_ORDER_NOTE",
         "Статус Обработан отправлен на таблетки",
     ).strip()
+    fallback_additional_status_ids = _env_int_list(
+        "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
+        DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS,
+    )
     tabletki_cancel_reason_default = _env_int("TABLETKI_CANCEL_REASON_DEFAULT", 18)
     allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
     allowed_supplier_ids_set = set(allowed_supplier_ids)
@@ -666,6 +820,7 @@ async def process_biotus_orders(
     fallback_sent_tabletki = 0
     fallback_note_updated = 0
     fallback_errors = 0
+    fallback_additional_total_orders = 0
 
     async with httpx.AsyncClient(verify=verify_ssl) as client:
         orders = await _fetch_new_orders(api_key, client)
@@ -899,108 +1054,76 @@ async def process_biotus_orders(
             logger.info("Статус заказа %s обновлен -> %s, ТТН=%s", order_id, TARGET_STATUS_ID, ttn_number)
 
         if fallback_enabled:
-            tabletki_login = ""
-            tabletki_password = ""
-            async with get_async_db() as db:
-                assert isinstance(db, AsyncSession)
-                q = (
-                    select(EnterpriseSettings.tabletki_login, EnterpriseSettings.tabletki_password)
-                    .where(EnterpriseSettings.enterprise_code == str(enterprise_code))
-                    .limit(1)
-                )
-                row = (await db.execute(q)).first()
-                if row:
-                    tabletki_login = str(row[0] or "")
-                    tabletki_password = str(row[1] or "")
-
+            tabletki_login, tabletki_password = await _get_tabletki_credentials_by_enterprise(str(enterprise_code))
             if not tabletki_login or not tabletki_password:
                 logger.warning(
                     "Fallback disabled in run due to missing tabletki_login/password for enterprise=%s",
                     enterprise_code,
                 )
             else:
-                fallback_total_candidates = len(unhandled_by_main)
-                for item in unhandled_by_main:
-                    order = item.get("order") or {}
-                    order_id = order.get("id")
-                    if not order_id:
-                        continue
+                # 1) существующая fallback-ветка: необработанные заказы из status=1
+                from_status1_orders = [item.get("order") or {} for item in unhandled_by_main]
+                c_main = await _process_fallback_orders_batch(
+                    source="status1_unhandled",
+                    orders=from_status1_orders,
+                    api_key=api_key,
+                    client=client,
+                    now_kyiv=now_kyiv,
+                    kyiv_tz=kyiv_tz,
+                    timeout_minutes=fallback_timeout_minutes,
+                    note_marker=fallback_note_marker,
+                    dry_run=dry_run,
+                    tabletki_login=tabletki_login,
+                    tabletki_password=tabletki_password,
+                    tabletki_cancel_reason_default=tabletki_cancel_reason_default,
+                )
 
-                    has_marker = _has_note_marker(order, fallback_note_marker)
-                    if has_marker:
-                        fallback_skipped_note_marker += 1
-                        continue
-
-                    eligible, timeout_reason = _eligible_for_fallback_by_timeout(
-                        order=order,
-                        now_kyiv=now_kyiv,
-                        kyiv_tz=kyiv_tz,
-                        timeout_minutes=fallback_timeout_minutes,
+                # 2) новая ветка: отдельные статусы из env BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS
+                additional_orders: List[Dict[str, Any]] = []
+                for status_id in fallback_additional_status_ids:
+                    status_orders = await _fetch_orders_by_status(
+                        api_key=api_key,
+                        status_id=status_id,
+                        client=client,
                     )
-                    if not eligible:
-                        if timeout_reason in {"too_new_for_fallback", "missing_orderTime_for_fallback", "created_in_future_for_fallback"}:
-                            fallback_skipped_too_new += 1
-                        continue
-                    fallback_eligible_timeout += 1
+                    fallback_additional_total_orders += len(status_orders)
+                    additional_orders.extend(status_orders)
 
-                    tabletki_order = _build_tabletki_order_payload(order)
-                    if not tabletki_order.get("id"):
-                        fallback_errors += 1
-                        logger.warning("Fallback skip order without externalId/id: order_id=%s", order_id)
-                        continue
-                    if not tabletki_order.get("rows"):
-                        fallback_errors += 1
-                        logger.warning("Fallback skip order without valid rows: order_id=%s", order_id)
-                        continue
+                c_additional = await _process_fallback_orders_batch(
+                    source="status_9_19_18_20",
+                    orders=additional_orders,
+                    api_key=api_key,
+                    client=client,
+                    now_kyiv=now_kyiv,
+                    kyiv_tz=kyiv_tz,
+                    timeout_minutes=fallback_timeout_minutes,
+                    note_marker=fallback_note_marker,
+                    dry_run=dry_run,
+                    tabletki_login=tabletki_login,
+                    tabletki_password=tabletki_password,
+                    tabletki_cancel_reason_default=tabletki_cancel_reason_default,
+                )
 
-                    if dry_run:
-                        logger.info(
-                            "DRY RUN fallback: would send to Tabletki and mark SalesDrive note for order=%s",
-                            order_id,
-                        )
-                        fallback_sent_tabletki += 1
-                        continue
-
-                    try:
-                        async with get_async_db() as db:
-                            assert isinstance(db, AsyncSession)
-                            await send_orders_to_tabletki(
-                                session=db,
-                                orders=[tabletki_order],
-                                tabletki_login=tabletki_login,
-                                tabletki_password=tabletki_password,
-                                cancel_reason=tabletki_cancel_reason_default,
-                            )
-                        fallback_sent_tabletki += 1
-                    except Exception as exc:
-                        fallback_errors += 1
-                        logger.exception("Fallback send to Tabletki failed for order=%s: %s", order_id, exc)
-                        continue
-
-                    try:
-                        updated_note = _compose_note_with_marker("", fallback_note_marker)
-                        await _update_note_only(
-                            api_key=api_key,
-                            order_id=order_id,
-                            note_text=updated_note,
-                            client=client,
-                        )
-                        fallback_note_updated += 1
-                    except Exception as exc:
-                        fallback_errors += 1
-                        logger.exception("Fallback note update failed for order=%s: %s", order_id, exc)
+                fallback_total_candidates = c_main["total_candidates"] + c_additional["total_candidates"]
+                fallback_eligible_timeout = c_main["eligible_timeout"] + c_additional["eligible_timeout"]
+                fallback_skipped_note_marker = c_main["skipped_note_marker"] + c_additional["skipped_note_marker"]
+                fallback_skipped_too_new = c_main["skipped_too_new"] + c_additional["skipped_too_new"]
+                fallback_sent_tabletki = c_main["sent_tabletki"] + c_additional["sent_tabletki"]
+                fallback_note_updated = c_main["note_updated"] + c_additional["note_updated"]
+                fallback_errors = c_main["errors"] + c_additional["errors"]
         else:
             fallback_total_candidates = len(unhandled_by_main)
 
         logger.info(
             "Biotus summary: total_status1=%s main_matched=%s main_processed=%s unhandled_by_main=%s "
-            "fallback_enabled=%s fallback_candidates=%s fallback_eligible_timeout=%s fallback_sent=%s "
+            "fallback_enabled=%s fallback_additional_total_orders=%s fallback_candidates=%s fallback_eligible_timeout=%s fallback_sent=%s "
             "fallback_note_updated=%s fallback_skipped_note_marker=%s fallback_skipped_too_new=%s fallback_errors=%s",
             len(orders),
             len(matched),
             main_processed,
             len(unhandled_by_main),
             fallback_enabled,
+            fallback_additional_total_orders,
             fallback_total_candidates,
             fallback_eligible_timeout,
             fallback_sent_tabletki,
@@ -1026,6 +1149,7 @@ async def process_biotus_orders(
         "unhandled_reason_counts": unhandled_reason_counts,
         "fallback_enabled": fallback_enabled,
         "fallback_timeout_minutes": fallback_timeout_minutes,
+        "fallback_additional_total_orders": fallback_additional_total_orders,
         "fallback_total_candidates": fallback_total_candidates,
         "fallback_eligible_timeout": fallback_eligible_timeout,
         "fallback_skipped_note_marker": fallback_skipped_note_marker,
