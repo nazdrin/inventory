@@ -219,14 +219,14 @@ async def _update_status(
         raise RuntimeError(f"POST {url} -> {resp.status_code}: {resp.text[:500]}")
 
 
-async def _update_note_only(
+async def _update_obrabotano_only(
     api_key: str,
     order_id: Any,
-    note_text: str,
+    value: int,
     client: httpx.AsyncClient,
 ) -> None:
     """
-    Обновляет только примечание (primecanie) в SalesDrive, без смены statusId.
+    Обновляет только поле obrabotano в SalesDrive, без смены statusId.
     """
     url = f"{SALESDRIVE_BASE_URL.rstrip('/')}/api/order/update/"
     headers = {
@@ -237,7 +237,7 @@ async def _update_note_only(
     payload = {
         "id": order_id,
         "data": {
-            "primecanie": note_text,
+            "obrabotano": value,
         },
     }
     resp = await client.post(url, headers=headers, json=payload, timeout=30.0)
@@ -308,24 +308,19 @@ def _parse_supplier_id(order: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _extract_order_note(order: Dict[str, Any]) -> str:
-    value = order.get("primecanie")
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _has_note_marker(order: Dict[str, Any], marker: str) -> bool:
-    marker_norm = (marker or "").strip().lower()
-    if not marker_norm:
-        return False
-    note = _extract_order_note(order).lower()
-    return marker_norm in note
-
-
-def _compose_note_with_marker(existing_note: str, marker: str) -> str:
-    _ = existing_note
-    return (marker or "").strip()
+def _is_obrabotano_marked(order: Dict[str, Any]) -> bool:
+    value = order.get("obrabotano")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return int(value) == 1
+        except (TypeError, ValueError):
+            return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized in {"1", "true", "yes", "y", "on"}
+    return False
 
 
 def _to_qty_ship(value: Any) -> float:
@@ -452,7 +447,6 @@ async def _process_fallback_orders_batch(
     now_kyiv: datetime,
     kyiv_tz: ZoneInfo,
     timeout_minutes: int,
-    note_marker: str,
     dry_run: bool,
     tabletki_login: str,
     tabletki_password: str,
@@ -461,10 +455,10 @@ async def _process_fallback_orders_batch(
     counters = {
         "total_candidates": 0,
         "eligible_timeout": 0,
-        "skipped_note_marker": 0,
+        "skipped_already_processed": 0,
         "skipped_too_new": 0,
         "sent_tabletki": 0,
-        "note_updated": 0,
+        "obrabotano_updated": 0,
         "errors": 0,
     }
 
@@ -474,8 +468,8 @@ async def _process_fallback_orders_batch(
             continue
         counters["total_candidates"] += 1
 
-        if _has_note_marker(order, note_marker):
-            counters["skipped_note_marker"] += 1
+        if _is_obrabotano_marked(order):
+            counters["skipped_already_processed"] += 1
             continue
 
         eligible, timeout_reason = _eligible_for_fallback_by_timeout(
@@ -506,7 +500,7 @@ async def _process_fallback_orders_batch(
 
         if dry_run:
             logger.info(
-                "DRY RUN fallback[%s]: would send to Tabletki and mark SalesDrive note for order=%s",
+                "DRY RUN fallback[%s]: would send to Tabletki and set SalesDrive obrabotano=1 for order=%s",
                 source,
                 order_id,
             )
@@ -530,26 +524,26 @@ async def _process_fallback_orders_batch(
             continue
 
         try:
-            await _update_note_only(
+            await _update_obrabotano_only(
                 api_key=api_key,
                 order_id=order_id,
-                note_text=_compose_note_with_marker("", note_marker),
+                value=1,
                 client=client,
             )
-            counters["note_updated"] += 1
+            counters["obrabotano_updated"] += 1
         except Exception as exc:
             counters["errors"] += 1
-            logger.exception("Fallback[%s] note update failed for order=%s: %s", source, order_id, exc)
+            logger.exception("Fallback[%s] obrabotano update failed for order=%s: %s", source, order_id, exc)
 
     logger.info(
-        "Fallback batch[%s]: candidates=%s eligible_timeout=%s sent=%s note_updated=%s "
-        "skipped_note=%s skipped_too_new=%s errors=%s",
+        "Fallback batch[%s]: candidates=%s eligible_timeout=%s sent=%s obrabotano_updated=%s "
+        "skipped_already_processed=%s skipped_too_new=%s errors=%s",
         source,
         counters["total_candidates"],
         counters["eligible_timeout"],
         counters["sent_tabletki"],
-        counters["note_updated"],
-        counters["skipped_note_marker"],
+        counters["obrabotano_updated"],
+        counters["skipped_already_processed"],
         counters["skipped_too_new"],
         counters["errors"],
     )
@@ -795,10 +789,6 @@ async def process_biotus_orders(
     duplicate_status_id = _env_int("BIOTUS_DUPLICATE_STATUS_ID", DEFAULT_DUPLICATE_STATUS_ID)
     fallback_enabled = _env_bool("BIOTUS_ENABLE_UNHANDLED_FALLBACK", True)
     fallback_timeout_minutes = _env_int("BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES", 60)
-    fallback_note_marker = _env_str(
-        "BIOTUS_UNHANDLED_ORDER_NOTE",
-        "Статус Обработан отправлен на таблетки",
-    ).strip()
     fallback_additional_status_ids = _env_int_list(
         "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
         DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS,
@@ -815,10 +805,10 @@ async def process_biotus_orders(
 
     fallback_total_candidates = 0
     fallback_eligible_timeout = 0
-    fallback_skipped_note_marker = 0
+    fallback_skipped_already_processed = 0
     fallback_skipped_too_new = 0
     fallback_sent_tabletki = 0
-    fallback_note_updated = 0
+    fallback_obrabotano_updated = 0
     fallback_errors = 0
     fallback_additional_total_orders = 0
 
@@ -1071,7 +1061,6 @@ async def process_biotus_orders(
                     now_kyiv=now_kyiv,
                     kyiv_tz=kyiv_tz,
                     timeout_minutes=fallback_timeout_minutes,
-                    note_marker=fallback_note_marker,
                     dry_run=dry_run,
                     tabletki_login=tabletki_login,
                     tabletki_password=tabletki_password,
@@ -1097,7 +1086,6 @@ async def process_biotus_orders(
                     now_kyiv=now_kyiv,
                     kyiv_tz=kyiv_tz,
                     timeout_minutes=fallback_timeout_minutes,
-                    note_marker=fallback_note_marker,
                     dry_run=dry_run,
                     tabletki_login=tabletki_login,
                     tabletki_password=tabletki_password,
@@ -1106,10 +1094,10 @@ async def process_biotus_orders(
 
                 fallback_total_candidates = c_main["total_candidates"] + c_additional["total_candidates"]
                 fallback_eligible_timeout = c_main["eligible_timeout"] + c_additional["eligible_timeout"]
-                fallback_skipped_note_marker = c_main["skipped_note_marker"] + c_additional["skipped_note_marker"]
+                fallback_skipped_already_processed = c_main["skipped_already_processed"] + c_additional["skipped_already_processed"]
                 fallback_skipped_too_new = c_main["skipped_too_new"] + c_additional["skipped_too_new"]
                 fallback_sent_tabletki = c_main["sent_tabletki"] + c_additional["sent_tabletki"]
-                fallback_note_updated = c_main["note_updated"] + c_additional["note_updated"]
+                fallback_obrabotano_updated = c_main["obrabotano_updated"] + c_additional["obrabotano_updated"]
                 fallback_errors = c_main["errors"] + c_additional["errors"]
         else:
             fallback_total_candidates = len(unhandled_by_main)
@@ -1117,7 +1105,7 @@ async def process_biotus_orders(
         logger.info(
             "Biotus summary: total_status1=%s main_matched=%s main_processed=%s unhandled_by_main=%s "
             "fallback_enabled=%s fallback_additional_total_orders=%s fallback_candidates=%s fallback_eligible_timeout=%s fallback_sent=%s "
-            "fallback_note_updated=%s fallback_skipped_note_marker=%s fallback_skipped_too_new=%s fallback_errors=%s",
+            "fallback_obrabotano_updated=%s fallback_skipped_already_processed=%s fallback_skipped_too_new=%s fallback_errors=%s",
             len(orders),
             len(matched),
             main_processed,
@@ -1127,8 +1115,8 @@ async def process_biotus_orders(
             fallback_total_candidates,
             fallback_eligible_timeout,
             fallback_sent_tabletki,
-            fallback_note_updated,
-            fallback_skipped_note_marker,
+            fallback_obrabotano_updated,
+            fallback_skipped_already_processed,
             fallback_skipped_too_new,
             fallback_errors,
         )
@@ -1152,11 +1140,14 @@ async def process_biotus_orders(
         "fallback_additional_total_orders": fallback_additional_total_orders,
         "fallback_total_candidates": fallback_total_candidates,
         "fallback_eligible_timeout": fallback_eligible_timeout,
-        "fallback_skipped_note_marker": fallback_skipped_note_marker,
+        "fallback_skipped_already_processed": fallback_skipped_already_processed,
         "fallback_skipped_too_new": fallback_skipped_too_new,
         "fallback_sent_tabletki": fallback_sent_tabletki,
-        "fallback_note_updated": fallback_note_updated,
+        "fallback_obrabotano_updated": fallback_obrabotano_updated,
         "fallback_errors": fallback_errors,
+        # Backward-compatible aliases for external consumers of old keys.
+        "fallback_skipped_note_marker": fallback_skipped_already_processed,
+        "fallback_note_updated": fallback_obrabotano_updated,
         "allowed_suppliers": allowed_supplier_ids,
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": window_minutes,
