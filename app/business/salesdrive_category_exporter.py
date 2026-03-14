@@ -25,6 +25,14 @@ def _env_required(name: str) -> str:
     return value
 
 
+def _resolve_enterprise_code(enterprise_code: str = "") -> str:
+    load_dotenv()
+    value = (enterprise_code or "").strip() or (os.getenv("MASTER_CATALOG_ENTERPRISE_CODE") or "").strip()
+    if not value:
+        raise RuntimeError("Не задан enterprise_code: передайте --enterprise или MASTER_CATALOG_ENTERPRISE_CODE")
+    return value
+
+
 async def _get_salesdrive_token(enterprise_code: str) -> str:
     async with get_async_db() as session:
         res = await session.execute(
@@ -109,6 +117,7 @@ async def export_categories_to_salesdrive(
     limit: int = 0,
 ) -> Dict[str, Any]:
     load_dotenv()
+    enterprise_code = _resolve_enterprise_code(enterprise_code)
     endpoint = _env_required("SALESDRIVE_CATEGORY_HANDLER_URL")
     token = await _get_salesdrive_token(enterprise_code)
 
@@ -178,7 +187,7 @@ async def export_categories_to_salesdrive(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Экспорт catalog_categories в SalesDrive category-handler")
-    parser.add_argument("--enterprise", default="223")
+    parser.add_argument("--enterprise", default="")
     parser.add_argument("--batch-size", type=int, default=200)
     parser.add_argument("--limit", type=int, default=0)
     return parser.parse_args()

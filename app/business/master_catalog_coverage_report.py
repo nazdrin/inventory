@@ -17,7 +17,7 @@ from app.models import (
 )
 
 
-SUPPLIER_IDS = (38, 39, 43)
+SUPPLIER_IDS = (38, 39, 40, 43)
 
 
 def _has_text_column(column):
