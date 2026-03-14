@@ -30,6 +30,14 @@ alembic.ini
 /alembic.ini
 temp/
 /temp
+exports/
+state_cache/
+feed.xml
+.salesdrive_catalog_cache_*.json
+error_report_*.txt
+1_stock_data.json
+1_stock_data.json.json
+app/services/.venv/
 product.json
 temp/*.json
 input_raw/272/raw_catalog.json
@@ -49,3 +57,4 @@ competitors_min_price.py
 salesdrive_catalog_uploader.py
 excel_to_products_json.py
 extract_offers.py
+/scripts

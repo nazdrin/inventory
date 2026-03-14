@@ -7,6 +7,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -17,12 +18,6 @@ from sqlalchemy import text
 from app.database import get_async_db
 from app.services.notification_service import send_notification
 
-# Google Drive
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
-
 # Excel
 from openpyxl import load_workbook
 
@@ -31,9 +26,11 @@ logger = logging.getLogger(__name__)
 
 # === D10 (ZooHub) ===
 D10_CODE_DEFAULT = "D10"
+D10_PRICE_URL_DEFAULT = "https://zoohub.ua/c_integr/dilovod/priceList.xlsx"
 
 # Excel: заголовки на 4-й строке (1-indexed)
 D10_HEADER_ROW = 4
+D10_HEADER_SEARCH_MAX_ROWS = 20
 
 # Кэш/стейт (для дельты и drop-цен)
 # Можно переопределить env: D10_STATE_DIR=/path/to/state
@@ -110,15 +107,6 @@ def _is_probably_junk_row(values: Dict[str, str]) -> bool:
 # DB HELPERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _get_gdrive_folder_by_code(code: str) -> Optional[str]:
-    async with get_async_db() as session:
-        res = await session.execute(
-            text("SELECT gdrive_folder FROM dropship_enterprises WHERE code = :code LIMIT 1"),
-            {"code": code},
-        )
-        return res.scalar_one_or_none()
-
-
 async def _get_feed_url_by_code(code: str) -> Optional[str]:
     async with get_async_db() as session:
         res = await session.execute(
@@ -143,64 +131,35 @@ async def _get_profit_percent_by_code(code: str) -> Optional[float]:
             return None
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# GOOGLE DRIVE
-# ──────────────────────────────────────────────────────────────────────────────
-
-async def _connect_to_google_drive():
-    creds_path = os.getenv("GOOGLE_DRIVE_CREDENTIALS_PATH")
-    if not creds_path or not os.path.exists(creds_path):
-        msg = f"Неверный путь к учетным данным Google Drive: {creds_path}"
-        logger.error(msg)
-        send_notification(msg, "Разработчик")
-        raise FileNotFoundError(msg)
-
-    credentials = service_account.Credentials.from_service_account_file(
-        creds_path,
-        scopes=["https://www.googleapis.com/auth/drive"],
-    )
-    service = build("drive", "v3", credentials=credentials)
-    logger.info("D10: Подключено к Google Drive")
-    return service
+def _get_price_url() -> str:
+    return (os.getenv("ZOOHUB_PRICE_URL") or D10_PRICE_URL_DEFAULT).strip()
 
 
-async def _fetch_single_file_metadata(drive_service, folder_id: str) -> Dict[str, Any]:
+async def _download_excel_bytes_from_url(url: str, timeout: int = 60) -> bytes:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*;q=0.8",
+    }
     try:
-        results = (
-            drive_service.files()
-            .list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id, name, modifiedTime)",
-                pageSize=10,
-            )
-            .execute()
-        )
-        files = results.get("files", []) or []
-        if not files:
-            raise FileNotFoundError(f"В папке {folder_id} нет файлов")
-        return files[0]
-    except HttpError as e:
-        msg = f"D10: HTTP ошибка при получении файлов из папки {folder_id}: {e}"
+        async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as e:
+        msg = f"D10: Ошибка загрузки Excel по URL {url}: {e}"
         logger.exception(msg)
         send_notification(msg, "Разработчик")
         raise
 
 
-async def _download_file_bytes(drive_service, file_id: str) -> bytes:
-    try:
-        request = drive_service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        fh.seek(0)
-        return fh.read()
-    except HttpError as e:
-        msg = f"D10: HTTP ошибка при загрузке файла {file_id}: {e}"
-        logger.exception(msg)
-        send_notification(msg, "Разработчик")
-        raise
+async def _load_catalog_items_from_excel_url(*, timeout: int) -> List[Dict[str, Any]]:
+    price_url = _get_price_url()
+    logger.info("D10: Загрузка Excel из URL: %s", price_url)
+    file_bytes = await _download_excel_bytes_from_url(price_url, timeout=timeout)
+    return _parse_d10_catalog_excel_bytes(file_bytes)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -286,12 +245,126 @@ def _make_signature(*, item_id: str, name: str, barcode: str, drop_price: float)
 # CATALOG: Excel parsing (строка заголовков = 4)
 # ──────────────────────────────────────────────────────────────────────────────
 
-D10_REQUIRED_HEADERS = {
-    "Артикул": "id",
-    "Найменування": "name",
-    "Штрихкод": "barcode",
-    "drop, грн.": "drop_price_raw",
+D10_HEADER_ALIASES = {
+    "id": [
+        "Артикул",
+        "Артикул товару",
+        "Артикул товара",
+        "Код",
+        "Код товару",
+        "Код товара",
+    ],
+    "name": [
+        "Найменування товару",
+        "Найменування",
+        "Назва товару",
+        "Назва",
+    ],
+    "barcode": [
+        "Штрихкод",
+        "Штрих-код",
+        "EAN",
+        "EAN-13",
+    ],
+    "drop_price_raw": [
+        "Ціна – drop",
+        "Ціна - drop",
+        "Ціна-drop",
+        "drop, грн.",
+        "Drop",
+    ],
 }
+
+
+def _normalize_header_text(value: Any) -> str:
+    s = _norm_str(value).lower()
+    if not s:
+        return ""
+    s = s.replace("\u00A0", " ")
+    s = s.replace("–", "-").replace("—", "-")
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _resolve_header_mapping(sheet: Any) -> Tuple[int, Dict[str, int]]:
+    """
+    Ищет строку заголовков в верхней части листа и возвращает:
+    (header_row_idx, {"id": col_idx, "name": col_idx, "barcode": col_idx, "drop_price_raw": col_idx})
+    """
+    alias_norm: Dict[str, List[str]] = {
+        field: [_normalize_header_text(a) for a in aliases if _normalize_header_text(a)]
+        for field, aliases in D10_HEADER_ALIASES.items()
+    }
+
+    best_row = D10_HEADER_ROW
+    best_score = -1
+    best_missing: List[str] = list(D10_HEADER_ALIASES.keys())
+
+    for row_idx, row in enumerate(
+        sheet.iter_rows(min_row=1, max_row=D10_HEADER_SEARCH_MAX_ROWS, values_only=True),
+        start=1,
+    ):
+        headers_norm: Dict[str, int] = {}
+        for idx, value in enumerate(row):
+            key = _normalize_header_text(value)
+            if key:
+                headers_norm[key] = idx
+
+        idx_map: Dict[str, int] = {}
+        missing: List[str] = []
+        for field_name, aliases in alias_norm.items():
+            found_idx: Optional[int] = None
+            for alias in aliases:
+                if alias in headers_norm:
+                    found_idx = headers_norm[alias]
+                    break
+            if found_idx is None:
+                missing.append(field_name)
+            else:
+                idx_map[field_name] = found_idx
+
+        score = len(D10_HEADER_ALIASES) - len(missing)
+        if score > best_score:
+            best_score = score
+            best_row = row_idx
+            best_missing = missing
+
+        if not missing:
+            logger.info("D10: Header row auto-detected at row=%d", row_idx)
+            return row_idx, idx_map
+
+    raise ValueError(
+        "D10: Не удалось определить заголовки Excel. "
+        f"Лучшее совпадение: row={best_row}, найдено={best_score}/{len(D10_HEADER_ALIASES)}, "
+        f"не хватает={best_missing}"
+    )
+
+
+def _normalize_barcode(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, int):
+        return str(value)
+
+    raw = str(value).strip().replace("\u00A0", "").replace(" ", "")
+    if not raw:
+        return ""
+
+    # Numeric formats (including scientific notation) normalize via Decimal.
+    if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?(?:[eE][+-]?\d+)?", raw):
+        normalized_num = raw.replace(",", ".")
+        try:
+            dec = Decimal(normalized_num)
+        except InvalidOperation:
+            return raw
+        if dec.is_nan() or dec.is_infinite():
+            return raw
+        as_fixed = format(dec, "f")
+        if "." in as_fixed:
+            as_fixed = as_fixed.rstrip("0").rstrip(".")
+        return as_fixed
+
+    return raw
 
 def _parse_d10_catalog_excel_bytes(data: bytes) -> List[Dict[str, Any]]:
     """
@@ -304,31 +377,18 @@ def _parse_d10_catalog_excel_bytes(data: bytes) -> List[Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(data), data_only=True)
     sheet = wb.active
 
-    # Заголовки в строке 4
-    header_row = list(sheet.iter_rows(min_row=D10_HEADER_ROW, max_row=D10_HEADER_ROW, values_only=True))[0]
-    headers: Dict[str, int] = {
-        str(value).strip(): idx
-        for idx, value in enumerate(header_row)
-        if value is not None and str(value).strip()
-    }
-
-    # Проверка обязательных колонок
-    for col in D10_REQUIRED_HEADERS.keys():
-        if col not in headers:
-            raise ValueError(f"D10: В Excel не найден обязательный столбец '{col}' (ожидаем заголовки в строке {D10_HEADER_ROW})")
-
-    idx_map = {k: headers[k] for k in D10_REQUIRED_HEADERS.keys()}
+    header_row_idx, idx_map = _resolve_header_mapping(sheet)
 
     items: List[Dict[str, Any]] = []
-    for row in sheet.iter_rows(min_row=D10_HEADER_ROW + 1, values_only=True):
-        raw_id = row[idx_map["Артикул"]] if idx_map["Артикул"] < len(row) else None
-        raw_name = row[idx_map["Найменування"]] if idx_map["Найменування"] < len(row) else None
-        raw_barcode = row[idx_map["Штрихкод"]] if idx_map["Штрихкод"] < len(row) else None
-        raw_drop = row[idx_map["drop, грн."]] if idx_map["drop, грн."] < len(row) else None
+    for row in sheet.iter_rows(min_row=header_row_idx + 1, values_only=True):
+        raw_id = row[idx_map["id"]] if idx_map["id"] < len(row) else None
+        raw_name = row[idx_map["name"]] if idx_map["name"] < len(row) else None
+        raw_barcode = row[idx_map["barcode"]] if idx_map["barcode"] < len(row) else None
+        raw_drop = row[idx_map["drop_price_raw"]] if idx_map["drop_price_raw"] < len(row) else None
 
         item_id = _norm_str(raw_id)
         name = _norm_str(raw_name)
-        barcode = _norm_str(raw_barcode)
+        barcode = _normalize_barcode(raw_barcode)
         drop_price = _to_float(_norm_str(raw_drop))
 
         row_obj = {
@@ -403,6 +463,40 @@ def _apply_delta_and_update_state(
         len(changed),
     )
     return changed
+
+
+async def _refresh_drop_cache_from_excel(*, code: str, timeout: int) -> D10State:
+    """
+    Обновляет drop-кэш из Excel URL и сохраняет в state_cache.
+    Сигнатуры каталога (sig_by_id) не трогаем, чтобы не ломать delta-catalog поток.
+    """
+    state = D10State.load(code)
+    items = await _load_catalog_items_from_excel_url(timeout=timeout)
+
+    new_drop_by_id: Dict[str, float] = {}
+    new_drop_by_barcode: Dict[str, float] = {}
+    for it in items:
+        item_id = _norm_str(it.get("id"))
+        barcode = _norm_str(it.get("barcode"))
+        drop_price = float(it.get("drop_price") or 0.0)
+        if not item_id or drop_price <= 0.0:
+            continue
+        new_drop_by_id[item_id] = drop_price
+        if barcode:
+            new_drop_by_barcode[barcode] = drop_price
+
+    refreshed = D10State(
+        sig_by_id=state.sig_by_id,
+        drop_by_id=new_drop_by_id,
+        drop_by_barcode=new_drop_by_barcode,
+    )
+    refreshed.save(code)
+    logger.info(
+        "D10: Drop cache refreshed from Excel URL, by_id=%d by_barcode=%d",
+        len(refreshed.drop_by_id),
+        len(refreshed.drop_by_barcode),
+    )
+    return refreshed
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -488,12 +582,20 @@ async def parse_feed_stock_to_json(
         send_notification(msg, "Разработчик")
         return "[]"
 
-    state = D10State.load(code)
+    try:
+        state = await _refresh_drop_cache_from_excel(code=code, timeout=timeout)
+    except Exception as e:
+        logger.warning(
+            "D10: Failed to refresh drop cache from Excel in stock flow, using existing cache. error=%s",
+            e,
+        )
+        state = D10State.load(code)
     profit_percent = await _get_profit_percent_by_code(code)
     profit_percent_dec = (float(profit_percent) / 100.0) if profit_percent is not None else 0.0
 
     rows: List[Dict[str, Any]] = []
     items = _collect_item_nodes(root)
+    fallback_count = 0
 
     for it in items:
         # availability
@@ -514,6 +616,7 @@ async def parse_feed_stock_to_json(
         qty = 1  # строго по ТЗ
         price_opt = _get_drop_price_for_code_sup(state, code_sup)
         if price_opt <= 0.0 and profit_percent_dec > 0.0 and price_retail > 0:
+            fallback_count += 1
             price_opt = float(price_retail) / (1.0 + profit_percent_dec)
         price_opt = round(float(price_opt), 2)
 
@@ -527,11 +630,16 @@ async def parse_feed_stock_to_json(
         )
 
     logger.info("D10: Сток распарсен, позиций in stock: %d", len(rows))
+    if fallback_count > 0:
+        logger.warning(
+            "D10: fallback via profit_percent applied for %d positions (qty > 0)",
+            fallback_count,
+        )
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CATALOG: Google Drive Excel -> delta JSON
+# CATALOG: Excel URL -> delta JSON
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def parse_feed_catalog_to_json(
@@ -541,32 +649,20 @@ async def parse_feed_catalog_to_json(
 ) -> str:
     """
     Каталог D10:
-      1) gdrive_folder берём из dropship_enterprises по code
-      2) в папке 1 Excel файл
-      3) заголовки в строке 4
-      4) выдаём: первый раз все, далее только изменения
-      5) сохраняем drop, грн. в локальный кэш для стока
+      1) Скачиваем Excel по URL (env ZOOHUB_PRICE_URL)
+      2) Заголовки в строке 4
+      3) Выдаём: первый раз все, далее только изменения
+      4) Сохраняем drop-price в локальный кэш для стока
     """
     try:
-        folder_id = await _get_gdrive_folder_by_code(code)
-        if not folder_id:
-            raise RuntimeError(f"D10: Не найден gdrive_folder в dropship_enterprises для code='{code}'")
-
-        drive_service = await _connect_to_google_drive()
-        file_meta = await _fetch_single_file_metadata(drive_service, folder_id)
-        file_id = file_meta["id"]
-        file_name = file_meta.get("name") or "catalog.xlsx"
-        logger.info("D10: Найден файл каталога: %s (%s)", file_name, file_id)
-
-        file_bytes = await _download_file_bytes(drive_service, file_id)
-        all_items = _parse_d10_catalog_excel_bytes(file_bytes)
+        all_items = await _load_catalog_items_from_excel_url(timeout=timeout)
 
         changed_items = _apply_delta_and_update_state(code=code, items=all_items)
 
         return json.dumps(changed_items, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        msg = f"D10: Ошибка обработки каталога из Google Drive: {e}"
+        msg = f"D10: Ошибка обработки каталога из URL: {e}"
         logger.exception(msg)
         send_notification(msg, "Разработчик")
         return "[]"
@@ -591,7 +687,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=(
             "Парсер поставщика D10 (ZooHub): "
-            "catalog (Excel из Google Drive, заголовки в строке 4, first full then delta, cache drop price) "
+            "catalog (Excel по URL, заголовки в строке 4, first full then delta, cache drop price) "
             "и stock (XML feed_url из dropship_enterprises, mpn->code_sup, price_opt from cached drop)."
         )
     )

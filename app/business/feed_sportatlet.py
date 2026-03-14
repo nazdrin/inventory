@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Literal
@@ -50,6 +51,17 @@ def _to_float(val: Optional[str]) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _get_price_opt_multiplier() -> float:
+    """Берёт множитель для корректировки price_opt из env, fallback = 0.97."""
+    raw = os.getenv("D6_PRICE_OPT_MULTIPLIER")
+    if raw is None or str(raw).strip() == "":
+        return 0.97
+    try:
+        return float(str(raw).strip().replace(",", "."))
+    except Exception:
+        return 0.97
 
 
 def _parse_delivery_date(val: Optional[str]) -> Optional[date]:
@@ -245,6 +257,7 @@ async def parse_d6_stock_to_json(*, code: str = "D6", timeout: int = 30) -> str:
         return "[]"
 
     rows: List[Dict[str, object]] = []
+    price_opt_multiplier = _get_price_opt_multiplier()
 
     for item in _d6_collect_items(root):
         # Фильтр по дате отправки (берём только ближайшие допустимые будни)
@@ -272,6 +285,7 @@ async def parse_d6_stock_to_json(*, code: str = "D6", timeout: int = 30) -> str:
 
         price_retail = _d6_extract_price_retail(item)
         price_opt = _d6_extract_price_opt(item)
+        price_opt = price_opt * price_opt_multiplier
 
         rows.append({
             "code_sup": art,

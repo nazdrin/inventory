@@ -13,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
 from app.models import EnterpriseSettings
+from app.services.order_sender import send_orders_to_tabletki
 
 SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"
 NP_BASE_URL = "https://api.novaposhta.ua/v2.0/json/"
 NEW_STATUS_ID = 1
 TARGET_STATUS_ID = 21
 DEFAULT_DUPLICATE_STATUS_ID = 20
+DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS = [9, 19, 18, 20]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +73,35 @@ def _env_str(name: str, default: str) -> str:
     if raw is None or raw == "":
         return default
     return raw
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int_list(name: str, default: List[int]) -> List[int]:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+
+    parts = [item.strip() for item in str(raw).replace(";", ",").split(",")]
+    parsed: List[int] = []
+    for part in parts:
+        if not part:
+            continue
+        try:
+            parsed.append(int(part))
+        except (TypeError, ValueError):
+            logger.warning("Неверное значение в %s: %r (пропущено)", name, part)
+
+    if parsed:
+        return parsed
+
+    logger.warning("Неверное значение %s=%r, используется default=%s", name, raw, default)
+    return default
 
 
 def _parse_csv_items(value: str) -> List[str]:
@@ -142,8 +173,16 @@ async def _get_salesdrive_api_key(db: AsyncSession, enterprise_code: str) -> str
 
 
 async def _fetch_new_orders(api_key: str, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    return await _fetch_orders_by_status(api_key=api_key, status_id=NEW_STATUS_ID, client=client)
+
+
+async def _fetch_orders_by_status(
+    api_key: str,
+    status_id: int,
+    client: httpx.AsyncClient,
+) -> List[Dict[str, Any]]:
     url = f"{SALESDRIVE_BASE_URL.rstrip('/')}/api/order/list/"
-    params = {"filter[statusId]": NEW_STATUS_ID}
+    params = {"filter[statusId]": status_id}
     headers = {
         "Accept": "application/json",
         "X-Api-Key": api_key,
@@ -175,6 +214,32 @@ async def _update_status(
     if ttn_number:
         data["novaposhta"] = {"ttn": ttn_number}
     payload = {"id": order_id, "data": data}
+    resp = await client.post(url, headers=headers, json=payload, timeout=30.0)
+    if not (200 <= resp.status_code < 300):
+        raise RuntimeError(f"POST {url} -> {resp.status_code}: {resp.text[:500]}")
+
+
+async def _update_obrabotano_only(
+    api_key: str,
+    order_id: Any,
+    value: int,
+    client: httpx.AsyncClient,
+) -> None:
+    """
+    Обновляет только поле obrabotano в SalesDrive, без смены statusId.
+    """
+    url = f"{SALESDRIVE_BASE_URL.rstrip('/')}/api/order/update/"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Api-Key": api_key,
+    }
+    payload = {
+        "id": order_id,
+        "data": {
+            "obrabotano": value,
+        },
+    }
     resp = await client.post(url, headers=headers, json=payload, timeout=30.0)
     if not (200 <= resp.status_code < 300):
         raise RuntimeError(f"POST {url} -> {resp.status_code}: {resp.text[:500]}")
@@ -229,6 +294,260 @@ def _to_kyiv(dt: datetime, tz: ZoneInfo) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=tz)
     return dt.astimezone(tz)
+
+
+def _parse_supplier_id(order: Dict[str, Any]) -> Optional[int]:
+    supplier_id_raw = order.get("supplierlist")
+    if isinstance(supplier_id_raw, int):
+        return supplier_id_raw
+    if isinstance(supplier_id_raw, str):
+        try:
+            return int(supplier_id_raw.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _is_obrabotano_marked(order: Dict[str, Any]) -> bool:
+    value = order.get("obrabotano")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return int(value) == 1
+        except (TypeError, ValueError):
+            return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def _to_qty_ship(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_price_ship(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_tabletki_order_payload(order: Dict[str, Any]) -> Dict[str, Any]:
+    rows: List[Dict[str, Any]] = []
+    products = order.get("products") or []
+    if isinstance(products, list):
+        for p in products:
+            if not isinstance(p, dict):
+                continue
+            goods_code = str(
+                p.get("parameter")
+                or p.get("productId")
+                or p.get("id")
+                or ""
+            ).strip()
+            qty_ship = _to_qty_ship(p.get("amount"))
+            if not goods_code or qty_ship <= 0:
+                continue
+            rows.append(
+                {
+                    "goodsCode": goods_code,
+                    "goodsName": str(p.get("name") or ""),
+                    "goodsProducer": "",
+                    "qtyShip": qty_ship,
+                    "priceShip": _to_price_ship(p.get("price")),
+                }
+            )
+
+    order_id = str(order.get("externalId") or order.get("id") or "").strip()
+    branch_id = str(order.get("branch") or order.get("utmSource") or "").strip()
+    return {
+        "id": order_id,
+        "statusID": 4,
+        "branchID": branch_id,
+        "rows": rows,
+    }
+
+
+def _classify_for_main_flow(
+    order: Dict[str, Any],
+    allowed_supplier_ids_set: set[int],
+    now_kyiv: datetime,
+    cutoff: datetime,
+    kyiv_tz: ZoneInfo,
+) -> Tuple[bool, str]:
+    supplier_id = _parse_supplier_id(order)
+    if supplier_id is None:
+        return False, "supplier_missing"
+    if supplier_id not in allowed_supplier_ids_set:
+        return False, "supplier_not_allowed"
+
+    created_at = _parse_salesdrive_dt(order.get("orderTime"))
+    if not created_at:
+        return False, "missing_orderTime"
+
+    created_at_kyiv = _to_kyiv(created_at, kyiv_tz)
+    if created_at_kyiv > now_kyiv:
+        return False, "created_in_future"
+    if created_at_kyiv.date() == now_kyiv.date() and created_at_kyiv > cutoff:
+        return False, "too_new_for_main"
+
+    primary_contact = order.get("primaryContact") or {}
+    client_rating = primary_contact.get("clientRating")
+    if not _buyout_ok(client_rating):
+        return False, "buyout_not_ok"
+
+    return True, "matched_for_main"
+
+
+def _eligible_for_fallback_by_timeout(
+    order: Dict[str, Any],
+    now_kyiv: datetime,
+    kyiv_tz: ZoneInfo,
+    timeout_minutes: int,
+) -> Tuple[bool, str]:
+    if timeout_minutes <= 0:
+        return True, "timeout_disabled"
+    created_at = _parse_salesdrive_dt(order.get("orderTime"))
+    if not created_at:
+        return False, "missing_orderTime_for_fallback"
+    created_at_kyiv = _to_kyiv(created_at, kyiv_tz)
+    if created_at_kyiv > now_kyiv:
+        return False, "created_in_future_for_fallback"
+    age_minutes = (now_kyiv - created_at_kyiv).total_seconds() / 60.0
+    if age_minutes < timeout_minutes:
+        return False, "too_new_for_fallback"
+    return True, "eligible_by_timeout"
+
+
+async def _get_tabletki_credentials_by_enterprise(enterprise_code: str) -> Tuple[str, str]:
+    async with get_async_db() as db:
+        assert isinstance(db, AsyncSession)
+        q = (
+            select(EnterpriseSettings.tabletki_login, EnterpriseSettings.tabletki_password)
+            .where(EnterpriseSettings.enterprise_code == str(enterprise_code))
+            .limit(1)
+        )
+        row = (await db.execute(q)).first()
+        if not row:
+            return "", ""
+        return str(row[0] or ""), str(row[1] or "")
+
+
+async def _process_fallback_orders_batch(
+    *,
+    source: str,
+    orders: List[Dict[str, Any]],
+    api_key: str,
+    client: httpx.AsyncClient,
+    now_kyiv: datetime,
+    kyiv_tz: ZoneInfo,
+    timeout_minutes: int,
+    dry_run: bool,
+    tabletki_login: str,
+    tabletki_password: str,
+    tabletki_cancel_reason_default: int,
+) -> Dict[str, int]:
+    counters = {
+        "total_candidates": 0,
+        "eligible_timeout": 0,
+        "skipped_already_processed": 0,
+        "skipped_too_new": 0,
+        "sent_tabletki": 0,
+        "obrabotano_updated": 0,
+        "errors": 0,
+    }
+
+    for order in orders:
+        order_id = order.get("id")
+        if not order_id:
+            continue
+        counters["total_candidates"] += 1
+
+        if _is_obrabotano_marked(order):
+            counters["skipped_already_processed"] += 1
+            continue
+
+        eligible, timeout_reason = _eligible_for_fallback_by_timeout(
+            order=order,
+            now_kyiv=now_kyiv,
+            kyiv_tz=kyiv_tz,
+            timeout_minutes=timeout_minutes,
+        )
+        if not eligible:
+            if timeout_reason in {
+                "too_new_for_fallback",
+                "missing_orderTime_for_fallback",
+                "created_in_future_for_fallback",
+            }:
+                counters["skipped_too_new"] += 1
+            continue
+        counters["eligible_timeout"] += 1
+
+        tabletki_order = _build_tabletki_order_payload(order)
+        if not tabletki_order.get("id"):
+            counters["errors"] += 1
+            logger.warning("Fallback[%s] skip order without externalId/id: order_id=%s", source, order_id)
+            continue
+        if not tabletki_order.get("rows"):
+            counters["errors"] += 1
+            logger.warning("Fallback[%s] skip order without valid rows: order_id=%s", source, order_id)
+            continue
+
+        if dry_run:
+            logger.info(
+                "DRY RUN fallback[%s]: would send to Tabletki and set SalesDrive obrabotano=1 for order=%s",
+                source,
+                order_id,
+            )
+            counters["sent_tabletki"] += 1
+            continue
+
+        try:
+            async with get_async_db() as db:
+                assert isinstance(db, AsyncSession)
+                await send_orders_to_tabletki(
+                    session=db,
+                    orders=[tabletki_order],
+                    tabletki_login=tabletki_login,
+                    tabletki_password=tabletki_password,
+                    cancel_reason=tabletki_cancel_reason_default,
+                )
+            counters["sent_tabletki"] += 1
+        except Exception as exc:
+            counters["errors"] += 1
+            logger.exception("Fallback[%s] send to Tabletki failed for order=%s: %s", source, order_id, exc)
+            continue
+
+        try:
+            await _update_obrabotano_only(
+                api_key=api_key,
+                order_id=order_id,
+                value=1,
+                client=client,
+            )
+            counters["obrabotano_updated"] += 1
+        except Exception as exc:
+            counters["errors"] += 1
+            logger.exception("Fallback[%s] obrabotano update failed for order=%s: %s", source, order_id, exc)
+
+    logger.info(
+        "Fallback batch[%s]: candidates=%s eligible_timeout=%s sent=%s obrabotano_updated=%s "
+        "skipped_already_processed=%s skipped_too_new=%s errors=%s",
+        source,
+        counters["total_candidates"],
+        counters["eligible_timeout"],
+        counters["sent_tabletki"],
+        counters["obrabotano_updated"],
+        counters["skipped_already_processed"],
+        counters["skipped_too_new"],
+        counters["errors"],
+    )
+    return counters
 
 
 def normalize_phone(phone: str) -> str:
@@ -465,14 +784,33 @@ async def process_biotus_orders(
     updated = 0
     skipped = 0
     duplicate_marked = 0
+    main_processed = 0
     np_api_key = _env_str("NP_API_KEY", "")
     duplicate_status_id = _env_int("BIOTUS_DUPLICATE_STATUS_ID", DEFAULT_DUPLICATE_STATUS_ID)
+    fallback_enabled = _env_bool("BIOTUS_ENABLE_UNHANDLED_FALLBACK", True)
+    fallback_timeout_minutes = _env_int("BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES", 60)
+    fallback_additional_status_ids = _env_int_list(
+        "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
+        DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS,
+    )
+    tabletki_cancel_reason_default = _env_int("TABLETKI_CANCEL_REASON_DEFAULT", 18)
     allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
     allowed_supplier_ids_set = set(allowed_supplier_ids)
     matched: List[Dict[str, Any]] = []
+    unhandled_by_main: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
     supplier_seen_counts: Dict[int, int] = {}
     supplier_matched_counts: Dict[int, int] = {}
+    unhandled_reason_counts: Dict[str, int] = {}
+
+    fallback_total_candidates = 0
+    fallback_eligible_timeout = 0
+    fallback_skipped_already_processed = 0
+    fallback_skipped_too_new = 0
+    fallback_sent_tabletki = 0
+    fallback_obrabotano_updated = 0
+    fallback_errors = 0
+    fallback_additional_total_orders = 0
 
     async with httpx.AsyncClient(verify=verify_ssl) as client:
         orders = await _fetch_new_orders(api_key, client)
@@ -480,84 +818,28 @@ async def process_biotus_orders(
         for order in orders:
             order_id = order.get("id")
             supplier_id_raw = order.get("supplierlist")
-            supplier_id: Optional[int]
-            if isinstance(supplier_id_raw, int):
-                supplier_id = supplier_id_raw
-            elif isinstance(supplier_id_raw, str):
-                try:
-                    supplier_id = int(supplier_id_raw.strip())
-                except ValueError:
-                    supplier_id = None
-            else:
-                supplier_id = None
+            supplier_id = _parse_supplier_id(order)
 
             if supplier_id is not None:
                 supplier_seen_counts[supplier_id] = supplier_seen_counts.get(supplier_id, 0) + 1
-            if supplier_id not in allowed_supplier_ids_set:
+            is_main_eligible, reason = _classify_for_main_flow(
+                order=order,
+                allowed_supplier_ids_set=allowed_supplier_ids_set,
+                now_kyiv=now_kyiv,
+                cutoff=cutoff,
+                kyiv_tz=kyiv_tz,
+            )
+            if not is_main_eligible:
+                unhandled_by_main.append({"order": order, "reason": reason})
+                unhandled_reason_counts[reason] = unhandled_reason_counts.get(reason, 0) + 1
                 if len(debug_samples) < 2:
                     debug_samples.append(
                         {
                             "id": order_id,
-                            "reason": "supplier_not_allowed",
+                            "reason": reason,
                             "supplierlist": supplier_id_raw,
                             "allowed_suppliers": allowed_supplier_ids,
                             "orderTime": order.get("orderTime"),
-                        }
-                    )
-                continue
-
-            created_at = _parse_salesdrive_dt(order.get("orderTime"))
-            if not created_at:
-                if len(debug_samples) < 2:
-                    debug_samples.append(
-                        {
-                            "id": order_id,
-                            "reason": "missing_createTime",
-                            "supplierlist": supplier_id_raw,
-                            "orderTime": order.get("orderTime"),
-                        }
-                    )
-                continue
-            created_at_kyiv = _to_kyiv(created_at, kyiv_tz)
-            if created_at_kyiv > now_kyiv:
-                if len(debug_samples) < 2:
-                    debug_samples.append(
-                        {
-                            "id": order_id,
-                            "reason": "created_in_future",
-                            "supplierlist": supplier_id_raw,
-                            "orderTime": created_at_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
-                            "now_kyiv": now_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
-                        }
-                    )
-                continue
-            if created_at_kyiv.date() == now_kyiv.date() and created_at_kyiv > cutoff:
-                if len(debug_samples) < 2:
-                    debug_samples.append(
-                        {
-                            "id": order_id,
-                            "reason": "created_too_new_today",
-                            "supplierlist": supplier_id_raw,
-                            "orderTime": created_at_kyiv.strftime("%Y-%m-%d %H:%M:%S"),
-                            "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
-                        }
-                    )
-                continue
-
-            primary_contact = order.get("primaryContact") or {}
-            client_rating = primary_contact.get("clientRating")
-            if not _buyout_ok(client_rating):
-                if len(debug_samples) < 2:
-                    debug_samples.append(
-                        {
-                            "id": order_id,
-                            "reason": "buyout_not_ok",
-                            "supplierlist": supplier_id_raw,
-                            "buyoutPercent": (
-                                client_rating.get("buyoutPercent")
-                                if isinstance(client_rating, dict)
-                                else None
-                            ),
                         }
                     )
                 continue
@@ -641,6 +923,7 @@ async def process_biotus_orders(
                     ttn_number=None,
                     client=client,
                 )
+                main_processed += 1
                 continue
 
             if supplier_id == 40:
@@ -661,6 +944,7 @@ async def process_biotus_orders(
                     client=client,
                 )
                 updated += 1
+                main_processed += 1
                 logger.info(
                     "Заказ %s (supplier=40) обновлен -> %s без формирования ТТН",
                     order_id,
@@ -679,6 +963,10 @@ async def process_biotus_orders(
 
             if not np_api_key:
                 logger.error("NP_API_KEY не задан, пропуск заказа %s", order_id)
+                unhandled_by_main.append({"order": order, "reason": "main_np_api_key_missing"})
+                unhandled_reason_counts["main_np_api_key_missing"] = (
+                    unhandled_reason_counts.get("main_np_api_key_missing", 0) + 1
+                )
                 continue
 
             phone, first_name, last_name = _extract_contact(order)
@@ -703,6 +991,10 @@ async def process_biotus_orders(
                     city_ref,
                     branch_ref,
                 )
+                unhandled_by_main.append({"order": order, "reason": "main_missing_ttn_data"})
+                unhandled_reason_counts["main_missing_ttn_data"] = (
+                    unhandled_reason_counts.get("main_missing_ttn_data", 0) + 1
+                )
                 continue
 
             recipient_ref, contact_recipient_ref, err = await np_create_recipient(
@@ -714,6 +1006,10 @@ async def process_biotus_orders(
             )
             if err or not recipient_ref or not contact_recipient_ref:
                 logger.error("Не удалось создать получателя для заказа %s: %s", order_id, err)
+                unhandled_by_main.append({"order": order, "reason": "main_np_recipient_error"})
+                unhandled_reason_counts["main_np_recipient_error"] = (
+                    unhandled_reason_counts.get("main_np_recipient_error", 0) + 1
+                )
                 continue
 
             ttn_number, err = await np_create_ttn(
@@ -730,6 +1026,10 @@ async def process_biotus_orders(
             )
             if err or not ttn_number:
                 logger.error("Не удалось создать ТТН для заказа %s: %s", order_id, err)
+                unhandled_by_main.append({"order": order, "reason": "main_np_ttn_error"})
+                unhandled_reason_counts["main_np_ttn_error"] = (
+                    unhandled_reason_counts.get("main_np_ttn_error", 0) + 1
+                )
                 continue
 
             await _update_status(
@@ -740,7 +1040,88 @@ async def process_biotus_orders(
                 client=client,
             )
             updated += 1
+            main_processed += 1
             logger.info("Статус заказа %s обновлен -> %s, ТТН=%s", order_id, TARGET_STATUS_ID, ttn_number)
+
+        if fallback_enabled:
+            tabletki_login, tabletki_password = await _get_tabletki_credentials_by_enterprise(str(enterprise_code))
+            if not tabletki_login or not tabletki_password:
+                logger.warning(
+                    "Fallback disabled in run due to missing tabletki_login/password for enterprise=%s",
+                    enterprise_code,
+                )
+            else:
+                # 1) существующая fallback-ветка: необработанные заказы из status=1
+                from_status1_orders = [item.get("order") or {} for item in unhandled_by_main]
+                c_main = await _process_fallback_orders_batch(
+                    source="status1_unhandled",
+                    orders=from_status1_orders,
+                    api_key=api_key,
+                    client=client,
+                    now_kyiv=now_kyiv,
+                    kyiv_tz=kyiv_tz,
+                    timeout_minutes=fallback_timeout_minutes,
+                    dry_run=dry_run,
+                    tabletki_login=tabletki_login,
+                    tabletki_password=tabletki_password,
+                    tabletki_cancel_reason_default=tabletki_cancel_reason_default,
+                )
+
+                # 2) новая ветка: отдельные статусы из env BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS
+                additional_orders: List[Dict[str, Any]] = []
+                for status_id in fallback_additional_status_ids:
+                    status_orders = await _fetch_orders_by_status(
+                        api_key=api_key,
+                        status_id=status_id,
+                        client=client,
+                    )
+                    fallback_additional_total_orders += len(status_orders)
+                    additional_orders.extend(status_orders)
+
+                c_additional = await _process_fallback_orders_batch(
+                    source="status_9_19_18_20",
+                    orders=additional_orders,
+                    api_key=api_key,
+                    client=client,
+                    now_kyiv=now_kyiv,
+                    kyiv_tz=kyiv_tz,
+                    timeout_minutes=fallback_timeout_minutes,
+                    dry_run=dry_run,
+                    tabletki_login=tabletki_login,
+                    tabletki_password=tabletki_password,
+                    tabletki_cancel_reason_default=tabletki_cancel_reason_default,
+                )
+
+                fallback_total_candidates = c_main["total_candidates"] + c_additional["total_candidates"]
+                fallback_eligible_timeout = c_main["eligible_timeout"] + c_additional["eligible_timeout"]
+                fallback_skipped_already_processed = c_main["skipped_already_processed"] + c_additional["skipped_already_processed"]
+                fallback_skipped_too_new = c_main["skipped_too_new"] + c_additional["skipped_too_new"]
+                fallback_sent_tabletki = c_main["sent_tabletki"] + c_additional["sent_tabletki"]
+                fallback_obrabotano_updated = c_main["obrabotano_updated"] + c_additional["obrabotano_updated"]
+                fallback_errors = c_main["errors"] + c_additional["errors"]
+        else:
+            fallback_total_candidates = len(unhandled_by_main)
+
+        logger.info(
+            "Biotus summary: total_status1=%s main_matched=%s main_processed=%s unhandled_by_main=%s "
+            "fallback_enabled=%s fallback_additional_total_orders=%s fallback_candidates=%s fallback_eligible_timeout=%s fallback_sent=%s "
+            "fallback_obrabotano_updated=%s fallback_skipped_already_processed=%s fallback_skipped_too_new=%s fallback_errors=%s",
+            len(orders),
+            len(matched),
+            main_processed,
+            len(unhandled_by_main),
+            fallback_enabled,
+            fallback_additional_total_orders,
+            fallback_total_candidates,
+            fallback_eligible_timeout,
+            fallback_sent_tabletki,
+            fallback_obrabotano_updated,
+            fallback_skipped_already_processed,
+            fallback_skipped_too_new,
+            fallback_errors,
+        )
+        if unhandled_reason_counts:
+            logger.info("Biotus unhandled reasons: %s", unhandled_reason_counts)
 
         logger.info("Skipped orders due to duplicate phones: %s", skipped)
         logger.info("Orders marked as duplicate: %s", duplicate_marked)
@@ -749,8 +1130,24 @@ async def process_biotus_orders(
         "total": len(orders),
         "matched": len(matched),
         "updated": updated,
+        "main_processed": main_processed,
         "skipped": skipped,
         "duplicate_marked": duplicate_marked,
+        "unhandled_by_main": len(unhandled_by_main),
+        "unhandled_reason_counts": unhandled_reason_counts,
+        "fallback_enabled": fallback_enabled,
+        "fallback_timeout_minutes": fallback_timeout_minutes,
+        "fallback_additional_total_orders": fallback_additional_total_orders,
+        "fallback_total_candidates": fallback_total_candidates,
+        "fallback_eligible_timeout": fallback_eligible_timeout,
+        "fallback_skipped_already_processed": fallback_skipped_already_processed,
+        "fallback_skipped_too_new": fallback_skipped_too_new,
+        "fallback_sent_tabletki": fallback_sent_tabletki,
+        "fallback_obrabotano_updated": fallback_obrabotano_updated,
+        "fallback_errors": fallback_errors,
+        # Backward-compatible aliases for external consumers of old keys.
+        "fallback_skipped_note_marker": fallback_skipped_already_processed,
+        "fallback_note_updated": fallback_obrabotano_updated,
         "allowed_suppliers": allowed_supplier_ids,
         "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": window_minutes,
