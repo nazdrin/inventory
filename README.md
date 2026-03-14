@@ -16,7 +16,7 @@ source .venv/bin/activate
 ### Гит
 ```
 git add .
-git commit -m "загрузка каталога таблетки и категорий"
+git commit -m "спортатлет и вгх"
 git push origin develop
 
 ### 3. Установить зависимости Python
