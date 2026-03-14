@@ -12,10 +12,13 @@ cd /Users/dmitrijnazdrin/inventory_service_1
 
 ```bash
 source .venv/bin/activate
+
+### Гит
 ```
 git add .
-git commit -m "автоподтверждение через час +"
+git commit -m "новые модели каталога"
 git push origin develop
+
 ### 3. Установить зависимости Python
 
 ```bash
