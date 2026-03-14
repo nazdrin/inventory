@@ -17,6 +17,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     CheckConstraint,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -607,4 +608,175 @@ class BalancerTestState(Base, TimestampMixin):
         CheckConstraint("current_porog >= min_porog", name="ck_balancer_test_state_porog_ge_min"),
         CheckConstraint("current_porog <= max_porog", name="ck_balancer_test_state_porog_le_max"),
         CheckConstraint("max_porog >= min_porog", name="ck_balancer_test_state_max_ge_min"),
+    )
+
+
+class MasterCatalog(Base, TimestampMixin):
+    __tablename__ = "master_catalog"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    sku = Column(String(500), nullable=False, unique=True)
+    barcode = Column(String(500), nullable=True)
+    manufacturer = Column(String(500), nullable=True)
+    name_ua = Column(String(500), nullable=True)
+    name_ru = Column(String(500), nullable=True)
+    category_l1_code = Column(String(500), nullable=True)
+    category_l2_code = Column(String(500), nullable=True)
+    weight_g = Column(Numeric(10, 2), nullable=True)
+    length_mm = Column(Numeric(10, 2), nullable=True)
+    width_mm = Column(Numeric(10, 2), nullable=True)
+    height_mm = Column(Numeric(10, 2), nullable=True)
+    volume_ml = Column(Numeric(10, 2), nullable=True)
+    description_ua = Column(Text, nullable=True)
+    description_ru = Column(Text, nullable=True)
+    main_image_url = Column(String(500), nullable=True)
+    is_archived = Column(Boolean, nullable=False, server_default=text("false"))
+    archived_reason = Column(String(500), nullable=True)
+
+    __table_args__ = (
+        Index("ix_master_catalog_barcode", "barcode"),
+        Index("ix_master_catalog_is_archived", "is_archived"),
+        Index("ix_master_catalog_category_l1_code", "category_l1_code"),
+        Index("ix_master_catalog_category_l2_code", "category_l2_code"),
+    )
+
+
+class CatalogCategory(Base, TimestampMixin):
+    __tablename__ = "catalog_categories"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    category_code = Column(String(500), nullable=False, unique=True)
+    parent_category_code = Column(String(500), nullable=True)
+    name_ua = Column(String(500), nullable=False)
+    name_ru = Column(String(500), nullable=True)
+    level_no = Column(Integer, nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+
+    __table_args__ = (
+        Index("ix_catalog_categories_parent_category_code", "parent_category_code"),
+        Index("ix_catalog_categories_level_no", "level_no"),
+        Index("ix_catalog_categories_is_active", "is_active"),
+    )
+
+
+class RawTabletkiCatalog(Base):
+    __tablename__ = "raw_tabletki_catalog"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tabletki_guid = Column(String(500), nullable=True)
+    sku = Column(String(500), nullable=False)
+    barcode = Column(String(500), nullable=True)
+    manufacturer = Column(String(500), nullable=True)
+    name_ua = Column(String(500), nullable=True)
+    name_ru = Column(String(500), nullable=True)
+    category_l1_code = Column(String(500), nullable=True)
+    category_l1_name = Column(String(500), nullable=True)
+    category_l2_code = Column(String(500), nullable=True)
+    category_l2_name = Column(String(500), nullable=True)
+    weight_g = Column(Numeric(10, 2), nullable=True)
+    length_mm = Column(Numeric(10, 2), nullable=True)
+    width_mm = Column(Numeric(10, 2), nullable=True)
+    height_mm = Column(Numeric(10, 2), nullable=True)
+    volume_ml = Column(Numeric(10, 2), nullable=True)
+    description_ua = Column(Text, nullable=True)
+    description_ru = Column(Text, nullable=True)
+    source_payload = Column(JSONB, nullable=True)
+    source_hash = Column(String(500), nullable=True)
+    loaded_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_raw_tabletki_catalog_sku", "sku"),
+        Index("ix_raw_tabletki_catalog_tabletki_guid", "tabletki_guid"),
+        Index("ix_raw_tabletki_catalog_source_hash", "source_hash"),
+    )
+
+
+class RawSupplierFeedProduct(Base):
+    __tablename__ = "raw_supplier_feed_products"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    supplier_id = Column(BigInteger, nullable=False)
+    feed_product_id = Column(String(500), nullable=True)
+    supplier_code = Column(String(500), nullable=True)
+    name_raw = Column(String(500), nullable=True)
+    manufacturer_raw = Column(String(500), nullable=True)
+    barcode = Column(String(500), nullable=True)
+    description_raw = Column(Text, nullable=True)
+    weight_g = Column(Numeric(10, 2), nullable=True)
+    length_mm = Column(Numeric(10, 2), nullable=True)
+    width_mm = Column(Numeric(10, 2), nullable=True)
+    height_mm = Column(Numeric(10, 2), nullable=True)
+    volume_ml = Column(Numeric(10, 2), nullable=True)
+    category_raw = Column(String(500), nullable=True)
+    source_payload = Column(JSONB, nullable=True)
+    source_hash = Column(String(500), nullable=True)
+    loaded_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_raw_supplier_feed_products_supplier_id", "supplier_id"),
+        Index("ix_raw_supplier_feed_products_supplier_code", "supplier_code"),
+        Index("ix_raw_supplier_feed_products_source_hash", "source_hash"),
+    )
+
+
+class CatalogSupplierMapping(Base):
+    __tablename__ = "catalog_supplier_mapping"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    sku = Column(String(500), ForeignKey("master_catalog.sku"), nullable=False)
+    supplier_id = Column(BigInteger, nullable=False)
+    supplier_code = Column(String(500), nullable=False)
+    supplier_product_id = Column(String(500), nullable=True)
+    supplier_product_name_raw = Column(String(500), nullable=True)
+    barcode = Column(String(500), nullable=True)
+    is_confirmed = Column(Boolean, nullable=False, server_default=text("false"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    match_source = Column(String(500), nullable=False, server_default=text("'auto'"))
+    first_seen_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "supplier_code", name="uq_catalog_supplier_mapping_supplier_code"),
+        Index("ix_catalog_supplier_mapping_sku", "sku"),
+        Index("ix_catalog_supplier_mapping_supplier_id", "supplier_id"),
+        Index("ix_catalog_supplier_mapping_sku_is_active", "sku", "is_active"),
+    )
+
+
+class CatalogImage(Base, TimestampMixin):
+    __tablename__ = "catalog_images"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    sku = Column(String(500), ForeignKey("master_catalog.sku"), nullable=False)
+    supplier_id = Column(BigInteger, nullable=True)
+    source_type = Column(String(500), nullable=True)
+    image_url = Column(String(500), nullable=False)
+    sort_order = Column(Integer, nullable=True, server_default=text("0"))
+    is_main = Column(Boolean, nullable=False, server_default=text("false"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+
+    __table_args__ = (
+        Index("ix_catalog_images_sku", "sku"),
+        Index("ix_catalog_images_sku_is_active", "sku", "is_active"),
+    )
+
+
+class CatalogContent(Base, TimestampMixin):
+    __tablename__ = "catalog_content"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    sku = Column(String(500), ForeignKey("master_catalog.sku"), nullable=False)
+    language_code = Column(String(500), nullable=False)
+    source_type = Column(String(500), nullable=True)
+    supplier_id = Column(BigInteger, nullable=True)
+    title = Column(String(500), nullable=True)
+    description = Column(Text, nullable=True)
+    is_selected = Column(Boolean, nullable=False, server_default=text("false"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+
+    __table_args__ = (
+        Index("ix_catalog_content_sku", "sku"),
+        Index("ix_catalog_content_sku_language_code", "sku", "language_code"),
+        Index("ix_catalog_content_sku_is_selected", "sku", "is_selected"),
     )
