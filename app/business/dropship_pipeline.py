@@ -147,7 +147,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 # === ВАША ИНФРАСТРУКТУРА / МОДЕЛИ ===
 from app.database import get_async_db
-from app.models import Offer, DropshipEnterprise, CompetitorPrice  # CompetitorPrice: code, city, competitor_price
+from app.models import CatalogSupplierMapping, CompetitorPrice, DropshipEnterprise, MasterCatalog, Offer  # CompetitorPrice: code, city, competitor_price
+from app.business.supplier_identity import get_supplier_id_by_code
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
@@ -553,11 +554,15 @@ async def fetch_active_enterprises(session: AsyncSession) -> List[DropshipEnterp
     return list(res.scalars().all())
 
 # --------------------------------------------------------------------------------------
-# 2) Маппинг Code_<supplier> -> product_code (берём "ID" ВЕРХНИМИ из catalog_mapping)
+# 2) Маппинг supplier item -> product_code
 # --------------------------------------------------------------------------------------
 CATALOG_MAPPING_ID_COL = "ID"  # у вас именно так (UPPER)
 
-async def map_supplier_codes(
+def _use_master_mapping_for_stock() -> bool:
+    return os.getenv("USE_MASTER_MAPPING_FOR_STOCK", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _map_supplier_codes_legacy(
     session: AsyncSession,
     supplier_code: str,
     items: List[dict],
@@ -607,7 +612,121 @@ async def map_supplier_codes(
             "price_opt": it.get("price_opt"),
         })
 
+    logger.info(
+        "Supplier %s: legacy mapping backend used, input=%d mapped=%d",
+        supplier_code,
+        len(items),
+        len(mapped),
+    )
     return mapped
+
+
+async def _map_supplier_codes_master(
+    session: AsyncSession,
+    supplier_code: str,
+    items: List[dict],
+) -> List[dict]:
+    """
+    Новый backend:
+      supplier string code -> numeric supplier_id
+      (supplier_id, supplier_code=code_sup) -> catalog_supplier_mapping
+      sku -> product_code
+
+    Архивные master_catalog.sku исключаются уже на этапе lookup.
+    """
+    supplier_id = get_supplier_id_by_code(supplier_code)
+    if supplier_id is None:
+        logger.warning(
+            "Supplier %s: numeric supplier_id not found in unified supplier map, fallback to legacy mapping backend",
+            supplier_code,
+        )
+        return await _map_supplier_codes_legacy(session, supplier_code, items)
+
+    normalized_codes: List[str] = []
+    seen_codes: set[str] = set()
+    for item in items:
+        code_sup = str(item.get("code_sup") or "").strip()
+        if not code_sup or code_sup in seen_codes:
+            continue
+        seen_codes.add(code_sup)
+        normalized_codes.append(code_sup)
+
+    if not normalized_codes:
+        logger.info("Supplier %s: master mapping backend skipped, no code_sup values", supplier_code)
+        return []
+
+    stmt = (
+        select(
+            CatalogSupplierMapping.supplier_code,
+            CatalogSupplierMapping.sku,
+            MasterCatalog.is_archived,
+        )
+        .join(MasterCatalog, MasterCatalog.sku == CatalogSupplierMapping.sku)
+        .where(
+            CatalogSupplierMapping.supplier_id == supplier_id,
+            CatalogSupplierMapping.supplier_code.in_(normalized_codes),
+            CatalogSupplierMapping.is_active.is_(True),
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+
+    active_lookup: Dict[str, str] = {}
+    archived_codes: set[str] = set()
+    for supplier_item_code, sku, is_archived in rows:
+        code_sup = str(supplier_item_code or "").strip()
+        if not code_sup:
+            continue
+        if bool(is_archived):
+            archived_codes.add(code_sup)
+            continue
+        active_lookup[code_sup] = str(sku)
+
+    mapped: List[dict] = []
+    missing_count = 0
+    archived_count = 0
+    for item in items:
+        code_sup = str(item.get("code_sup") or "").strip()
+        if not code_sup:
+            continue
+
+        if code_sup in archived_codes:
+            archived_count += 1
+            continue
+
+        product_code = active_lookup.get(code_sup)
+        if not product_code:
+            missing_count += 1
+            continue
+
+        mapped.append(
+            {
+                "product_code": product_code,
+                "qty": int(item.get("qty") or 0),
+                "price_retail": item.get("price_retail"),
+                "price_opt": item.get("price_opt"),
+            }
+        )
+
+    logger.info(
+        "Supplier %s: master mapping backend used, supplier_id=%s input=%d matched=%d missing=%d archived=%d",
+        supplier_code,
+        supplier_id,
+        len(items),
+        len(mapped),
+        missing_count,
+        archived_count,
+    )
+    return mapped
+
+
+async def map_supplier_codes(
+    session: AsyncSession,
+    supplier_code: str,
+    items: List[dict],
+) -> List[dict]:
+    if _use_master_mapping_for_stock():
+        return await _map_supplier_codes_master(session, supplier_code, items)
+    return await _map_supplier_codes_legacy(session, supplier_code, items)
 
 # --------------------------------------------------------------------------------------
 # 3) Цена конкурента и расчёт нашей цены

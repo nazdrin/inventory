@@ -16,7 +16,7 @@ source .venv/bin/activate
 ### Гит
 ```
 git add .
-git commit -m "suzira and orto"
+git commit -m "all supl"
 git push origin develop
 
 ### 3. Установить зависимости Python
