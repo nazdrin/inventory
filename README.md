@@ -16,7 +16,7 @@ source .venv/bin/activate
 ### Гит
 ```
 git add .
-git commit -m "dobavki"
+git commit -m "pediakid"
 git push origin develop
 
 ### 3. Установить зависимости Python
