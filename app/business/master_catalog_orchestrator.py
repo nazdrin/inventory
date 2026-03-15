@@ -37,6 +37,10 @@ from app.business.d6_master_dimensions_enrich import enrich_master_dimensions_fr
 from app.business.d6_master_feed_loader import load_d6_raw_supplier_feed
 from app.business.d7_barcode_mapping_sync import sync_d7_supplier_mapping_by_barcode
 from app.business.d7_master_feed_loader import load_d7_raw_supplier_feed
+from app.business.d8_barcode_mapping_sync import sync_d8_supplier_mapping_by_barcode
+from app.business.d8_master_feed_loader import load_d8_raw_supplier_feed
+from app.business.d9_barcode_mapping_sync import sync_d9_supplier_mapping_by_barcode
+from app.business.d9_master_feed_loader import sync_d9_master_feed
 from app.business.master_archive_import import import_master_archive
 from app.business.master_catalog_coverage_report import build_master_catalog_coverage_report
 from app.business.master_content_fallback_d10_select import select_d10_fallback_content
@@ -125,6 +129,10 @@ def _build_suppliers_steps() -> List[Dict[str, Any]]:
         _make_step("d4_barcode_mapping_sync", lambda: sync_d4_supplier_mapping_by_barcode(limit=0)),
         _make_step("d7_master_feed_loader", lambda: load_d7_raw_supplier_feed(limit=0)),
         _make_step("d7_barcode_mapping_sync", lambda: sync_d7_supplier_mapping_by_barcode(limit=0)),
+        _make_step("d8_master_feed_loader", lambda: load_d8_raw_supplier_feed(limit=0)),
+        _make_step("d8_barcode_mapping_sync", lambda: sync_d8_supplier_mapping_by_barcode(limit=0)),
+        _make_step("d9_master_feed_loader", lambda: sync_d9_master_feed(limit=0)),
+        _make_step("d9_barcode_mapping_sync", lambda: sync_d9_supplier_mapping_by_barcode(limit=0)),
         _make_step("d10_master_feed_loader", lambda: load_d10_raw_supplier_feed(limit=0)),
         _make_step("d10_barcode_mapping_sync", lambda: sync_d10_supplier_mapping_by_barcode(limit=0)),
         _make_step("d10_images_sync", lambda: sync_d10_images(limit=0)),
