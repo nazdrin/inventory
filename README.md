@@ -16,7 +16,7 @@ source .venv/bin/activate
 ### Гит
 ```
 git add .
-git commit -m "all supl"
+git commit -m "сток маппинг"
 git push origin develop
 
 ### 3. Установить зависимости Python

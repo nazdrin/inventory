@@ -326,6 +326,7 @@ async def sync_tabletki_raw_to_master(stats: LoaderStats, limit: int = 0) -> Non
             if existing is None:
                 obj = MasterCatalog(
                     sku=raw.sku,
+                    tabletki_guid=raw.tabletki_guid,
                     barcode=raw.barcode,
                     manufacturer=raw.manufacturer,
                     name_ua=raw.name_ua,
@@ -342,6 +343,7 @@ async def sync_tabletki_raw_to_master(stats: LoaderStats, limit: int = 0) -> Non
                 stats.master_inserted += 1
                 continue
 
+            existing.tabletki_guid = raw.tabletki_guid
             existing.barcode = raw.barcode
             existing.manufacturer = raw.manufacturer
             existing.name_ua = raw.name_ua

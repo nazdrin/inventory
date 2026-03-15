@@ -59,6 +59,7 @@ from app.business.master_images_fallback_d5_select import select_d5_fallback_mai
 from app.business.master_main_image_select import select_master_main_images
 from app.business.salesdrive_category_exporter import export_categories_to_salesdrive
 from app.business.salesdrive_master_catalog_exporter import export_master_catalog_to_salesdrive
+from app.business.tabletki_master_catalog_exporter import export_master_catalog_to_tabletki
 from app.business.tabletki_master_catalog_loader import load_tabletki_master_catalog
 
 
@@ -93,11 +94,11 @@ def _make_step(name: str, fn: AsyncStep) -> Dict[str, Any]:
     return {"name": name, "fn": fn}
 
 
-def _require_enterprise(enterprise: Optional[str]) -> str:
+def _require_enterprise(enterprise: Optional[str], purpose: str = "salesdrive") -> str:
     load_dotenv()
     value = (enterprise or "").strip() or (os.getenv("MASTER_CATALOG_ENTERPRISE_CODE") or "").strip()
     if not value:
-        raise RuntimeError("Для режима salesdrive требуется --enterprise или MASTER_CATALOG_ENTERPRISE_CODE")
+        raise RuntimeError(f"Для режима {purpose} требуется --enterprise или MASTER_CATALOG_ENTERPRISE_CODE")
     return value
 
 
@@ -168,7 +169,7 @@ def _build_archive_steps() -> List[Dict[str, Any]]:
 
 
 def _build_salesdrive_steps(enterprise: Optional[str], batch_size: int) -> List[Dict[str, Any]]:
-    enterprise_code = _require_enterprise(enterprise)
+    enterprise_code = _require_enterprise(enterprise, purpose="salesdrive")
     return [
         _make_step(
             "salesdrive_category_exporter",
@@ -189,11 +190,25 @@ def _build_salesdrive_steps(enterprise: Optional[str], batch_size: int) -> List[
     ]
 
 
+def _build_publish_steps(enterprise: Optional[str], limit: int, send: bool) -> List[Dict[str, Any]]:
+    enterprise_code = _require_enterprise(enterprise, purpose="publish")
+    return [
+        _make_step(
+            "tabletki_master_catalog_exporter",
+            lambda: export_master_catalog_to_tabletki(
+                enterprise_code=enterprise_code,
+                limit=limit,
+                send=send,
+            ),
+        )
+    ]
+
+
 def _build_report_steps() -> List[Dict[str, Any]]:
     return [_make_step("master_catalog_coverage_report", build_master_catalog_coverage_report)]
 
 
-def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, skip_salesdrive: bool, skip_archive: bool, skip_report: bool) -> List[Dict[str, Any]]:
+def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, limit: int, send: bool, skip_salesdrive: bool, skip_archive: bool, skip_report: bool) -> List[Dict[str, Any]]:
     if mode == "full":
         steps: List[Dict[str, Any]] = []
         steps.extend(_build_tabletki_steps())
@@ -217,6 +232,8 @@ def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, ski
         return [] if skip_archive else _build_archive_steps()
     if mode == "salesdrive":
         return [] if skip_salesdrive else _build_salesdrive_steps(enterprise, batch_size)
+    if mode == "publish":
+        return _build_publish_steps(enterprise, limit, send)
     if mode == "report":
         return [] if skip_report else _build_report_steps()
 
@@ -231,8 +248,15 @@ async def _run_step(step: Dict[str, Any]) -> StepResult:
     try:
         result = await fn()
         message = None
-        if isinstance(result, dict) and result.get("warnings_count"):
-            message = f"warnings_count={result['warnings_count']}"
+        if isinstance(result, dict):
+            if result.get("warnings_count"):
+                message = f"warnings_count={result['warnings_count']}"
+            elif "sent" in result or "offers_count" in result or "preview_path" in result:
+                message = (
+                    f"sent={result.get('sent', False)} "
+                    f"offers_count={result.get('offers_count', 0)} "
+                    f"preview_path={result.get('preview_path', '')}"
+                ).strip()
         status = "warning" if message else "ok"
     except Exception as exc:
         logger.exception("Ошибка шага: %s", name)
@@ -261,12 +285,16 @@ async def run_master_catalog_orchestrator(
     skip_report: bool = False,
     enterprise: Optional[str] = None,
     batch_size: int = 100,
+    limit: int = 0,
+    send: bool = False,
 ) -> Dict[str, Any]:
     started_at = _utc_now_iso()
     steps = _resolve_steps(
         mode,
         enterprise=enterprise,
         batch_size=batch_size,
+        limit=limit,
+        send=send,
         skip_salesdrive=skip_salesdrive,
         skip_archive=skip_archive,
         skip_report=skip_report,
@@ -292,7 +320,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["tabletki", "suppliers", "selection", "archive", "salesdrive", "report", "full"],
+        choices=["tabletki", "suppliers", "selection", "archive", "salesdrive", "publish", "report", "full"],
         help="режим запуска orchestration pipeline",
     )
     parser.add_argument(
@@ -317,13 +345,24 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--enterprise",
-        help="enterprise code для salesdrive режима",
+        help="enterprise code для salesdrive/publish режима",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=100,
         help="размер batch для salesdrive шагов",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="лимит записей для publish exporter (0 = без лимита)",
+    )
+    parser.add_argument(
+        "--send",
+        action="store_true",
+        help="для publish режима выполнить реальную отправку; без флага publish работает как dry-run",
     )
     return parser.parse_args()
 
@@ -338,6 +377,8 @@ async def _amain() -> None:
         skip_report=args.skip_report,
         enterprise=args.enterprise,
         batch_size=args.batch_size,
+        limit=args.limit,
+        send=args.send,
     )
     import json
     print(json.dumps(result, ensure_ascii=False, indent=2))
