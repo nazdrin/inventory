@@ -22,6 +22,8 @@ from app.business.d3_barcode_mapping_sync import sync_d3_supplier_mapping_by_bar
 from app.business.d3_content_sync import sync_d3_content
 from app.business.d3_images_sync import sync_d3_images
 from app.business.d3_master_feed_loader import load_d3_raw_supplier_feed
+from app.business.d4_barcode_mapping_sync import sync_d4_supplier_mapping_by_barcode
+from app.business.d4_master_feed_loader import load_d4_raw_supplier_feed
 from app.business.d5_barcode_mapping_sync import sync_d5_supplier_mapping_by_barcode
 from app.business.d5_content_sync import sync_d5_content
 from app.business.d5_images_sync import sync_d5_images
@@ -111,6 +113,8 @@ def _build_suppliers_steps() -> List[Dict[str, Any]]:
         _make_step("d5_barcode_mapping_sync", lambda: sync_d5_supplier_mapping_by_barcode(limit=0)),
         _make_step("d5_images_sync", lambda: sync_d5_images(limit=0)),
         _make_step("d5_content_sync", lambda: sync_d5_content(limit=0)),
+        _make_step("d4_master_feed_loader", lambda: load_d4_raw_supplier_feed(limit=0)),
+        _make_step("d4_barcode_mapping_sync", lambda: sync_d4_supplier_mapping_by_barcode(limit=0)),
     ]
 
 
