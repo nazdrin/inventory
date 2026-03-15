@@ -43,6 +43,18 @@ D5_WHOLESALE_CACHE_PATH = os.getenv(
 )
 D5_WHOLESALE_CACHE_TTL_SECONDS = int(os.getenv("D5_WHOLESALE_CACHE_TTL_SECONDS", "7200"))
 
+BARCODE_PARAM_NAMES = {
+    "Штрихкод",
+    "Штрих-код",
+    "Штрих код",
+    "EAN",
+    "EAN-13",
+    "UPC",
+    "GTIN",
+    "Barcode",
+    "barcode",
+}
+
 
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ XML/ФИДА D5 ===
@@ -68,6 +80,53 @@ def _to_float(val: Optional[str]) -> float:
         return float(s)
     except Exception:
         return 0.0
+
+
+def _extract_offer_vendor_code(offer: ET.Element) -> Optional[str]:
+    return _get_text(offer, ["vendorCode"]) or offer.get("vendorCode")
+
+
+def _extract_offer_vendor(offer: ET.Element) -> Optional[str]:
+    return _get_text(offer, ["vendor"])
+
+
+def _extract_offer_name(offer: ET.Element) -> Optional[str]:
+    return _get_text(offer, ["name_ua", "name", "title"])
+
+
+def _extract_offer_description(offer: ET.Element) -> Optional[str]:
+    return _get_text(offer, ["description_ua", "description"])
+
+
+def _extract_offer_barcode(offer: ET.Element) -> Optional[str]:
+    for param in offer.findall(".//param"):
+        name = (param.get("name") or param.get("Name") or "").strip()
+        if name in BARCODE_PARAM_NAMES and param.text and param.text.strip():
+            return param.text.strip()
+    return None
+
+
+def _extract_offer_qty(offer: ET.Element, *, base_price: float) -> int:
+    """Для нового XML D5 available может быть пустым, поэтому сток не должен зависеть только от него."""
+    available_raw = (offer.get("available") or "").strip().lower()
+    if available_raw in {"false", "0", "no"}:
+        return 0
+    if available_raw in {"true", "1", "yes"}:
+        return 5
+
+    quantity_raw = _get_text(offer, ["quantity_in_stock", "quantity", "qty"])
+    if quantity_raw:
+        if quantity_raw.strip().lower() in {"true", "yes"}:
+            return 5
+        if _to_float(quantity_raw) > 0:
+            return 5
+
+    in_stock_raw = _get_text(offer, ["in_stock", "presence_sure"])
+    if in_stock_raw and in_stock_raw.strip().lower() in {"true", "1", "yes"}:
+        return 5
+
+    # Для нового фида наличие позиции и валидной цены считаем достаточным признаком доступности.
+    return 5 if base_price > 0 else 0
 
 
 async def _get_feed_url_by_code(code: str = "D5") -> Optional[str]:
@@ -520,7 +579,7 @@ async def parse_feed_stock_to_json(
 
     Маппинг:
       - vendorCode          -> code_sup
-      - available="true"    -> qty=1, иначе 0
+      - qty                 -> вычисляется автономно из offer/цены, не зависит от catalog flow
       - price               -> base_price
       - price_opt           -> base_price / (1 + profit_percent)
       - price_retail        -> price_opt * (1 + retail_markup/100)
@@ -592,24 +651,25 @@ async def parse_feed_stock_to_json(
     rows: List[Dict[str, Any]] = []
 
     for offer in _collect_offer_nodes(root):
-        # vendorCode — дочерний тег или атрибут (на всякий случай поддержим оба)
-        vendor_code = (
-            _get_text(offer, ["vendorCode"]) or offer.get("vendorCode")
-        )
+        vendor_code = _extract_offer_vendor_code(offer)
         if not vendor_code:
             # Без vendorCode — пропускаем
             continue
 
-        # available="true" -> qty = 1, иначе 0
-        available_raw = (offer.get("available") or "").strip().lower()
-        qty = 5 if available_raw == "true" else 0
+        # Новый XML D5 может передавать пустой available, поэтому наличие считаем автономно.
+        price_raw = _get_text(offer, ["price"])
+        base_price = _to_float(price_raw)
+        qty = _extract_offer_qty(offer, base_price=base_price)
 
         # Игнорируем позиции с нулевым или отрицательным остатком
         if qty <= 0:
             continue
 
-        price_raw = _get_text(offer, ["price"])
-        base_price = _to_float(price_raw)
+        # Дополнительные поля нового XML читаем здесь, чтобы не ломать парсинг актуальной структуры.
+        _extract_offer_vendor(offer)
+        _extract_offer_name(offer)
+        _extract_offer_description(offer)
+        _extract_offer_barcode(offer)
 
         # --- 1) Считаем розничную цену по текущим правилам (как и раньше) ---
         # Сначала получаем расчетную оптовую по старому алгоритму (fallback),

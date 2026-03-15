@@ -314,6 +314,40 @@ def _parse_d11_catalog_excel_xlsx(data: bytes) -> List[Dict[str, Any]]:
     return items
 
 
+async def _load_d11_catalog_lookup(*, code: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Автономно загружает свежий catalog xlsx для D11 и строит lookup по article/id.
+    Используется stock flow, чтобы не зависеть от предыдущего catalog run и state cache.
+    """
+    folder_id = await _get_gdrive_folder_by_code(code)
+    if not folder_id:
+        raise RuntimeError(f"D11: Не найден gdrive_folder в dropship_enterprises для code='{code}'")
+
+    drive_service = await _connect_to_google_drive()
+    file_meta = await _fetch_latest_file_metadata(drive_service, folder_id)
+    file_id = file_meta["id"]
+    file_name = file_meta.get("name") or "catalog.xlsx"
+    logger.info("D11 stock: загружаем catalog lookup из файла: %s (%s)", file_name, file_id)
+
+    file_bytes = await _download_file_bytes(drive_service, file_id)
+    items = _parse_d11_catalog_excel_xlsx(file_bytes)
+
+    lookup: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        item_id = _norm_str(item.get("id"))
+        if not item_id:
+            continue
+        lookup[item_id] = {
+            "name": _norm_str(item.get("name")),
+            "barcode": _norm_str(item.get("barcode")),
+            "price_opt": float(item.get("price_opt") or 0.0),
+            "price_retail": float(item.get("price_retail") or 0.0),
+        }
+
+    logger.info("D11 stock: catalog lookup loaded, items=%d", len(lookup))
+    return lookup
+
+
 def _apply_catalog_delta_and_update_state(*, code: str, items: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     """
     Возвращает только изменившиеся позиции:
@@ -388,9 +422,13 @@ def _read_xls_rows_xlrd(data: bytes) -> List[List[Any]]:
     return rows
 
 
-def _parse_d11_stock_excel_bytes(data: bytes, state: D11State) -> List[Dict[str, Any]]:
+def _parse_d11_stock_excel_bytes(
+    data: bytes,
+    catalog_lookup: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     rows_raw = _read_xls_rows_xlrd(data)
     out: List[Dict[str, Any]] = []
+    missing_lookup_warned = 0
 
     for row in rows_raw:
         # безопасно для коротких строк
@@ -404,8 +442,13 @@ def _parse_d11_stock_excel_bytes(data: bytes, state: D11State) -> List[Dict[str,
         if qty <= 0:
             continue
 
-        price_opt = float(state.opt_by_id.get(code_sup) or 0.0)
-        price_retail = float(state.retail_by_id.get(code_sup) or 0.0)
+        catalog_item = catalog_lookup.get(code_sup) or {}
+        price_opt = float(catalog_item.get("price_opt") or 0.0)
+        price_retail = float(catalog_item.get("price_retail") or 0.0)
+
+        if not catalog_item and missing_lookup_warned < 20:
+            logger.warning("D11 stock: не найден code_sup в catalog lookup: %s", code_sup)
+            missing_lookup_warned += 1
 
         out.append(
             {
@@ -465,9 +508,11 @@ async def parse_feed_stock_to_json(*, code: str = D11_CODE_DEFAULT, timeout: int
       - dropship_enterprises.feed_url содержит ID папки Google Drive
       - берём самый свежий файл из папки (обычно .xls)
       - колонки: B=Артикул(code_sup), D=qty
-      - price_opt / price_retail — из кэша каталога по Артикулу
+      - price_opt / price_retail — из свежего catalog xlsx lookup по Артикулу
     """
     try:
+        catalog_lookup = await _load_d11_catalog_lookup(code=code)
+
         folder_id = await _get_feed_url_by_code(code)
         if not folder_id:
             raise RuntimeError(f"D11: Не найден feed_url (ID папки остатков) в dropship_enterprises для code='{code}'")
@@ -480,8 +525,7 @@ async def parse_feed_stock_to_json(*, code: str = D11_CODE_DEFAULT, timeout: int
 
         file_bytes = await _download_file_bytes(drive_service, file_id)
 
-        state = D11State.load(code)
-        stock_rows = _parse_d11_stock_excel_bytes(file_bytes, state)
+        stock_rows = _parse_d11_stock_excel_bytes(file_bytes, catalog_lookup)
 
         return json.dumps(stock_rows, ensure_ascii=False, indent=2)
 

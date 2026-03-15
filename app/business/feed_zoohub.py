@@ -471,19 +471,7 @@ async def _refresh_drop_cache_from_excel(*, code: str, timeout: int) -> D10State
     Сигнатуры каталога (sig_by_id) не трогаем, чтобы не ломать delta-catalog поток.
     """
     state = D10State.load(code)
-    items = await _load_catalog_items_from_excel_url(timeout=timeout)
-
-    new_drop_by_id: Dict[str, float] = {}
-    new_drop_by_barcode: Dict[str, float] = {}
-    for it in items:
-        item_id = _norm_str(it.get("id"))
-        barcode = _norm_str(it.get("barcode"))
-        drop_price = float(it.get("drop_price") or 0.0)
-        if not item_id or drop_price <= 0.0:
-            continue
-        new_drop_by_id[item_id] = drop_price
-        if barcode:
-            new_drop_by_barcode[barcode] = drop_price
+    new_drop_by_id, new_drop_by_barcode = await _load_drop_price_maps_from_excel_url(timeout=timeout)
 
     refreshed = D10State(
         sig_by_id=state.sig_by_id,
@@ -497,6 +485,34 @@ async def _refresh_drop_cache_from_excel(*, code: str, timeout: int) -> D10State
         len(refreshed.drop_by_barcode),
     )
     return refreshed
+
+
+async def _load_drop_price_maps_from_excel_url(*, timeout: int) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """
+    Автономно загружает Excel priceList.xlsx и строит drop price maps для stock flow.
+    Не требует catalog state и не зависит от предыдущего catalog run.
+    """
+    logger.info("D10 stock: loading drop prices from Excel URL")
+    items = await _load_catalog_items_from_excel_url(timeout=timeout)
+
+    drop_by_id: Dict[str, float] = {}
+    drop_by_barcode: Dict[str, float] = {}
+    for it in items:
+        item_id = _norm_str(it.get("id"))
+        barcode = _norm_str(it.get("barcode"))
+        drop_price = float(it.get("drop_price") or 0.0)
+        if not item_id or drop_price <= 0.0:
+            continue
+        drop_by_id[item_id] = drop_price
+        if barcode:
+            drop_by_barcode[barcode] = drop_price
+
+    logger.info(
+        "D10 stock: drop prices loaded from Excel, by_id=%d by_barcode=%d",
+        len(drop_by_id),
+        len(drop_by_barcode),
+    )
+    return drop_by_id, drop_by_barcode
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -536,16 +552,20 @@ def _collect_item_nodes(root: ET.Element) -> List[ET.Element]:
     return [el for el in root.iter() if _strip_ns(el.tag).lower() in ("item", "offer")]
 
 
-def _get_drop_price_for_code_sup(state: D10State, code_sup: str) -> float:
+def _get_drop_price_for_code_sup(
+    drop_by_id: Dict[str, float],
+    drop_by_barcode: Dict[str, float],
+    code_sup: str,
+) -> float:
     code_sup = (code_sup or "").strip()
     if not code_sup:
         return 0.0
     # основной кейс: g:mpn совпадает с Артикул
-    if code_sup in state.drop_by_id:
-        return float(state.drop_by_id.get(code_sup) or 0.0)
+    if code_sup in drop_by_id:
+        return float(drop_by_id.get(code_sup) or 0.0)
     # fallback: иногда mpn может совпасть с barcode (редко, но пусть будет)
-    if code_sup in state.drop_by_barcode:
-        return float(state.drop_by_barcode.get(code_sup) or 0.0)
+    if code_sup in drop_by_barcode:
+        return float(drop_by_barcode.get(code_sup) or 0.0)
     return 0.0
 
 
@@ -561,7 +581,7 @@ async def parse_feed_stock_to_json(
       - g:mpn -> code_sup
       - g:availability == "in stock" -> qty=1 (иначе пропускаем)
       - g:price -> price_retail (int)
-      - price_opt -> из сохранённого drop, грн. (по code_sup как по Артикулу)
+      - price_opt -> из Excel drop price, грн. (по code_sup как по Артикулу)
     """
     feed_url = await _get_feed_url_by_code(code)
     if not feed_url:
@@ -583,13 +603,24 @@ async def parse_feed_stock_to_json(
         return "[]"
 
     try:
-        state = await _refresh_drop_cache_from_excel(code=code, timeout=timeout)
+        drop_by_id, drop_by_barcode = await _load_drop_price_maps_from_excel_url(timeout=timeout)
+        try:
+            refreshed_state = D10State.load(code)
+            D10State(
+                sig_by_id=refreshed_state.sig_by_id,
+                drop_by_id=drop_by_id,
+                drop_by_barcode=drop_by_barcode,
+            ).save(code)
+        except Exception as e:
+            logger.warning("D10: Failed to persist stock drop cache to state_cache. error=%s", e)
     except Exception as e:
         logger.warning(
-            "D10: Failed to refresh drop cache from Excel in stock flow, using existing cache. error=%s",
+            "D10: Failed to load drop prices from Excel in stock flow, using fallback via existing cache if available. error=%s",
             e,
         )
-        state = D10State.load(code)
+        cached_state = D10State.load(code)
+        drop_by_id = cached_state.drop_by_id
+        drop_by_barcode = cached_state.drop_by_barcode
     profit_percent = await _get_profit_percent_by_code(code)
     profit_percent_dec = (float(profit_percent) / 100.0) if profit_percent is not None else 0.0
 
@@ -614,7 +645,7 @@ async def parse_feed_stock_to_json(
         price_retail = int(_to_float(price_raw))
 
         qty = 1  # строго по ТЗ
-        price_opt = _get_drop_price_for_code_sup(state, code_sup)
+        price_opt = _get_drop_price_for_code_sup(drop_by_id, drop_by_barcode, code_sup)
         if price_opt <= 0.0 and profit_percent_dec > 0.0 and price_retail > 0:
             fallback_count += 1
             price_opt = float(price_retail) / (1.0 + profit_percent_dec)

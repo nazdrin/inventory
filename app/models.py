@@ -616,6 +616,7 @@ class MasterCatalog(Base, TimestampMixin):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     sku = Column(String(500), nullable=False, unique=True)
+    tabletki_guid = Column(String(500), nullable=True)
     barcode = Column(String(500), nullable=True)
     manufacturer = Column(String(500), nullable=True)
     name_ua = Column(String(500), nullable=True)
@@ -634,6 +635,7 @@ class MasterCatalog(Base, TimestampMixin):
     archived_reason = Column(String(500), nullable=True)
 
     __table_args__ = (
+        Index("ix_master_catalog_tabletki_guid", "tabletki_guid"),
         Index("ix_master_catalog_barcode", "barcode"),
         Index("ix_master_catalog_is_archived", "is_archived"),
         Index("ix_master_catalog_category_l1_code", "category_l1_code"),
