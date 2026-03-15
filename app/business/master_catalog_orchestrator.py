@@ -22,6 +22,10 @@ from app.business.d3_barcode_mapping_sync import sync_d3_supplier_mapping_by_bar
 from app.business.d3_content_sync import sync_d3_content
 from app.business.d3_images_sync import sync_d3_images
 from app.business.d3_master_feed_loader import load_d3_raw_supplier_feed
+from app.business.d5_barcode_mapping_sync import sync_d5_supplier_mapping_by_barcode
+from app.business.d5_content_sync import sync_d5_content
+from app.business.d5_images_sync import sync_d5_images
+from app.business.d5_master_feed_loader import load_d5_raw_supplier_feed
 from app.business.d6_barcode_mapping_sync import sync_d6_supplier_mapping_by_barcode
 from app.business.d6_master_dimensions_enrich import enrich_master_dimensions_from_d6
 from app.business.d6_master_feed_loader import load_d6_raw_supplier_feed
@@ -29,9 +33,11 @@ from app.business.master_archive_import import import_master_archive
 from app.business.master_catalog_coverage_report import build_master_catalog_coverage_report
 from app.business.master_content_fallback_d2_select import select_d2_fallback_content
 from app.business.master_content_fallback_d3_select import select_d3_fallback_content
+from app.business.master_content_fallback_d5_select import select_d5_fallback_content
 from app.business.master_content_select import select_master_content
 from app.business.master_images_fallback_d2_select import select_d2_fallback_main_images
 from app.business.master_images_fallback_d3_select import select_d3_fallback_main_images
+from app.business.master_images_fallback_d5_select import select_d5_fallback_main_images
 from app.business.master_main_image_select import select_master_main_images
 from app.business.salesdrive_category_exporter import export_categories_to_salesdrive
 from app.business.salesdrive_master_catalog_exporter import export_master_catalog_to_salesdrive
@@ -101,6 +107,10 @@ def _build_suppliers_steps() -> List[Dict[str, Any]]:
         _make_step("d3_barcode_mapping_sync", lambda: sync_d3_supplier_mapping_by_barcode(limit=0)),
         _make_step("d3_images_sync", lambda: sync_d3_images(limit=0)),
         _make_step("d3_content_sync", lambda: sync_d3_content(limit=0)),
+        _make_step("d5_master_feed_loader", lambda: load_d5_raw_supplier_feed(limit=0)),
+        _make_step("d5_barcode_mapping_sync", lambda: sync_d5_supplier_mapping_by_barcode(limit=0)),
+        _make_step("d5_images_sync", lambda: sync_d5_images(limit=0)),
+        _make_step("d5_content_sync", lambda: sync_d5_content(limit=0)),
     ]
 
 
@@ -112,6 +122,8 @@ def _build_selection_steps() -> List[Dict[str, Any]]:
         _make_step("master_content_fallback_d2_select", select_d2_fallback_content),
         _make_step("master_images_fallback_d3_select", select_d3_fallback_main_images),
         _make_step("master_content_fallback_d3_select", select_d3_fallback_content),
+        _make_step("master_images_fallback_d5_select", select_d5_fallback_main_images),
+        _make_step("master_content_fallback_d5_select", select_d5_fallback_content),
     ]
 
 
