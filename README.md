@@ -16,7 +16,7 @@ source .venv/bin/activate
 ### Гит
 ```
 git add .
-git commit -m "сток маппинг"
+git commit -m "експорт каталога + миграция"
 git push origin develop
 
 ### 3. Установить зависимости Python

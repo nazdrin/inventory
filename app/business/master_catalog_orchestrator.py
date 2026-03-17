@@ -209,6 +209,15 @@ def _build_report_steps() -> List[Dict[str, Any]]:
 
 
 def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, limit: int, send: bool, skip_salesdrive: bool, skip_archive: bool, skip_report: bool) -> List[Dict[str, Any]]:
+    if mode == "weekly_enrichment":
+        steps: List[Dict[str, Any]] = []
+        steps.extend(_build_tabletki_steps())
+        steps.extend(_build_suppliers_steps())
+        steps.extend(_build_selection_steps())
+        if not skip_report:
+            steps.extend(_build_report_steps())
+        return steps
+
     if mode == "full":
         steps: List[Dict[str, Any]] = []
         steps.extend(_build_tabletki_steps())
@@ -320,7 +329,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["tabletki", "suppliers", "selection", "archive", "salesdrive", "publish", "report", "full"],
+        choices=["tabletki", "suppliers", "selection", "archive", "salesdrive", "publish", "report", "weekly_enrichment", "full"],
         help="режим запуска orchestration pipeline",
     )
     parser.add_argument(
