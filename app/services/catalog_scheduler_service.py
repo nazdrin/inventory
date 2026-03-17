@@ -115,6 +115,16 @@ async def get_enterprises_for_catalog(db: AsyncSession):
 
 async def process_catalog_for_enterprise(db: AsyncSession, enterprise: EnterpriseSettings):
     try:
+        if (
+            enterprise.data_format == "Business"
+            and os.getenv("DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER", "0").strip().lower() in {"1", "true", "yes", "on"}
+        ):
+            logging.info(
+                "Skipping old Business catalog scheduler for enterprise=%s because DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER is enabled",
+                enterprise.enterprise_code,
+            )
+            return
+
         cooldown_until = TIMEOUT_COOLDOWN_UNTIL.get(enterprise.enterprise_code)
         now_utc = datetime.now(timezone.utc)
         if cooldown_until and now_utc < cooldown_until:

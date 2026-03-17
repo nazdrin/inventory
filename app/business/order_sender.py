@@ -18,6 +18,7 @@ SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необх�
 
 # Импорт для cancelled-orders API
 from app.business.cancelled_orders_fetcher import get_cancelled_orders, acknowledge_cancelled_orders
+from app.business.supplier_identity import SUPPLIERLIST_MAP
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
@@ -54,21 +55,6 @@ BRANCH_CITY_MAP = {
     "59766": "Ivano-Frankivsk",
     "59770": "Kremenchuk",
     "59791": "Lviv",
-}
-
-SUPPLIERLIST_MAP = {
-    "D1": "id_38",
-    "D2": "id_39",
-    "D3": "id_40",
-    "D4": "id_41",
-    "D5": "id_42",
-    "D6": "id_43",
-    "D7": "id_44",
-    "D8": "id_45",
-    "D9": "id_46",
-    "D10": "id_47",
-    "D11": "id_48",
-    "D12": "id_49",
 }
 
 SUPPLIER_CITY_TAG_MAP = {
