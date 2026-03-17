@@ -18,11 +18,11 @@ SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необх�
 
 # Импорт для cancelled-orders API
 from app.business.cancelled_orders_fetcher import get_cancelled_orders, acknowledge_cancelled_orders
-from app.business.supplier_identity import SUPPLIERLIST_MAP
+from app.business.supplier_identity import SUPPLIERLIST_MAP, get_supplier_id_by_code
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
-from app.models import Offer, DropshipEnterprise, CatalogMapping, EnterpriseSettings
+from app.models import Offer, DropshipEnterprise, CatalogMapping, CatalogSupplierMapping, EnterpriseSettings, MasterCatalog
 import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
@@ -614,8 +614,67 @@ async def _fetch_sku_from_catalog_mapping(
     res = await session.execute(q)
     return res.scalar_one_or_none()
 
-# NEW: fetch barcode and supplier item code from CatalogMapping
-from typing import Optional, Tuple
+
+def _use_master_mapping_for_orders() -> bool:
+    return os.getenv("USE_MASTER_MAPPING_FOR_STOCK", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _fetch_sku_from_master_mapping(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Optional[str]:
+    supplier_id = get_supplier_id_by_code(supplier_code)
+    if not supplier_id:
+        return None
+
+    row = (
+        await session.execute(
+            select(CatalogSupplierMapping.supplier_code)
+            .where(
+                CatalogSupplierMapping.sku == str(goods_code),
+                CatalogSupplierMapping.supplier_id == supplier_id,
+                CatalogSupplierMapping.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row
+
+
+async def _fetch_barcode_and_supplier_code_master(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    supplier_id = get_supplier_id_by_code(supplier_code)
+    if not supplier_id:
+        return (None, None, None)
+
+    row = (
+        await session.execute(
+            select(
+                MasterCatalog.barcode,
+                CatalogSupplierMapping.supplier_code,
+                CatalogSupplierMapping.supplier_product_name_raw,
+                CatalogSupplierMapping.barcode,
+            )
+            .join(MasterCatalog, MasterCatalog.sku == CatalogSupplierMapping.sku)
+            .where(
+                CatalogSupplierMapping.sku == str(goods_code),
+                CatalogSupplierMapping.supplier_id == supplier_id,
+                CatalogSupplierMapping.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).first()
+    if not row:
+        return (None, None, None)
+
+    master_barcode, supplier_item_code, supplier_item_name, mapping_barcode = row
+    return (
+        master_barcode or mapping_barcode,
+        supplier_item_code,
+        supplier_item_name,
+    )
+
+
 async def _fetch_barcode_and_supplier_code(
     session: AsyncSession, goods_code: str, supplier_code: str
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -638,6 +697,26 @@ async def _fetch_barcode_and_supplier_code(
     if not row:
         return (None, None, None)
     return (row[0], row[1], row[2])
+
+
+async def _fetch_sku_for_order_line(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Optional[str]:
+    if _use_master_mapping_for_orders():
+        master_value = await _fetch_sku_from_master_mapping(session, goods_code, supplier_code)
+        if master_value:
+            return master_value
+    return await _fetch_sku_from_catalog_mapping(session, goods_code, supplier_code)
+
+
+async def _fetch_barcode_and_supplier_code_for_order_line(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if _use_master_mapping_for_orders():
+        master_row = await _fetch_barcode_and_supplier_code_master(session, goods_code, supplier_code)
+        if any(master_row):
+            return master_row
+    return await _fetch_barcode_and_supplier_code(session, goods_code, supplier_code)
 
 
 def _build_novaposhta_block(d: Dict[str, str]) -> Dict[str, Any]:
@@ -1036,8 +1115,8 @@ async def _build_products_block(
         effective_supplier_name: Optional[str] = None
         if effective_supplier_code:
             # SKU/Barcode/Code/Name тянем по поставщику конкретной строки
-            sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, effective_supplier_code)
-            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(
+            sku = await _fetch_sku_for_order_line(session, r.goodsCode, effective_supplier_code)
+            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code_for_order_line(
                 session, r.goodsCode, effective_supplier_code
             )
             # Имя поставщика тоже подтягиваем (для отображения в description)
