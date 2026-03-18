@@ -107,26 +107,11 @@ def _extract_offer_barcode(offer: ET.Element) -> Optional[str]:
 
 
 def _extract_offer_qty(offer: ET.Element, *, base_price: float) -> int:
-    """Для нового XML D5 available может быть пустым, поэтому сток не должен зависеть только от него."""
+    """Жёсткое правило для D5: товар доступен только при available="true"."""
     available_raw = (offer.get("available") or "").strip().lower()
-    if available_raw in {"false", "0", "no"}:
-        return 0
-    if available_raw in {"true", "1", "yes"}:
+    if available_raw == "true":
         return 5
-
-    quantity_raw = _get_text(offer, ["quantity_in_stock", "quantity", "qty"])
-    if quantity_raw:
-        if quantity_raw.strip().lower() in {"true", "yes"}:
-            return 5
-        if _to_float(quantity_raw) > 0:
-            return 5
-
-    in_stock_raw = _get_text(offer, ["in_stock", "presence_sure"])
-    if in_stock_raw and in_stock_raw.strip().lower() in {"true", "1", "yes"}:
-        return 5
-
-    # Для нового фида наличие позиции и валидной цены считаем достаточным признаком доступности.
-    return 5 if base_price > 0 else 0
+    return 0
 
 
 async def _get_feed_url_by_code(code: str = "D5") -> Optional[str]:
