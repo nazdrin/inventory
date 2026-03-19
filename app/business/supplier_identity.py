@@ -16,6 +16,7 @@ SUPPLIER_CODE_TO_ID = {
     "D10": 47,
     "D11": 48,
     "D12": 49,
+    "D13": 51,
 }
 
 SUPPLIERLIST_MAP = {
