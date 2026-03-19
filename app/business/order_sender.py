@@ -980,6 +980,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
                 tabletki_login=tabletki_login,
                 tabletki_password=tabletki_password,
                 cancel_reason=cancel_reason_code,
+                enterprise_code=enterprise_code,
             )
             logger.info(
                 "✅ Отказ отправлен: id=%s, enterprise=%s, reason=%r → code=%s",
