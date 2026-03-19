@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio import sleep
 import logging
 import os
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 _LOG_LEVEL = os.getenv("ORDER_SENDER_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
 VERBOSE_SD_LOGS = os.getenv("ORDER_SENDER_VERBOSE_SALESDRIVE_LOGS", "0") == "1"
+SALESDRIVE_RETRY_ATTEMPTS = max(1, int(os.getenv("SALESDRIVE_RETRY_ATTEMPTS", "3")))
+SALESDRIVE_RETRY_DELAY_SEC = max(0.0, float(os.getenv("SALESDRIVE_RETRY_DELAY_SEC", "2")))
 
 
 # Глобальный допуск по цене для поиска поставщика
@@ -110,38 +113,60 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
         "X-Api-Key": api_key,
     }
 
+    last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=15) as client:
-        try:
+        for attempt in range(1, SALESDRIVE_RETRY_ATTEMPTS + 1):
             if VERBOSE_SD_LOGS:
                 logger.info("📦 Payload для SalesDrive:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
 
-            response = await client.post(url, json=payload, headers=headers)
+            try:
+                response = await client.post(url, json=payload, headers=headers)
 
-            # In prod (default) keep logs compact; in test (verbose) log full response body.
-            logger.info(
-                "📤 SalesDrive POST /handler/ status=%s externalId=%s",
-                response.status_code,
-                payload.get("externalId"),
-            )
-            if VERBOSE_SD_LOGS:
-                logger.info("📨 Ответ от SalesDrive: %s", response.text)
-            else:
-                logger.debug("📨 SalesDrive response (truncated): %.2000s", response.text)
-            response.raise_for_status()
-        except httpx.RequestError as e:
-            err_msg = f"❌ Помилка підключення до SalesDrive: {e}"
-            logger.error(err_msg)
-            try:
-                send_notification(err_msg, "Business")
-            except Exception:
-                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (RequestError)")
-        except httpx.HTTPStatusError as e:
-            err_msg = f"❌ HTTP-помилка від SalesDrive: {e.response.status_code} — {e.response.text}"
-            logger.error(err_msg)
-            try:
-                send_notification(err_msg, "Business")
-            except Exception:
-                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (HTTPStatusError)")
+                logger.info(
+                    "📤 SalesDrive POST /handler/ attempt=%s/%s status=%s externalId=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    response.status_code,
+                    payload.get("externalId"),
+                )
+                if VERBOSE_SD_LOGS:
+                    logger.info("📨 Ответ от SalesDrive: %s", response.text)
+                else:
+                    logger.debug("📨 SalesDrive response (truncated): %.2000s", response.text)
+                response.raise_for_status()
+                return
+            except httpx.RequestError as e:
+                last_error = e
+                logger.warning(
+                    "SalesDrive request error attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    e,
+                )
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                logger.warning(
+                    "SalesDrive HTTP error attempt=%s/%s externalId=%s status=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    e.response.status_code,
+                )
+
+            if attempt < SALESDRIVE_RETRY_ATTEMPTS:
+                await sleep(SALESDRIVE_RETRY_DELAY_SEC)
+
+    err_msg = (
+        f"❌ SalesDrive send failed after {SALESDRIVE_RETRY_ATTEMPTS} attempts | "
+        f"externalId={payload.get('externalId')} | err={last_error}"
+    )
+    logger.error(err_msg)
+    try:
+        send_notification(err_msg, "Business")
+    except Exception:
+        logger.exception("Не удалось отправить уведомление об ошибке SalesDrive")
+    raise RuntimeError(err_msg) from last_error
 
 # --- HELPER для обновления заявки в SalesDrive через /api/order/update/
 async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
@@ -156,15 +181,31 @@ async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[
         "Content-Type": "application/json",
         "X-Api-Key": api_key,
     }
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(update_url, json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp
-    except httpx.RequestError:
-        return None
-    except httpx.HTTPStatusError:
-        return None
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(timeout=20) as client:
+        for attempt in range(1, SALESDRIVE_RETRY_ATTEMPTS + 1):
+            try:
+                resp = await client.post(update_url, json=payload, headers=headers)
+                resp.raise_for_status()
+                return resp
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                logger.warning(
+                    "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    exc,
+                )
+                if attempt < SALESDRIVE_RETRY_ATTEMPTS:
+                    await sleep(SALESDRIVE_RETRY_DELAY_SEC)
+    logger.error(
+        "SalesDrive update failed after %s attempts | externalId=%s | err=%s",
+        SALESDRIVE_RETRY_ATTEMPTS,
+        payload.get("externalId"),
+        last_error,
+    )
+    return None
 
 def _as_decimal(x: Any) -> Decimal:
     if isinstance(x, Decimal):
