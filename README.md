@@ -16,7 +16,7 @@ source .venv/bin/activate
 ### Гит
 ```
 git add .
-git commit -m "пред прод версия"
+git commit -m "zoocompl"
 git push origin develop
 
 ### 3. Установить зависимости Python
