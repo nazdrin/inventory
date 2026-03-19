@@ -516,6 +516,7 @@ async def _process_fallback_orders_batch(
                     tabletki_login=tabletki_login,
                     tabletki_password=tabletki_password,
                     cancel_reason=tabletki_cancel_reason_default,
+                    enterprise_code=enterprise_code,
                 )
             counters["sent_tabletki"] += 1
         except Exception as exc:
