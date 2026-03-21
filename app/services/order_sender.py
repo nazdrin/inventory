@@ -56,9 +56,7 @@ def _locked_queue_file():
     with TABLETKI_CANCEL_RETRY_LOCK_PATH.open("a+", encoding="utf-8") as lock_fh:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
         try:
-            with TABLETKI_CANCEL_RETRY_QUEUE_PATH.open("a+", encoding="utf-8") as queue_fh:
-                queue_fh.seek(0)
-                yield queue_fh
+            yield
         finally:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
@@ -88,8 +86,11 @@ def _try_salvage_entries(raw: str) -> Optional[List[Dict[str, Any]]]:
     return data if isinstance(data, list) else None
 
 
-def _load_entries_from_handle(handle) -> List[Dict[str, Any]]:
-    raw = handle.read().strip()
+def _load_queue_entries() -> List[Dict[str, Any]]:
+    if not TABLETKI_CANCEL_RETRY_QUEUE_PATH.exists():
+        return []
+
+    raw = TABLETKI_CANCEL_RETRY_QUEUE_PATH.read_text(encoding="utf-8", errors="ignore").strip()
     if not raw:
         return []
     try:
@@ -109,8 +110,7 @@ def _load_entries_from_handle(handle) -> List[Dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
-def _write_entries_to_handle(handle, entries: List[Dict[str, Any]]) -> None:
-    handle.flush()
+def _write_queue_entries(entries: List[Dict[str, Any]]) -> None:
     fd, tmp_path_str = tempfile.mkstemp(
         prefix=f"{TABLETKI_CANCEL_RETRY_QUEUE_PATH.stem}.",
         suffix=".tmp",
@@ -189,8 +189,8 @@ def _enqueue_cancel_retry(
     if not entry["order_id"] or not entry["enterprise_code"]:
         return
 
-    with _locked_queue_file() as fh:
-        entries = _load_entries_from_handle(fh)
+    with _locked_queue_file():
+        entries = _load_queue_entries()
         filtered = [
             item for item in entries
             if not (
@@ -199,7 +199,7 @@ def _enqueue_cancel_retry(
             )
         ]
         filtered.append(entry)
-        _write_entries_to_handle(fh, filtered)
+        _write_queue_entries(filtered)
 
     logger.warning(
         "Tabletki cancel warning queued: order_id=%s enterprise=%s retry_no=%s next_retry_at=%s",
@@ -215,8 +215,8 @@ def _pop_due_cancel_retries(*, enterprise_code: Optional[str] = None, limit: int
     now = _utcnow()
     enterprise_filter = str(enterprise_code or "").strip()
 
-    with _locked_queue_file() as fh:
-        entries = _load_entries_from_handle(fh)
+    with _locked_queue_file():
+        entries = _load_queue_entries()
         keep: List[Dict[str, Any]] = []
 
         for item in entries:
@@ -241,7 +241,7 @@ def _pop_due_cancel_retries(*, enterprise_code: Optional[str] = None, limit: int
             else:
                 keep.append(item)
 
-        _write_entries_to_handle(fh, keep)
+        _write_queue_entries(keep)
 
     return due
 
