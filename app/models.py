@@ -294,6 +294,28 @@ class Offer(Base):
     )
 
 
+class OfferBlockRule(Base, TimestampMixin):
+    __tablename__ = "offer_block_rules"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    product_code = Column(String, nullable=False, index=True)
+    supplier_code = Column(String, nullable=True, index=True)
+    blocked_until = Column(DateTime(timezone=True), nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    reason = Column(String(500), nullable=True)
+    created_by = Column(String(255), nullable=True)
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_offer_block_rules_product_supplier_active",
+            "product_code",
+            "supplier_code",
+            "is_active",
+        ),
+    )
+
+
 # Журнал применённых политик балансировщика (что именно было передано в pricing engine на конкретный сегмент).
 class BalancerPolicyLog(Base, TimestampMixin):
     """Журнал применённых политик балансировщика (что именно было передано в pricing engine на конкретный сегмент)."""
