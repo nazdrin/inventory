@@ -142,12 +142,19 @@ async def _fetch_policy_for_pricing_repo(
         )
         return None
 
-from sqlalchemy import text, select, func, asc, desc
+from sqlalchemy import text, select, func, asc, desc, or_
 from sqlalchemy.dialects.postgresql import insert
 
 # === ВАША ИНФРАСТРУКТУРА / МОДЕЛИ ===
 from app.database import get_async_db
-from app.models import CatalogSupplierMapping, CompetitorPrice, DropshipEnterprise, MasterCatalog, Offer  # CompetitorPrice: code, city, competitor_price
+from app.models import (
+    CatalogSupplierMapping,
+    CompetitorPrice,
+    DropshipEnterprise,
+    MasterCatalog,
+    Offer,
+    OfferBlockRule,
+)  # CompetitorPrice: code, city, competitor_price
 from app.business.supplier_identity import get_supplier_id_by_code
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
@@ -728,6 +735,39 @@ async def map_supplier_codes(
         return await _map_supplier_codes_master(session, supplier_code, items)
     return await _map_supplier_codes_legacy(session, supplier_code, items)
 
+
+async def fetch_active_offer_blocks(
+    session: AsyncSession,
+    supplier_code: str,
+) -> tuple[set[str], set[str]]:
+    now_utc = datetime.now(timezone.utc)
+    q = (
+        select(OfferBlockRule.product_code, OfferBlockRule.supplier_code)
+        .where(
+            OfferBlockRule.is_active.is_(True),
+            OfferBlockRule.blocked_until > now_utc,
+            or_(
+                OfferBlockRule.supplier_code.is_(None),
+                OfferBlockRule.supplier_code == supplier_code,
+            ),
+        )
+    )
+    res = await session.execute(q)
+
+    globally_blocked: set[str] = set()
+    supplier_blocked: set[str] = set()
+
+    for product_code, rule_supplier_code in res.fetchall():
+        if not product_code:
+            continue
+        product_code_str = str(product_code)
+        if rule_supplier_code is None:
+            globally_blocked.add(product_code_str)
+        else:
+            supplier_blocked.add(product_code_str)
+
+    return globally_blocked, supplier_blocked
+
 # --------------------------------------------------------------------------------------
 # 3) Цена конкурента и расчёт нашей цены
 # --------------------------------------------------------------------------------------
@@ -1279,6 +1319,42 @@ async def process_supplier(
     mapped = await map_supplier_codes(session, code, raw_items)
     if not mapped:
         logger.info("Supplier %s: no mapped items.", code)
+        return
+
+    blocked_global_codes, blocked_supplier_codes = await fetch_active_offer_blocks(session, code)
+
+    mapped_before_filter = len(mapped)
+    blocked_global_count = 0
+    blocked_supplier_count = 0
+    filtered_mapped: List[dict] = []
+
+    for item in mapped:
+        product_code = item.get("product_code")
+        if not product_code:
+            filtered_mapped.append(item)
+            continue
+
+        product_code_str = str(product_code)
+        if product_code_str in blocked_global_codes:
+            blocked_global_count += 1
+            continue
+        if product_code_str in blocked_supplier_codes:
+            blocked_supplier_count += 1
+            continue
+
+        filtered_mapped.append(item)
+
+    mapped = filtered_mapped
+    logger.info(
+        "Supplier %s: mapped=%d blocked_global=%d blocked_supplier=%d remaining=%d",
+        code,
+        mapped_before_filter,
+        blocked_global_count,
+        blocked_supplier_count,
+        len(mapped),
+    )
+    if not mapped:
+        logger.info("Supplier %s: no mapped items after offer block filtering.", code)
         return
 
     # 5.3 параметры ценообразования
