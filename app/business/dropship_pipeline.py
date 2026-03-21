@@ -1797,7 +1797,25 @@ async def run_pipeline(
             for ent in suppliers:
                 try:
                     if is_supplier_blocked(ent.code):
-                        logger.info("Выгрузка для поставщика %s остановлена по расписанию.", ent.code)
+                        logger.info(
+                            "Поставщик %s заблокирован по расписанию. Удаляем старые offers.",
+                            ent.code,
+                        )
+                        try:
+                            deleted = await clear_offers_for_supplier(session, ent.code)
+                            logger.info(
+                                "Для заблокированного поставщика %s удалено %s offers.",
+                                ent.code,
+                                deleted,
+                            )
+                            await session.commit()
+                        except Exception as exc:
+                            logger.exception(
+                                "Не удалось удалить offers для заблокированного поставщика %s: %s",
+                                ent.code,
+                                exc,
+                            )
+                            await session.rollback()
                         continue
                     await process_supplier(session, ent, PARSERS)
                     await session.commit()
