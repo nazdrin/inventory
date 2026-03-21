@@ -442,6 +442,7 @@ async def _process_fallback_orders_batch(
     *,
     source: str,
     orders: List[Dict[str, Any]],
+    enterprise_code: str,
     api_key: str,
     client: httpx.AsyncClient,
     now_kyiv: datetime,
@@ -1057,6 +1058,7 @@ async def process_biotus_orders(
                 c_main = await _process_fallback_orders_batch(
                     source="status1_unhandled",
                     orders=from_status1_orders,
+                    enterprise_code=str(enterprise_code),
                     api_key=api_key,
                     client=client,
                     now_kyiv=now_kyiv,
@@ -1082,6 +1084,7 @@ async def process_biotus_orders(
                 c_additional = await _process_fallback_orders_batch(
                     source="status_9_19_18_20",
                     orders=additional_orders,
+                    enterprise_code=str(enterprise_code),
                     api_key=api_key,
                     client=client,
                     now_kyiv=now_kyiv,

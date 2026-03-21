@@ -58,3 +58,4 @@ salesdrive_catalog_uploader.py
 excel_to_products_json.py
 extract_offers.py
 /scripts
+README_PROD.md
