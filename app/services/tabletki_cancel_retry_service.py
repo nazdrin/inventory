@@ -3,9 +3,17 @@ import asyncio
 import json
 import logging
 import os
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.database import get_async_db
-from app.services.order_sender import process_due_tabletki_cancel_retries
+from app.services.order_sender import (
+    TABLETKI_CANCEL_RETRY_QUEUE_PATH,
+    process_due_tabletki_cancel_retries,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -23,7 +31,12 @@ async def run_once(limit: int = 20) -> dict:
 
 
 async def run_forever(limit: int = 20) -> None:
-    logger.info("Tabletki cancel retry service started: poll=%ss limit=%s", POLL_INTERVAL_SEC, limit)
+    logger.info(
+        "Tabletki cancel retry service started: poll=%ss limit=%s queue=%s",
+        POLL_INTERVAL_SEC,
+        limit,
+        TABLETKI_CANCEL_RETRY_QUEUE_PATH,
+    )
     while True:
         try:
             await run_once(limit=limit)
