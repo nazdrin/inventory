@@ -9,6 +9,17 @@ from app.services.notification_service import send_notification
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+def _should_notify_validation_warnings() -> bool:
+    return os.getenv("GOOGLE_DRIVE_NOTIFY_VALIDATION_WARNINGS", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def _notify_validation_warning(title: str, message: str) -> None:
+    if _should_notify_validation_warnings():
+        send_notification(title, message)
+
 def validate_consistency(data, file_type, single_store, store_serial,enterprise_code):
     """
     Проверяет согласованность данных для branch и store_serial.
@@ -29,7 +40,7 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
             if code in seen_codes:
                 message = f"Ошибка: Найдено дублирование значения code '{code}' в файле."
                 logging.warning(message)
-                send_notification(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
+                _notify_validation_warning(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
             else:
                 seen_codes.add(code)
 
@@ -37,7 +48,7 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
             if code and not name:
                 message = f"Ошибка: Для кода '{code}' отсутствует имя (name)."
                 logging.warning(message)
-                send_notification(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
+                _notify_validation_warning(f"Ошибка в каталоге для предприятия {enterprise_code}", message)
             
             if code and not producer:
                 message = f"Ошибка: Для кода '{code}' отсутствует производитель (producer)."
@@ -55,7 +66,7 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
                 if missing_fields:
                     message = f"Ошибка: Для строки с кодом '{code}' отсутствуют обязательные поля: {', '.join(missing_fields)}."
                     logging.error(message)
-                    send_notification(f"Ошибка в файле stock для предприятия {enterprise_code}", message)
+                    _notify_validation_warning(f"Ошибка в файле stock для предприятия {enterprise_code}", message)
                     return  # Прерываем обработку файла, если обязательные поля отсутствуют
             try:
                 price = float(row.get("price", 0))  # Получаем Price
@@ -63,8 +74,8 @@ def validate_consistency(data, file_type, single_store, store_serial,enterprise_
 
                 if price_reserve > price:
                     message = f"Ошибка: PriceReserve ({price_reserve}) не может быть больше Price ({price})."
-                    send_notification(f"Ошибка в строке {row} для предприятия-{enterprise_code}",message )
                     logging.warning(f"Найдено несоответствие: {message}")
+                    _notify_validation_warning(f"Ошибка в строке {row} для предприятия-{enterprise_code}", message)
                     continue # Пропускаем этот товар, но продолжаем обработку файла
                     
             except ValueError as e:
@@ -109,7 +120,7 @@ async def validate_data(enterprise_code, file_path, file_type, single_store, sto
                 if not branch:
                     message = f"Ошибка: {row}Для multi-store режима в файле stock обязательно должно быть указано поле 'branch'."
                     logging.warning(f"Найдено несоответствие: {message}")
-                    send_notification(f"Ошибка для предприятия {enterprise_code}",message )
+                    _notify_validation_warning(f"Ошибка для предприятия {enterprise_code}", message)
                     continue  # Пропускаем этот товар, но продолжаем обработку файла
 
         # Проверка формата файла
