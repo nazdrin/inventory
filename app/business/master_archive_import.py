@@ -4,16 +4,13 @@ import io
 import json
 import logging
 import os
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
-import pandas as pd
+import httpx
 from dotenv import load_dotenv
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.database import get_async_db
 from app.models import MasterCatalog
@@ -22,194 +19,152 @@ from app.models import MasterCatalog
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("master_archive_import")
 
-ARCHIVE_REASON = "google_drive_archive_file"
-ARCHIVE_COL_SKU = "ID товара/услуги"
+DEFAULT_MASTER_ARCHIVE_YML_URL = (
+    "https://petrenko.salesdrive.me/export/yml/export.yml"
+    "?publicKey=Eexu43HSgYJ9ehHcfZo_fYYuNI_wmJMnnyR0OywlcSb5v38ZCtlmuKSNOOVrrScmm1QUf"
+)
+ARCHIVE_REASON = "salesdrive_yml_archive"
+ARCHIVE_SOURCE = "salesdrive_yml"
 
 
 @dataclass
 class ArchiveStats:
-    file: str = ""
-    archive_rows_read: int = 0
-    matched_master_rows: int = 0
-    archived_updated: int = 0
-    warnings_count: int = 0
+    source: str = ARCHIVE_SOURCE
+    feed_rows: int = 0
+    matched_in_master: int = 0
+    updated_to_archived: int = 0
+    already_archived: int = 0
+    not_found_in_master: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "file": self.file,
-            "archive_rows_read": self.archive_rows_read,
-            "matched_master_rows": self.matched_master_rows,
-            "archived_updated": self.archived_updated,
-            "warnings_count": self.warnings_count,
+            "source": self.source,
+            "feed_rows": self.feed_rows,
+            "matched_in_master": self.matched_in_master,
+            "updated_to_archived": self.updated_to_archived,
+            "already_archived": self.already_archived,
+            "not_found_in_master": self.not_found_in_master,
         }
 
 
-def _warn(stats: ArchiveStats, message: str, *args: Any) -> None:
-    stats.warnings_count += 1
-    logger.warning(message, *args)
+def _get_archive_yml_url() -> str:
+    value = (os.getenv("MASTER_ARCHIVE_YML_URL") or "").strip()
+    return value or DEFAULT_MASTER_ARCHIVE_YML_URL
 
 
-def _env_required(name: str) -> str:
-    value = (os.getenv(name) or "").strip()
-    if not value:
-        raise RuntimeError(f"Не задано обязательное окружение: {name}")
-    return value
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
-def _get_archive_folder_id() -> str:
-    return _env_required("MASTER_ARCHIVE_FOLDER_ID")
+async def _download_archive_feed(url: str) -> bytes:
+    timeout = httpx.Timeout(60.0, connect=20.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.content
 
 
-def _get_archive_file_id() -> Optional[str]:
-    value = (os.getenv("MASTER_ARCHIVE_FILE_ID") or "").strip()
-    return value or None
-
-
-def _normalize_header(value: Any) -> str:
-    if value is None:
-        return ""
-    normalized = str(value).replace("\r", " ").replace("\n", " ").strip()
-    return " ".join(normalized.split())
-
-
-def _format_columns(columns: List[str], max_items: int = 30) -> str:
-    visible = columns[:max_items]
-    suffix = "" if len(columns) <= max_items else f" ... +{len(columns) - max_items} more"
-    return ", ".join(repr(column) for column in visible) + suffix
-
-
-async def _connect_drive():
-    creds_path = _env_required("GOOGLE_DRIVE_CREDENTIALS_PATH")
-    if not os.path.exists(creds_path):
-        raise FileNotFoundError(f"GOOGLE_DRIVE_CREDENTIALS_PATH не найден: {creds_path}")
-    credentials = service_account.Credentials.from_service_account_file(
-        creds_path,
-        scopes=["https://www.googleapis.com/auth/drive"],
-    )
-    return build("drive", "v3", credentials=credentials)
-
-
-async def _fetch_single_file_metadata(drive_service, folder_id: str) -> Dict[str, Any]:
-    try:
-        results = (
-            drive_service.files()
-            .list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id, name, mimeType, modifiedTime)",
-                pageSize=10,
-                orderBy="modifiedTime desc",
-            )
-            .execute()
-        )
-        files = results.get("files", []) or []
-        if not files:
-            raise FileNotFoundError("В папке Google Drive нет файлов")
-        return files[0]
-    except HttpError as exc:
-        raise RuntimeError(f"Ошибка Drive API при получении списка файлов: {exc}") from exc
-
-
-async def _fetch_file_metadata_by_id(drive_service, file_id: str) -> Dict[str, Any]:
-    try:
-        return (
-            drive_service.files()
-            .get(fileId=file_id, fields="id, name, mimeType, modifiedTime")
-            .execute()
-        )
-    except HttpError as exc:
-        raise RuntimeError(
-            f"Не удалось получить файл архива из Google Drive по MASTER_ARCHIVE_FILE_ID={file_id}: {exc}"
-        ) from exc
-
-
-async def _download_file_bytes(drive_service, file_id: str) -> bytes:
-    try:
-        request = drive_service.files().get_media(fileId=file_id)
-        handle = io.BytesIO()
-        downloader = MediaIoBaseDownload(handle, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        handle.seek(0)
-        return handle.read()
-    except HttpError as exc:
-        raise RuntimeError(f"Ошибка Drive API при загрузке файла {file_id}: {exc}") from exc
-
-
-def _read_archive_skus(xlsx_bytes: bytes, stats: ArchiveStats, limit: int = 0) -> List[str]:
-    df = pd.read_excel(io.BytesIO(xlsx_bytes), dtype=str)
-    raw_columns = [_normalize_header(column) for column in df.columns.tolist()]
-    logger.info("Колонки Excel: %s", _format_columns(raw_columns))
-
-    normalized_to_original: Dict[str, str] = {}
-    for original_column in df.columns.tolist():
-        normalized_column = _normalize_header(original_column)
-        if normalized_column and normalized_column not in normalized_to_original:
-            normalized_to_original[normalized_column] = original_column
-
-    archive_column = normalized_to_original.get(_normalize_header(ARCHIVE_COL_SKU))
-    if archive_column is None:
-        raise RuntimeError(
-            "В Excel отсутствует обязательная колонка: "
-            f"{ARCHIVE_COL_SKU}. Найдены колонки: {_format_columns(raw_columns)}"
-        )
-
+def _read_archive_skus(yml_bytes: bytes, stats: ArchiveStats, limit: int = 0) -> List[str]:
     seen: Set[str] = set()
     result: List[str] = []
-    for value in df[archive_column].tolist():
-        sku = str(value).strip() if value is not None and str(value).strip().lower() != "nan" else ""
-        if not sku or sku in seen:
-            continue
-        seen.add(sku)
-        result.append(sku)
-        if limit and len(result) >= limit:
-            break
 
-    stats.archive_rows_read = len(result)
+    for _, elem in ET.iterparse(io.BytesIO(yml_bytes), events=("end",)):
+        if _xml_local_name(elem.tag) != "offer":
+            continue
+
+        sku = (elem.attrib.get("id") or "").strip()
+        if sku and sku not in seen:
+            seen.add(sku)
+            result.append(sku)
+            if limit and len(result) >= limit:
+                elem.clear()
+                break
+
+        elem.clear()
+
+    stats.feed_rows = len(result)
     return result
 
 
 async def import_master_archive(limit: int = 0) -> Dict[str, Any]:
     load_dotenv()
     stats = ArchiveStats()
-    drive = await _connect_drive()
-    archive_file_id = _get_archive_file_id()
-    logger.info("Загружаем архив master_catalog из Google Drive")
-    if archive_file_id:
-        meta = await _fetch_file_metadata_by_id(drive, archive_file_id)
-    else:
-        meta = await _fetch_single_file_metadata(drive, _get_archive_folder_id())
+    archive_url = _get_archive_yml_url()
 
-    stats.file = meta.get("name", "")
-    logger.info("file_id=%s", meta.get("id"))
-    logger.info("file_name=%s", meta.get("name"))
-    logger.info("mimeType=%s", meta.get("mimeType"))
-    xlsx_bytes = await _download_file_bytes(drive, meta["id"])
-    archive_skus = _read_archive_skus(xlsx_bytes, stats, limit=limit)
+    logger.info("Загружаем архив master_catalog из SalesDrive YML")
+    logger.info("archive_url=%s", archive_url)
+
+    yml_bytes = await _download_archive_feed(archive_url)
+    archive_skus = _read_archive_skus(yml_bytes, stats, limit=limit)
+    logger.info("SalesDrive YML offer ids received: %d", stats.feed_rows)
 
     if not archive_skus:
+        logger.info(
+            "Archive sync summary: feed_rows=%d matched_in_master=%d updated_to_archived=%d already_archived=%d not_found_in_master=%d",
+            stats.feed_rows,
+            stats.matched_in_master,
+            stats.updated_to_archived,
+            stats.already_archived,
+            stats.not_found_in_master,
+        )
         return stats.to_dict()
 
     async with get_async_db() as session:
         rows = (
             await session.execute(
-                select(MasterCatalog).where(MasterCatalog.sku.in_(archive_skus))
+                select(
+                    MasterCatalog.sku,
+                    MasterCatalog.is_archived,
+                    MasterCatalog.archived_reason,
+                ).where(MasterCatalog.sku.in_(archive_skus))
             )
-        ).scalars().all()
-        stats.matched_master_rows = len(rows)
+        ).all()
 
-        for row in rows:
-            if row.is_archived is True and row.archived_reason == ARCHIVE_REASON:
+        matched_by_sku = {
+            str(sku): {
+                "is_archived": is_archived,
+                "archived_reason": archived_reason,
+            }
+            for sku, is_archived, archived_reason in rows
+        }
+
+        stats.matched_in_master = len(matched_by_sku)
+        stats.not_found_in_master = len(archive_skus) - stats.matched_in_master
+
+        skus_to_archive: List[str] = []
+        for sku in archive_skus:
+            row = matched_by_sku.get(sku)
+            if row is None:
                 continue
-            row.is_archived = True
-            row.archived_reason = ARCHIVE_REASON
-            stats.archived_updated += 1
+            if row["is_archived"] is True:
+                stats.already_archived += 1
+                continue
+            skus_to_archive.append(sku)
 
+        if skus_to_archive:
+            result = await session.execute(
+                update(MasterCatalog)
+                .where(MasterCatalog.sku.in_(skus_to_archive))
+                .values(
+                    is_archived=True,
+                    archived_reason=ARCHIVE_REASON,
+                )
+            )
+            stats.updated_to_archived = result.rowcount or len(skus_to_archive)
+
+    logger.info(
+        "Archive sync summary: feed_rows=%d matched_in_master=%d updated_to_archived=%d already_archived=%d not_found_in_master=%d",
+        stats.feed_rows,
+        stats.matched_in_master,
+        stats.updated_to_archived,
+        stats.already_archived,
+        stats.not_found_in_master,
+    )
     return stats.to_dict()
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Импорт архивных SKU из Google Drive в master_catalog")
+    parser = argparse.ArgumentParser(description="Импорт архивных SKU из SalesDrive YML в master_catalog")
     parser.add_argument("--limit", type=int, default=0, help="обработать только первые N sku (0 = без лимита)")
     return parser.parse_args()
 
