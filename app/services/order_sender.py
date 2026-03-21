@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +32,9 @@ TABLETKI_CANCEL_WARNING_RETRY_DELAY_MINUTES = max(
 TABLETKI_CANCEL_RETRY_QUEUE_PATH = (
     Path(__file__).resolve().parents[2] / "state_cache" / "tabletki_cancel_retry_queue.json"
 )
+TABLETKI_CANCEL_RETRY_LOCK_PATH = (
+    Path(__file__).resolve().parents[2] / "state_cache" / "tabletki_cancel_retry_queue.lock"
+)
 TABLETKI_CANCEL_WARNING_TEXT = "cancel fact will be setted only by delivery service data"
 
 
@@ -49,13 +53,39 @@ def _from_iso(value: str) -> datetime:
 @contextmanager
 def _locked_queue_file():
     TABLETKI_CANCEL_RETRY_QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with TABLETKI_CANCEL_RETRY_QUEUE_PATH.open("a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        fh.seek(0)
+    with TABLETKI_CANCEL_RETRY_LOCK_PATH.open("a+", encoding="utf-8") as lock_fh:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
         try:
-            yield fh
+            with TABLETKI_CANCEL_RETRY_QUEUE_PATH.open("a+", encoding="utf-8") as queue_fh:
+                queue_fh.seek(0)
+                yield queue_fh
         finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+
+def _backup_corrupted_queue(raw: str) -> Optional[Path]:
+    if not raw.strip():
+        return None
+    ts = _utcnow().strftime("%Y%m%dT%H%M%S%fZ")
+    backup_path = TABLETKI_CANCEL_RETRY_QUEUE_PATH.with_name(
+        f"{TABLETKI_CANCEL_RETRY_QUEUE_PATH.stem}.corrupted.{ts}.json"
+    )
+    backup_path.write_text(raw, encoding="utf-8")
+    return backup_path
+
+
+def _try_salvage_entries(raw: str) -> Optional[List[Dict[str, Any]]]:
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    try:
+        data = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    return data if isinstance(data, list) else None
 
 
 def _load_entries_from_handle(handle) -> List[Dict[str, Any]]:
@@ -65,16 +95,38 @@ def _load_entries_from_handle(handle) -> List[Dict[str, Any]]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("Tabletki cancel retry queue is corrupted, resetting it")
+        backup_path = _backup_corrupted_queue(raw)
+        salvaged = _try_salvage_entries(raw)
+        if salvaged is not None:
+            logger.warning(
+                "Tabletki cancel retry queue was corrupted, salvaged %s entries, backup=%s",
+                len(salvaged),
+                backup_path,
+            )
+            return salvaged
+        logger.warning("Tabletki cancel retry queue is corrupted, resetting it, backup=%s", backup_path)
         return []
     return data if isinstance(data, list) else []
 
 
 def _write_entries_to_handle(handle, entries: List[Dict[str, Any]]) -> None:
-    handle.seek(0)
-    json.dump(entries, handle, ensure_ascii=False, indent=2)
-    handle.truncate()
     handle.flush()
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=f"{TABLETKI_CANCEL_RETRY_QUEUE_PATH.stem}.",
+        suffix=".tmp",
+        dir=str(TABLETKI_CANCEL_RETRY_QUEUE_PATH.parent),
+        text=True,
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_fh:
+            json.dump(entries, tmp_fh, ensure_ascii=False, indent=2)
+            tmp_fh.flush()
+            os.fsync(tmp_fh.fileno())
+        os.replace(tmp_path, TABLETKI_CANCEL_RETRY_QUEUE_PATH)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def _build_cancel_payload(order: Dict[str, Any], cancel_reason: int) -> List[Dict[str, Any]]:
