@@ -1434,14 +1434,10 @@ async def process_and_send_order(
                 # 2) Нет поставщика в допуске 10 копеек — ищем ближайшего по цене
                 nearest = await _find_nearest_supplier_by_price(session, r.goodsCode, r.price)
                 if nearest:
-                    supplier_code, supplier_price = nearest
+                    supplier_code, _supplier_price = nearest
                     supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-                    # supplier заполняем, в comment предупреждение
-                    comment_override = (
-                        "⚠️ Ціна постачальника відрізняється від ціни в замовленні: "
-                        f"постачальник {supplier_name}, ціна постачальника {supplier_price}, "
-                        f"ціна в замовленні {r.price}."
-                    )
+                    # supplier заполняем именем поставщика
+                    comment_override = supplier_name
                 else:
                     # 3) Вообще нет офферов этого товара — supplier пустой, comment с предупреждением
                     supplier_code = None
