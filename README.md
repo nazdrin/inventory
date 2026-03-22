@@ -2,8 +2,10 @@
 
 ## Быстрые команды
 
-- Выгрузка в `develop`: `сделай git develop по правилам из AGENTS.md`
-- Мердж в `main`: `сделай merge main по правилам из AGENTS.md`
+- Выгрузка в `develop`:
+ `сделай git develop по правилам из AGENTS.md`
+- Мердж в `main`: 
+`сделай merge main по правилам из AGENTS.md`
 
 ## Локальный запуск
 
