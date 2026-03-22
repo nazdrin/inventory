@@ -59,3 +59,5 @@ excel_to_products_json.py
 extract_offers.py
 /scripts
 README_PROD.md
+AGENTS.md
+GIT_WORKFLOW.md

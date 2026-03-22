@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
+from app.business.barcode_matching import collect_barcode_matches
 from app.database import get_async_db
 from app.models import CatalogSupplierMapping, MasterCatalog, RawSupplierFeedProduct
 
@@ -127,7 +128,7 @@ async def sync_d9_supplier_mapping_by_barcode(limit: int = 0) -> Dict[str, Any]:
 
         now = datetime.now(timezone.utc)
         for barcode, supplier_rows in supplier_by_barcode.items():
-            master_matches = master_by_barcode.get(barcode)
+            master_matches = collect_barcode_matches(master_by_barcode, barcode)
             if not master_matches:
                 continue
             if len(supplier_rows) != 1 or len(master_matches) != 1:
