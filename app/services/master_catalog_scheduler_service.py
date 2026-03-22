@@ -167,6 +167,17 @@ def _resolve_salesdrive_enterprise() -> str:
     return value
 
 
+def _notify_weekly_success(duration_sec: float) -> None:
+    enterprise_code = _resolve_salesdrive_enterprise()
+    send_notification(
+        (
+            "🟡 Weekly master catalog enrichment успешно завершен\n"
+            f"duration_sec={round(duration_sec, 3)}"
+        ),
+        enterprise_code,
+    )
+
+
 async def _run_weekly_enrichment() -> JobResult:
     enrichment = await _run_orchestrator_job(
         "weekly_enrichment",
@@ -195,7 +206,7 @@ async def _run_weekly_enrichment() -> JobResult:
             },
         )
 
-    return JobResult(
+    result = JobResult(
         name="weekly_enrichment_with_salesdrive",
         status="ok",
         duration_sec=enrichment.duration_sec + salesdrive.duration_sec,
@@ -204,6 +215,8 @@ async def _run_weekly_enrichment() -> JobResult:
             "salesdrive": salesdrive.details,
         },
     )
+    _notify_weekly_success(result.duration_sec)
+    return result
 
 
 async def _run_daily_publish() -> JobResult:
