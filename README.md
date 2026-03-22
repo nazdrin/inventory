@@ -1,5 +1,10 @@
 # Inventory Service
 
+## Быстрые команды
+
+- Выгрузка в `develop`: `сделай git develop по правилам из AGENTS.md`
+- Мердж в `main`: `сделай merge main по правилам из AGENTS.md`
+
 ## Локальный запуск
 
 ### 1. Перейти в проект
@@ -86,4 +91,3 @@ SELECT * FROM competitor_prices;
 ```python
 DATABASE_URL = "postgresql+asyncpg://postgres:your_password@localhost/inventory_db"
 ```
-
