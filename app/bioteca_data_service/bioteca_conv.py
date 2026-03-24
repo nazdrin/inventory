@@ -14,6 +14,7 @@ from app.services.database_service import process_database_service
 DEFAULT_VAT = 20.0
 AINUR_PRODUCTS_URL = "https://connect.ainur.app/api/v4/product"
 REQUEST_TIMEOUT_SEC = 60
+PAGE_LIMIT = 1000
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ async def fetch_products_for_store(
     enterprise_code: str,
     token: str,
     store_id: str,
+    offset: int = 0,
     min_stock: int = 1,
 ) -> list[dict[str, Any]]:
     headers = {
@@ -84,6 +86,8 @@ async def fetch_products_for_store(
     }
     params = {
         "store_id": store_id,
+        "offset": offset,
+        "limit": PAGE_LIMIT,
         "min_stock": min_stock,
     }
 
@@ -123,18 +127,33 @@ async def fetch_all_products_grouped_by_store(
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for store_id in store_ids:
             try:
-                grouped[store_id] = await fetch_products_for_store(
-                    session,
-                    enterprise_code,
-                    token,
-                    store_id,
-                    min_stock=1,
-                )
+                store_products: list[dict[str, Any]] = []
+                offset = 0
+
+                while True:
+                    page_products = await fetch_products_for_store(
+                        session,
+                        enterprise_code,
+                        token,
+                        store_id,
+                        offset=offset,
+                        min_stock=1,
+                    )
+                    if not page_products:
+                        break
+
+                    store_products.extend(page_products)
+                    if len(page_products) < PAGE_LIMIT:
+                        break
+
+                    offset += PAGE_LIMIT
+
+                grouped[store_id] = store_products
                 logger.info(
                     "Bioteca store processed: enterprise_code=%s store_id=%s count=%s",
                     enterprise_code,
                     store_id,
-                    len(grouped[store_id]),
+                    len(store_products),
                 )
             except Exception as exc:
                 logger.error(
