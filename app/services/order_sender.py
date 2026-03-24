@@ -50,6 +50,16 @@ def _from_iso(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(timezone.utc)
 
 
+def _order_ref(order: Dict[str, Any]) -> str:
+    tabletki_order = str(order.get("tabletkiOrder") or order.get("TabletkiOrder") or "").strip()
+    if tabletki_order:
+        return f"tabletki_order={tabletki_order}"
+    order_code = str(order.get("code") or "").strip()
+    if order_code:
+        return f"order_code={order_code}"
+    return f"order_id={str(order.get('id') or '').strip()}"
+
+
 @contextmanager
 def _locked_queue_file():
     TABLETKI_CANCEL_RETRY_QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -335,7 +345,7 @@ async def _send_cancel_order(
             send_notification(
                 (
                     f"⚠️ Tabletki cancel warning persisted after delayed retries | "
-                    f"order_id={order.get('id')} | response={response_text}"
+                    f"{_order_ref(order)} | response={response_text}"
                 ),
                 enterprise_code,
             )
@@ -382,7 +392,7 @@ async def process_due_tabletki_cancel_retries(
             ).first()
             if not creds_row or not creds_row[0] or not creds_row[1]:
                 send_notification(
-                    f"❌ Tabletki cancel retry skipped: no credentials | order_id={order.get('id')}",
+                    f"❌ Tabletki cancel retry skipped: no credentials | {_order_ref(order)}",
                     item_enterprise,
                 )
                 stats["notified"] += 1
@@ -429,7 +439,7 @@ async def process_due_tabletki_cancel_retries(
                 else:
                     send_notification(
                         (
-                            f"❌ Tabletki cancel retry exhausted | order_id={order.get('id')} | "
+                            f"❌ Tabletki cancel retry exhausted | {_order_ref(order)} | "
                             f"attempt_no={attempt_no} | err={exc}"
                         ),
                         item_enterprise,
