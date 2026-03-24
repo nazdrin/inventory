@@ -153,6 +153,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
 
     order_obj = {
         "id": external_id,
+        "tabletkiOrder": str(data.get("tabletkiOrder") or data.get("TabletkiOrder") or ""),
         "statusID": mapped_status,
         "branchID": str(branch_value) if branch_value is not None else "",
         "rows": _build_order_rows(products),
