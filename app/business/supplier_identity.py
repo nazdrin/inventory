@@ -17,12 +17,24 @@ SUPPLIER_CODE_TO_ID = {
     "D11": 48,
     "D12": 49,
     "D13": 51,
+    "D14": 52,
+}
+
+SUPPLIER_CODE_TO_NAME = {
+    "D14": "Fulfillment warehouse",
 }
 
 SUPPLIERLIST_MAP = {
     code: f"id_{supplier_id}"
     for code, supplier_id in SUPPLIER_CODE_TO_ID.items()
 }
+
+
+def get_supplier_display_name_by_code(supplier_code: str) -> Optional[str]:
+    code = str(supplier_code or "").strip().upper()
+    if not code:
+        return None
+    return SUPPLIER_CODE_TO_NAME.get(code)
 
 
 def get_supplier_id_by_code(supplier_code: str) -> Optional[int]:
