@@ -142,7 +142,7 @@ async def _fetch_policy_for_pricing_repo(
         )
         return None
 
-from sqlalchemy import text, select, func, asc, desc, or_
+from sqlalchemy import text, select, func, asc, desc, or_, case, literal
 from sqlalchemy.dialects.postgresql import insert
 
 # === ВАША ИНФРАСТРУКТУРА / МОДЕЛИ ===
@@ -169,6 +169,7 @@ from app.business.feed_zoohub import parse_feed_stock_to_json as parse_feed_D10
 from app.business.feed_toros import parse_feed_stock_to_json as parse_feed_D11
 from app.business.feed_vetstar import parse_feed_stock_to_json as parse_feed_D12
 from app.business.feed_zoocomplex import parse_zoocomplex_stock_to_json as parse_feed_D13
+from app.business.feed_fulfillment_salesdrive import parse_fulfillment_salesdrive_stock_to_json
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -509,6 +510,7 @@ PARSERS: Dict[str, ParserFn] = {
     "D11": parse_feed_D11,
     "D12": parse_feed_D12,
     "D13": parse_feed_D13,
+    "D14": parse_fulfillment_salesdrive_stock_to_json,
 }
 
 # --------------------------------------------------------------------------------------
@@ -567,6 +569,49 @@ CATALOG_MAPPING_ID_COL = "ID"  # у вас именно так (UPPER)
 
 def _use_master_mapping_for_stock() -> bool:
     return os.getenv("USE_MASTER_MAPPING_FOR_STOCK", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _use_direct_product_code_mapping(supplier_code: str) -> bool:
+    return str(supplier_code or "").strip().upper() == "D14"
+
+
+def _get_stock_priority_suppliers() -> set[str]:
+    raw = os.getenv("STOCK_PRIORITY_SUPPLIERS", "")
+    return {
+        item.strip().upper()
+        for item in raw.split(",")
+        if item and item.strip()
+    }
+
+
+async def _map_supplier_codes_direct(
+    session: AsyncSession,
+    supplier_code: str,
+    items: List[dict],
+) -> List[dict]:
+    mapped: List[dict] = []
+
+    for item in items:
+        product_code = str(item.get("code_sup") or "").strip()
+        if not product_code:
+            continue
+
+        mapped.append(
+            {
+                "product_code": product_code,
+                "qty": int(item.get("qty") or 0),
+                "price_retail": item.get("price_retail"),
+                "price_opt": item.get("price_opt"),
+            }
+        )
+
+    logger.info(
+        "Supplier %s: direct mapping used, input=%d mapped=%d",
+        supplier_code,
+        len(items),
+        len(mapped),
+    )
+    return mapped
 
 
 async def _map_supplier_codes_legacy(
@@ -731,6 +776,8 @@ async def map_supplier_codes(
     supplier_code: str,
     items: List[dict],
 ) -> List[dict]:
+    if _use_direct_product_code_mapping(supplier_code):
+        return await _map_supplier_codes_direct(session, supplier_code, items)
     if _use_master_mapping_for_stock():
         return await _map_supplier_codes_master(session, supplier_code, items)
     return await _map_supplier_codes_legacy(session, supplier_code, items)
@@ -1651,10 +1698,23 @@ async def _load_branch_mapping(session: AsyncSession, enterprise_code: str) -> D
 async def build_best_offers_by_city(session: AsyncSession) -> List[dict]:
     """
     Лучший оффер по каждой паре (city, product_code) ТОЛЬКО из записей со stock > 0.
-    Тай-брейки: price ASC → supplier.priority DESC → stock DESC → updated_at DESC.
+    Тай-брейки: stock_priority_flag DESC → price ASC → supplier.priority DESC → stock DESC → updated_at DESC.
     """
     # coalesce(priority, 0) — если поставщик не найден в dropship_enterprises
     priority = func.coalesce(DropshipEnterprise.priority, 0)
+    stock_priority_suppliers = _get_stock_priority_suppliers()
+
+    if stock_priority_suppliers:
+        logger.info(
+            "Stock priority override active for suppliers: %s",
+            ",".join(sorted(stock_priority_suppliers)),
+        )
+        stock_priority_flag = case(
+            (func.upper(Offer.supplier_code).in_(list(stock_priority_suppliers)), 1),
+            else_=0,
+        )
+    else:
+        stock_priority_flag = literal(0)
 
     ranked = (
         select(
@@ -1666,6 +1726,7 @@ async def build_best_offers_by_city(session: AsyncSession) -> List[dict]:
             func.row_number().over(
                 partition_by=(Offer.city, Offer.product_code),
                 order_by=(
+                    desc(stock_priority_flag),
                     asc(Offer.price),
                     desc(priority),
                     desc(Offer.stock),
