@@ -165,11 +165,12 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                         elif status in [2, 4, 4.1]:
                                             # TODO: передача статуса продавцу
                                             # Отправка актуального статуса продавцу через соответствующий обработчик
-                                            status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
-                                            if status_checker:
-                                                await status_checker(order, enterprise_code, branch)
-                                            else:
-                                                logger.warning("No status checker for data_format=%s", enterprise.data_format)
+                                            if enterprise.data_format != "Business":
+                                                status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
+                                                if status_checker:
+                                                    await status_checker(order, enterprise_code, branch)
+                                                else:
+                                                    logger.warning("No status checker for data_format=%s", enterprise.data_format)
                                         all_orders.append(order)
                                     if status == 0 and ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS:
                                         order_codes = list({order["code"] for order in data if "code" in order})

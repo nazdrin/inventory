@@ -176,12 +176,13 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
     raise RuntimeError(err_msg) from last_error
 
 # --- HELPER для обновления заявки в SalesDrive через /api/order/update/
-async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
+async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> tuple[Optional[httpx.Response], bool]:
     """
     Обновление заявки в SalesDrive через /api/order/update/.
     Требует X-Api-Key. update_url — полный URL до /api/order/update/.
     payload — тело запроса с externalId и data.
-    Возвращает httpx.Response или None при сетевой/HTTP ошибке.
+    Возвращает (response, should_acknowledge).
+    Для HTTP 422 считаем ошибку терминальной и возвращаем should_acknowledge=True без retry.
     """
     headers = {
         "accept": "application/json",
@@ -194,8 +195,26 @@ async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[
             try:
                 resp = await client.post(update_url, json=payload, headers=headers)
                 resp.raise_for_status()
-                return resp
-            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                return resp, True
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status_code = exc.response.status_code if exc.response is not None else None
+                response_text = exc.response.text if exc.response is not None else ""
+                if status_code == 422:
+                    logger.info(
+                        "SalesDrive update skipped as terminal 422: externalId=%s body=%s",
+                        payload.get("externalId"),
+                        response_text[:1000],
+                    )
+                    return None, True
+                logger.warning(
+                    "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    exc,
+                )
+            except httpx.RequestError as exc:
                 last_error = exc
                 logger.warning(
                     "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
@@ -212,7 +231,7 @@ async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[
         payload.get("externalId"),
         last_error,
     )
-    return None
+    return None, False
 
 def _as_decimal(x: Any) -> Decimal:
     if isinstance(x, Decimal):
@@ -892,8 +911,8 @@ async def process_cancelled_orders_service(
             },
         }
 
-        resp = await _salesdrive_update_order(update_url, api_key, payload)
-        if resp is not None:
+        resp, should_ack = await _salesdrive_update_order(update_url, api_key, payload)
+        if should_ack:
             acknowledged_ids.append(ext_id)
 
     if acknowledged_ids:
