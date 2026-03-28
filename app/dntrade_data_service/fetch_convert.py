@@ -160,43 +160,8 @@ def _clear_inflight_marker(enterprise_code: str) -> None:
 
 
 def _build_sync_plan(enterprise_code: str) -> Tuple[SyncPlan, CatalogSyncState]:
-    now = _utcnow()
     state, state_error = CatalogSyncState.load(enterprise_code)
-    snapshot = _load_snapshot(enterprise_code)
-
-    if not INCREMENTAL_ENABLED:
-        return SyncPlan(sync_mode="full", fallback_reason="incremental_disabled"), state
-
-    if _inflight_path(enterprise_code).exists():
-        return SyncPlan(sync_mode="fallback_full", fallback_reason="stale_inflight_marker"), state
-
-    if state_error:
-        return SyncPlan(sync_mode="fallback_full", fallback_reason=state_error), state
-
-    if state.last_sync_status != "success":
-        return SyncPlan(sync_mode="fallback_full", fallback_reason="previous_sync_not_success"), state
-
-    if snapshot is None:
-        return SyncPlan(sync_mode="fallback_full", fallback_reason="snapshot_missing_or_invalid"), state
-
-    last_successful = _parse_state_datetime(state.last_successful_catalog_sync_at)
-    last_full = _parse_state_datetime(state.last_full_catalog_sync_at)
-    if last_successful is None or last_full is None:
-        return SyncPlan(sync_mode="fallback_full", fallback_reason="state_missing_timestamps"), state
-
-    if now - last_full > timedelta(hours=FULL_SYNC_MAX_AGE_HOURS):
-        return SyncPlan(sync_mode="fallback_full", fallback_reason="full_sync_too_old"), state
-
-    modified_from_dt = last_successful - timedelta(minutes=DELTA_SAFETY_WINDOW_MIN)
-    modified_to_dt = now
-    if modified_from_dt >= modified_to_dt:
-        return SyncPlan(sync_mode="fallback_full", fallback_reason="invalid_delta_window"), state
-
-    return SyncPlan(
-        sync_mode="delta",
-        modified_from=_format_api_datetime(modified_from_dt),
-        modified_to=_format_api_datetime(modified_to_dt),
-    ), state
+    return SyncPlan(sync_mode="full", fallback_reason="incremental_temporarily_disabled"), state
 
 
 def _merge_delta_into_snapshot(snapshot: list[dict], delta_records: list[dict]) -> list[dict]:
