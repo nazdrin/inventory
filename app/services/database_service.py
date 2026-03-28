@@ -52,6 +52,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
         try:
             raw_data, cleaned_data = _load_payload(file_path)
             records_count = len(cleaned_data)
+            settings_context = SettingsContext()
             logging.info(
                 "Database service payload loaded: enterprise_code=%s data_type=%s records_count=%s",
                 enterprise_code,
@@ -99,6 +100,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
                 session,
                 enterprise_code,
                 data_type,
+                enterprise_settings=settings_context.enterprise_settings,
             )
             await _run_phase(
                 enterprise_code,
@@ -618,7 +620,13 @@ async def save_stock_data(data: list, session: AsyncSession, enterprise_code: st
         prepared_record = _prepare_stock_record_for_persistence(record, enterprise_code)
         session.add(InventoryStock(**prepared_record))
 
-async def update_last_upload(session: AsyncSession, enterprise_code: str, data_type: str):
+async def update_last_upload(
+    session: AsyncSession,
+    enterprise_code: str,
+    data_type: str,
+    *,
+    enterprise_settings: EnterpriseSettings | None = None,
+):
     """
     Обновляет поля last_stock_upload или last_catalog_upload в таблице EnterpriseSettings.
     :param session: Сессия базы данных
@@ -626,9 +634,10 @@ async def update_last_upload(session: AsyncSession, enterprise_code: str, data_t
     :param data_type: Тип данных ('catalog' или 'stock')
     """
     current_time = datetime.utcnow()
-    stmt = select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
-    result = await session.execute(stmt)
-    enterprise_settings = result.scalars().one_or_none()
+    if enterprise_settings is None:
+        stmt = select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
+        result = await session.execute(stmt)
+        enterprise_settings = result.scalars().one_or_none()
 
     if not enterprise_settings:
         raise ValueError(f"Предприятие с кодом {enterprise_code} не найдено.")
