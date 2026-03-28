@@ -288,10 +288,10 @@ async def _process_catalog_flow(
     records_count: int,
     settings_context: SettingsContext,
 ):
-    validation_summary = await _run_phase(
+    pre_delete_validation_summary = await _run_phase(
         enterprise_code,
         data_type,
-        "validate_catalog_payload",
+        "catalog_pre_delete_guard",
         _validate_catalog_phase,
         cleaned_data,
         enterprise_code,
@@ -300,8 +300,8 @@ async def _process_catalog_flow(
     _log_validation_summary(
         enterprise_code=enterprise_code,
         data_type=data_type,
-        phase="validate_catalog_payload",
-        summary=validation_summary,
+        phase="catalog_pre_delete_guard",
+        summary=pre_delete_validation_summary,
     )
     deleted_count = await _run_phase(
         enterprise_code,
@@ -370,7 +370,7 @@ async def _process_stock_flow(
     pre_delete_validation_summary = await _run_phase(
         enterprise_code,
         data_type,
-        "pre_delete_validate_stock_payload",
+        "stock_pre_delete_guard",
         _validate_stock_phase,
         cleaned_data,
         enterprise_code,
@@ -379,7 +379,7 @@ async def _process_stock_flow(
     _log_validation_summary(
         enterprise_code=enterprise_code,
         data_type=data_type,
-        phase="pre_delete_validate_stock_payload",
+        phase="stock_pre_delete_guard",
         summary=pre_delete_validation_summary,
     )
 
@@ -450,7 +450,7 @@ async def _process_stock_flow(
     validation_summary = await _run_phase(
         enterprise_code,
         data_type,
-        "validate_stock_payload",
+        "stock_pre_persistence_validation",
         _validate_stock_phase,
         cleaned_data,
         enterprise_code,
@@ -459,7 +459,7 @@ async def _process_stock_flow(
     _log_validation_summary(
         enterprise_code=enterprise_code,
         data_type=data_type,
-        phase="validate_stock_payload",
+        phase="stock_pre_persistence_validation",
         summary=validation_summary,
     )
 
