@@ -23,6 +23,16 @@ class SettingsContext:
     developer_settings: DeveloperSettings | None = None
 
 
+@dataclass
+class ValidationSummary:
+    records_count: int
+    duplicate_count: int
+    invalid_count: int
+    normalized_count: int
+    duplicate_samples: list[str]
+    invalid_samples: list[str]
+
+
 async def process_database_service(file_path: str, data_type: str, enterprise_code: str):
     """
     Обрабатывает данные из JSON и записывает их в базу данных.
@@ -239,6 +249,21 @@ async def _process_catalog_flow(
     records_count: int,
     settings_context: SettingsContext,
 ):
+    validation_summary = await _run_phase(
+        enterprise_code,
+        data_type,
+        "validate_catalog_payload",
+        _validate_catalog_phase,
+        cleaned_data,
+        enterprise_code,
+        records_count=records_count,
+    )
+    _log_validation_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        phase="validate_catalog_payload",
+        summary=validation_summary,
+    )
     await _run_phase(
         enterprise_code,
         data_type,
@@ -316,6 +341,22 @@ async def _process_stock_flow(
                 developer_settings=settings_context.developer_settings,
             )
 
+    validation_summary = await _run_phase(
+        enterprise_code,
+        data_type,
+        "validate_stock_payload",
+        _validate_stock_phase,
+        cleaned_data,
+        enterprise_code,
+        records_count=len(cleaned_data),
+    )
+    _log_validation_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        phase="validate_stock_payload",
+        summary=validation_summary,
+    )
+
     await _run_phase(
         enterprise_code,
         data_type,
@@ -361,6 +402,148 @@ async def _fetch_developer_settings(session: AsyncSession) -> DeveloperSettings 
 
 async def _apply_discount_phase(cleaned_data: list, discount_rate: float) -> list:
     return apply_discount_rate(cleaned_data, discount_rate)
+
+
+async def _validate_catalog_phase(cleaned_data: list, enterprise_code: str) -> ValidationSummary:
+    required_fields = ("code", "name", "vat")
+    duplicate_samples: list[str] = []
+    invalid_samples: list[str] = []
+    seen_codes: set[str] = set()
+    duplicate_count = 0
+    invalid_count = 0
+    normalized_count = 0
+
+    for index, record in enumerate(cleaned_data):
+        if record.get("producer") is None:
+            record["producer"] = ""
+            normalized_count += 1
+
+        missing = [
+            field for field in required_fields
+            if record.get(field) in (None, "")
+        ]
+        code = str(record.get("code") or "").strip()
+
+        if missing:
+            invalid_count += 1
+            if len(invalid_samples) < 10:
+                invalid_samples.append(
+                    f"idx={index} missing={','.join(missing)} code={code or '<empty>'}"
+                )
+
+        if not code:
+            continue
+
+        if code in seen_codes:
+            duplicate_count += 1
+            if len(duplicate_samples) < 10:
+                duplicate_samples.append(code)
+        else:
+            seen_codes.add(code)
+
+    if invalid_count or duplicate_count:
+        raise ValueError(
+            "Catalog payload validation failed for "
+            f"enterprise_code={enterprise_code}: invalid={invalid_count} "
+            f"duplicates={duplicate_count} duplicate_samples={duplicate_samples} "
+            f"invalid_samples={invalid_samples}"
+        )
+
+    return ValidationSummary(
+        records_count=len(cleaned_data),
+        duplicate_count=duplicate_count,
+        invalid_count=invalid_count,
+        normalized_count=normalized_count,
+        duplicate_samples=duplicate_samples,
+        invalid_samples=invalid_samples,
+    )
+
+
+async def _validate_stock_phase(cleaned_data: list, enterprise_code: str) -> ValidationSummary:
+    required_fields = ("branch", "code", "price", "qty")
+    duplicate_samples: list[str] = []
+    invalid_samples: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+    duplicate_count = 0
+    invalid_count = 0
+
+    for index, record in enumerate(cleaned_data):
+        missing = [
+            field for field in required_fields
+            if record.get(field) in (None, "")
+        ]
+        branch = str(record.get("branch") or "").strip()
+        code = str(record.get("code") or "").strip()
+        key = (branch, code)
+
+        if missing:
+            invalid_count += 1
+            if len(invalid_samples) < 10:
+                invalid_samples.append(
+                    f"idx={index} missing={','.join(missing)} branch={branch or '<empty>'} code={code or '<empty>'}"
+                )
+
+        price = record.get("price")
+        price_reserve = record.get("price_reserve")
+        qty = record.get("qty")
+        if price is not None and price_reserve is not None and price_reserve > price:
+            invalid_count += 1
+            if len(invalid_samples) < 10:
+                invalid_samples.append(
+                    f"idx={index} branch={branch or '<empty>'} code={code or '<empty>'} price_reserve_gt_price"
+                )
+        if qty is not None and qty < 0:
+            invalid_count += 1
+            if len(invalid_samples) < 10:
+                invalid_samples.append(
+                    f"idx={index} branch={branch or '<empty>'} code={code or '<empty>'} negative_qty"
+                )
+
+        if not branch or not code:
+            continue
+
+        if key in seen_keys:
+            duplicate_count += 1
+            if len(duplicate_samples) < 10:
+                duplicate_samples.append(f"{branch}:{code}")
+        else:
+            seen_keys.add(key)
+
+    if invalid_count or duplicate_count:
+        raise ValueError(
+            "Stock payload validation failed for "
+            f"enterprise_code={enterprise_code}: invalid={invalid_count} "
+            f"duplicates={duplicate_count} duplicate_samples={duplicate_samples} "
+            f"invalid_samples={invalid_samples}"
+        )
+
+    return ValidationSummary(
+        records_count=len(cleaned_data),
+        duplicate_count=duplicate_count,
+        invalid_count=invalid_count,
+        normalized_count=0,
+        duplicate_samples=duplicate_samples,
+        invalid_samples=invalid_samples,
+    )
+
+
+def _log_validation_summary(
+    *,
+    enterprise_code: str,
+    data_type: str,
+    phase: str,
+    summary: ValidationSummary,
+) -> None:
+    logging.info(
+        "Database service validation summary: enterprise_code=%s data_type=%s phase=%s records_count=%s invalid=%s duplicates=%s normalized=%s",
+        enterprise_code,
+        data_type,
+        phase,
+        summary.records_count,
+        summary.invalid_count,
+        summary.duplicate_count,
+        summary.normalized_count,
+    )
 
 def apply_discount_rate(data: list, discount_rate: float):
     """
