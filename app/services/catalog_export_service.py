@@ -3,7 +3,6 @@ import logging
 import json
 import aiohttp
 from sqlalchemy.future import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
 from app.services.notification_service import send_notification  # Импортируем функцию для отправки уведомлений
 from datetime import datetime,timezone
@@ -104,45 +103,53 @@ async def post_data_to_endpoint(endpoint: str, data: dict, login: str, password:
         raise
 
 # Основная функция обработки данных
-async def export_catalog(enterprise_code: str, raw_data: list):
-    async with get_async_db() as db:
-        try:
-            # Получение настроек разработчика
-            result = await db.execute(select(DeveloperSettings).limit(1))
-            developer_settings = result.scalar_one_or_none()
-            if not developer_settings:
-                logging.error("DeveloperSettings not found.")
-                send_notification(f"Ошибка нет данных разработчика для отправки каталога для предприятия {enterprise_code}",enterprise_code)
-                return
+async def export_catalog(
+    enterprise_code: str,
+    raw_data: list,
+    *,
+    enterprise_settings: EnterpriseSettings | None = None,
+    developer_settings: DeveloperSettings | None = None,
+):
+    try:
+        if enterprise_settings is None or developer_settings is None:
+            async with get_async_db(commit_on_exit=False) as db:
+                if developer_settings is None:
+                    result = await db.execute(select(DeveloperSettings).limit(1))
+                    developer_settings = result.scalar_one_or_none()
 
-            # Получение настроек предприятия
-            result = await db.execute(
-                select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
-            )
-            enterprise_settings = result.scalar_one_or_none()
-            if not enterprise_settings:
-                logging.error(f"EnterpriseSettings not found for enterprise_code: {enterprise_code}")
-                send_notification(f"Ошибка нет данных кода предприятия для отправки каталога для предприятия {enterprise_code}",enterprise_code)
-                return
+                if enterprise_settings is None:
+                    result = await db.execute(
+                        select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
+                    )
+                    enterprise_settings = result.scalar_one_or_none()
 
-            # Преобразование данных
-            transformed_data = await transform_data(raw_data, developer_settings,enterprise_code)
+        if not developer_settings:
+            logging.error("DeveloperSettings not found.")
+            send_notification(f"Ошибка нет данных разработчика для отправки каталога для предприятия {enterprise_code}",enterprise_code)
+            return
 
-            # Вывод данных в формате JSON в консоль
-            await save_catalog_log(enterprise_code, transformed_data)
-            # Формируем URL эндпоинта
-            endpoint = f"{developer_settings.endpoint_catalog}/Import/Ref/{enterprise_settings.branch_id}"
-            logging.info(f"Prepared endpoint URL: {endpoint}")
+        if not enterprise_settings:
+            logging.error(f"EnterpriseSettings not found for enterprise_code: {enterprise_code}")
+            send_notification(f"Ошибка нет данных кода предприятия для отправки каталога для предприятия {enterprise_code}",enterprise_code)
+            return
 
-            # Отправка данных на реальный эндпоинт
-            await post_data_to_endpoint(endpoint,transformed_data, enterprise_settings.tabletki_login, enterprise_settings.tabletki_password,enterprise_code )
-            
-            if developer_settings.message_orders:
-                send_notification(f"🟡 Каталог успешно отправлен!", enterprise_code)
+        # Преобразование данных
+        transformed_data = await transform_data(raw_data, developer_settings,enterprise_code)
 
-        except Exception as e:
-            logging.error(f"Error exporting catalog for enterprise_code={enterprise_code}: {str(e)}")
-            send_notification(f"Ошибка процесса отправки каталога {str(e)} для предприятия {enterprise_code}",enterprise_code)
+        # Вывод данных в формате JSON в консоль
+        await save_catalog_log(enterprise_code, transformed_data)
+        # Формируем URL эндпоинта
+        endpoint = f"{developer_settings.endpoint_catalog}/Import/Ref/{enterprise_settings.branch_id}"
+        logging.info(f"Prepared endpoint URL: {endpoint}")
 
+        # Отправка данных на реальный эндпоинт
+        await post_data_to_endpoint(endpoint,transformed_data, enterprise_settings.tabletki_login, enterprise_settings.tabletki_password,enterprise_code )
+        
+        if developer_settings.message_orders:
+            send_notification(f"🟡 Каталог успешно отправлен!", enterprise_code)
+
+    except Exception as e:
+        logging.error(f"Error exporting catalog for enterprise_code={enterprise_code}: {str(e)}")
+        send_notification(f"Ошибка процесса отправки каталога {str(e)} для предприятия {enterprise_code}",enterprise_code)
 
 
