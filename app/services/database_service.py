@@ -140,6 +140,29 @@ def _load_payload(file_path: str) -> tuple[list, list]:
     return raw_data, cleaned_data
 
 
+def _catalog_identity_key(record: dict, enterprise_code: str) -> tuple[str, str]:
+    return str(record.get("code") or "").strip(), enterprise_code
+
+
+def _stock_identity_key(record: dict) -> tuple[str, str]:
+    return (
+        str(record.get("branch") or "").strip(),
+        str(record.get("code") or "").strip(),
+    )
+
+
+def _prepare_catalog_record_for_persistence(record: dict, enterprise_code: str) -> dict:
+    prepared = dict(record)
+    prepared["enterprise_code"] = enterprise_code
+    return prepared
+
+
+def _prepare_stock_record_for_persistence(record: dict, enterprise_code: str) -> dict:
+    prepared = dict(record)
+    prepared["enterprise_code"] = enterprise_code
+    return prepared
+
+
 async def _run_phase(
     enterprise_code: str,
     data_type: str,
@@ -422,7 +445,7 @@ async def _validate_catalog_phase(cleaned_data: list, enterprise_code: str) -> V
             field for field in required_fields
             if record.get(field) in (None, "")
         ]
-        code = str(record.get("code") or "").strip()
+        code, _ = _catalog_identity_key(record, enterprise_code)
 
         if missing:
             invalid_count += 1
@@ -472,8 +495,7 @@ async def _validate_stock_phase(cleaned_data: list, enterprise_code: str) -> Val
             field for field in required_fields
             if record.get(field) in (None, "")
         ]
-        branch = str(record.get("branch") or "").strip()
-        code = str(record.get("code") or "").strip()
+        branch, code = _stock_identity_key(record)
         key = (branch, code)
 
         if missing:
@@ -582,8 +604,8 @@ async def save_catalog_data(data: list, session: AsyncSession, enterprise_code: 
     :param enterprise_code: Код предприятия
     """
     for record in data:
-        record["enterprise_code"] = enterprise_code  # Добавляем enterprise_code в данные
-        session.add(InventoryData(**record))
+        prepared_record = _prepare_catalog_record_for_persistence(record, enterprise_code)
+        session.add(InventoryData(**prepared_record))
 
 async def save_stock_data(data: list, session: AsyncSession, enterprise_code: str):
     """
@@ -593,8 +615,8 @@ async def save_stock_data(data: list, session: AsyncSession, enterprise_code: st
     :param enterprise_code: Код предприятия
     """
     for record in data:
-        record["enterprise_code"] = enterprise_code  # Добавляем enterprise_code в данные
-        session.add(InventoryStock(**record))
+        prepared_record = _prepare_stock_record_for_persistence(record, enterprise_code)
+        session.add(InventoryStock(**prepared_record))
 
 async def update_last_upload(session: AsyncSession, enterprise_code: str, data_type: str):
     """
