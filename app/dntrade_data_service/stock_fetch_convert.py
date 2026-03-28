@@ -64,13 +64,16 @@ async def fetch_store_branch_map(enterprise_code, db) -> Dict[str, str]:
 def transform_stock(products, store_to_branch: Dict[str, str]) -> Tuple[List[dict], Dict[str, int]]:
     """Трансформация данных продуктов в целевой формат для стока."""
     logger.info("Transform stock: incoming products=%d", len(products))
-    transformed = []
+    transformed_by_key: Dict[Tuple[str, str], dict] = {}
     skipped_missing_product_id = 0
     missing_price_entries = 0
     missing_store_id = 0
     missing_branch = 0
     bad_price = 0
     balance_coerced_to_zero = 0
+    duplicate_branch_code = 0
+    duplicate_conflicting_values = 0
+    duplicate_samples: List[str] = []
 
     for product in products:
         product_id = product.get("product_id")
@@ -111,13 +114,27 @@ def transform_stock(products, store_to_branch: Dict[str, str]) -> Tuple[List[dic
                         bad_price += 1
                         logger.warning("Bad price format for product_id=%s store_id=%s value=%r", product_id, store_id, price_entry.get("price"))
                         continue
-                    transformed.append({
+                    record = {
                         "branch": branch,
                         "code": product_id,
                         "price": price_val,
                         "price_reserve": price_val,
                         "qty": qty,
-                    })
+                    }
+                    key = (branch, str(product_id))
+                    existing = transformed_by_key.get(key)
+                    if existing is not None:
+                        duplicate_branch_code += 1
+                        if (
+                            existing.get("price") != record["price"]
+                            or existing.get("price_reserve") != record["price_reserve"]
+                            or existing.get("qty") != record["qty"]
+                        ):
+                            duplicate_conflicting_values += 1
+                            if len(duplicate_samples) < 10:
+                                duplicate_samples.append(f"{branch}:{product_id}")
+                        # Keep the latest record for the same (branch, code).
+                    transformed_by_key[key] = record
                 else:
                     missing_branch += 1
                     logger.warning("Branch not found for store_id=%s (product_id=%s)", store_id, product_id)
@@ -126,6 +143,15 @@ def transform_stock(products, store_to_branch: Dict[str, str]) -> Tuple[List[dic
                 if price_title:
                     logger.debug("Non-retail price skipped: title=%s product_id=%s", price_title, product_id)
 
+    if duplicate_branch_code:
+        logger.warning(
+            "Dntrade stock duplicate (branch, code) detected: total_duplicates=%d conflicting=%d samples=%s",
+            duplicate_branch_code,
+            duplicate_conflicting_values,
+            duplicate_samples,
+        )
+
+    transformed = list(transformed_by_key.values())
     stats = {
         "skipped_missing_product_id": skipped_missing_product_id,
         "missing_price_entries": missing_price_entries,
@@ -133,6 +159,8 @@ def transform_stock(products, store_to_branch: Dict[str, str]) -> Tuple[List[dic
         "missing_branch": missing_branch,
         "bad_price": bad_price,
         "balance_coerced_to_zero": balance_coerced_to_zero,
+        "duplicate_branch_code": duplicate_branch_code,
+        "duplicate_conflicting_values": duplicate_conflicting_values,
     }
     logger.info("Transform stock finished: produced %d records", len(transformed))
     return transformed, stats
@@ -275,7 +303,8 @@ async def run_service(enterprise_code, file_type):
         logger.info(
             "Run service finished successfully: enterprise_code=%s records=%d "
             "skipped_missing_product_id=%s missing_price_entries=%s missing_store_id=%s "
-            "missing_branch=%s bad_price=%s balance_coerced_to_zero=%s elapsed=%.3fs",
+            "missing_branch=%s bad_price=%s balance_coerced_to_zero=%s duplicate_branch_code=%s "
+            "duplicate_conflicting_values=%s elapsed=%.3fs",
             enterprise_code,
             len(transformed_data),
             transform_stats["skipped_missing_product_id"],
@@ -284,6 +313,8 @@ async def run_service(enterprise_code, file_type):
             transform_stats["missing_branch"],
             transform_stats["bad_price"],
             transform_stats["balance_coerced_to_zero"],
+            transform_stats["duplicate_branch_code"],
+            transform_stats["duplicate_conflicting_values"],
             perf_counter() - started,
         )
     except Exception:
