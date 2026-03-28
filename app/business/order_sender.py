@@ -19,7 +19,11 @@ SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необх�
 
 # Импорт для cancelled-orders API
 from app.business.cancelled_orders_fetcher import get_cancelled_orders, acknowledge_cancelled_orders
-from app.business.supplier_identity import SUPPLIERLIST_MAP, get_supplier_id_by_code
+from app.business.supplier_identity import (
+    SUPPLIERLIST_MAP,
+    get_supplier_display_name_by_code,
+    get_supplier_id_by_code,
+)
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
@@ -74,6 +78,9 @@ SUPPLIER_CITY_TAG_MAP = {
     "D11": "Київ",
     "D12": "Київ",
 }
+
+D14_SUPPLIER_CODE = "D14"
+D14_SALESDRIVE_STOCK_ID = 2
 
 def _notify_business(msg: str) -> None:
     try:
@@ -169,12 +176,13 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
     raise RuntimeError(err_msg) from last_error
 
 # --- HELPER для обновления заявки в SalesDrive через /api/order/update/
-async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
+async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> tuple[Optional[httpx.Response], bool]:
     """
     Обновление заявки в SalesDrive через /api/order/update/.
     Требует X-Api-Key. update_url — полный URL до /api/order/update/.
     payload — тело запроса с externalId и data.
-    Возвращает httpx.Response или None при сетевой/HTTP ошибке.
+    Возвращает (response, should_acknowledge).
+    Для HTTP 422 считаем ошибку терминальной и возвращаем should_acknowledge=True без retry.
     """
     headers = {
         "accept": "application/json",
@@ -187,8 +195,26 @@ async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[
             try:
                 resp = await client.post(update_url, json=payload, headers=headers)
                 resp.raise_for_status()
-                return resp
-            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                return resp, True
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status_code = exc.response.status_code if exc.response is not None else None
+                response_text = exc.response.text if exc.response is not None else ""
+                if status_code == 422:
+                    logger.info(
+                        "SalesDrive update skipped as terminal 422: externalId=%s body=%s",
+                        payload.get("externalId"),
+                        response_text[:1000],
+                    )
+                    return None, True
+                logger.warning(
+                    "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    exc,
+                )
+            except httpx.RequestError as exc:
                 last_error = exc
                 logger.warning(
                     "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
@@ -205,7 +231,7 @@ async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[
         payload.get("externalId"),
         last_error,
     )
-    return None
+    return None, False
 
 def _as_decimal(x: Any) -> Decimal:
     if isinstance(x, Decimal):
@@ -285,7 +311,12 @@ async def _fetch_supplier_name(session: AsyncSession, supplier_code: str) -> Opt
         .limit(1)
     )
     res = await session.execute(q)
-    return res.scalar_one_or_none()
+    db_name = res.scalar_one_or_none()
+    return db_name or get_supplier_display_name_by_code(supplier_code)
+
+
+def _is_d14_supplier(supplier_code: Optional[str]) -> bool:
+    return str(supplier_code or "").strip().upper() == D14_SUPPLIER_CODE
 async def _get_supplier_priority(session: AsyncSession, supplier_code: str) -> int:
     q = select(DropshipEnterprise.priority).where(DropshipEnterprise.code == str(supplier_code)).limit(1)
     res = await session.execute(q)
@@ -880,8 +911,8 @@ async def process_cancelled_orders_service(
             },
         }
 
-        resp = await _salesdrive_update_order(update_url, api_key, payload)
-        if resp is not None:
+        resp, should_ack = await _salesdrive_update_order(update_url, api_key, payload)
+        if should_ack:
             acknowledged_ids.append(ext_id)
 
     if acknowledged_ids:
@@ -1166,19 +1197,28 @@ async def _build_products_block(
 
         description = str(supplier_item_code) if supplier_item_code else ""
 
-        products.append(
-            {
-                "id": r.goodsCode,
-                "name": display_name,
-                "costPerItem": str(r.price),  # исх. цена позиции
-                "amount": str(r.qty),
-                "expenses": "0",
-                "description": description,
-                "barcode": str(barcode) if barcode else "",
-                "discount": "",
-                "sku": str(r.goodsCode),
-            }
-        )
+        product_payload = {
+            "id": r.goodsCode,
+            "name": display_name,
+            "costPerItem": str(r.price),  # исх. цена позиции
+            "amount": str(r.qty),
+            "expenses": "0",
+            "description": description,
+            "barcode": str(barcode) if barcode else "",
+            "discount": "",
+            "sku": str(r.goodsCode),
+        }
+
+        if _is_d14_supplier(effective_supplier_code):
+            product_payload["stockId"] = D14_SALESDRIVE_STOCK_ID
+            logger.info(
+                "SalesDrive line stockId override applied: goodsCode=%s supplier=%s stockId=%s",
+                r.goodsCode,
+                effective_supplier_code,
+                D14_SALESDRIVE_STOCK_ID,
+            )
+
+        products.append(product_payload)
     return products
 
 
@@ -1317,6 +1357,12 @@ async def build_salesdrive_payload(
     supplierlist_val = ""
     if supplier_code:
         supplierlist_val = SUPPLIERLIST_MAP.get(str(supplier_code), "")
+        if _is_d14_supplier(supplier_code):
+            logger.info(
+                "SalesDrive supplier recognized as D14: supplier_code=%s supplierlist=%s",
+                supplier_code,
+                supplierlist_val,
+            )
 
     supplier_city_tag = ""
     if supplier_code:
@@ -1345,7 +1391,7 @@ async def build_salesdrive_payload(
         "sajt": str(branch or ""),
         "externalId": order.get("id", ""),
         "organizationId": "1",
-        "stockId": "",
+        "stockId": D14_SALESDRIVE_STOCK_ID if _is_d14_supplier(supplier_code) else "",
         "novaposhta": _build_novaposhta_block(d),
         "ukrposhta": _build_ukrposhta_block(d),
         "meest": _build_meest_block(d),
@@ -1360,6 +1406,13 @@ async def build_salesdrive_payload(
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
         "supplierlist": supplierlist_val,
     }
+    if _is_d14_supplier(supplier_code):
+        logger.info(
+            "SalesDrive root stockId override applied: externalId=%s supplier=%s stockId=%s",
+            order.get("id", ""),
+            supplier_code,
+            D14_SALESDRIVE_STOCK_ID,
+        )
     return payload
 
 
