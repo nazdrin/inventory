@@ -1,6 +1,6 @@
 import logging
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
 from sqlalchemy.future import select
@@ -47,6 +47,21 @@ class SideEffectSummary:
     records_count: int | None = None
 
 
+@dataclass
+class RunOutcomeSummary:
+    run_status: str = "in_progress"
+    failed_phase: str | None = None
+    deleted_count: int = 0
+    prepared_count: int = 0
+    side_effects_attempted: list[str] = field(default_factory=list)
+
+
+class PhaseExecutionError(RuntimeError):
+    def __init__(self, phase: str):
+        super().__init__(f"Database service phase failed: {phase}")
+        self.phase = phase
+
+
 async def process_database_service(file_path: str, data_type: str, enterprise_code: str):
     """
     Обрабатывает данные из JSON и записывает их в базу данных.
@@ -63,6 +78,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
     )
 
     async with get_async_db(commit_on_exit=False) as session:
+        run_outcome = RunOutcomeSummary()
         try:
             raw_data, cleaned_data = _load_payload(file_path)
             records_count = len(cleaned_data)
@@ -91,6 +107,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
                     cleaned_data=cleaned_data,
                     records_count=records_count,
                     settings_context=settings_context,
+                    run_outcome=run_outcome,
                 )
 
             elif data_type == "stock":
@@ -101,6 +118,7 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
                     data_type=data_type,
                     cleaned_data=cleaned_data,
                     settings_context=settings_context,
+                    run_outcome=run_outcome,
                 )
 
             else:
@@ -122,6 +140,12 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
                 "commit",
                 session.commit,
             )
+            run_outcome.run_status = "success"
+            _log_run_outcome_summary(
+                enterprise_code=enterprise_code,
+                data_type=data_type,
+                summary=run_outcome,
+            )
             logging.info(
                 "Данные %s успешно записаны в базу данных для предприятия %s elapsed=%.3fs",
                 data_type,
@@ -130,6 +154,13 @@ async def process_database_service(file_path: str, data_type: str, enterprise_co
             )
 
         except Exception as e:
+            run_outcome.run_status = "failed"
+            run_outcome.failed_phase = e.phase if isinstance(e, PhaseExecutionError) else "unknown"
+            _log_run_outcome_summary(
+                enterprise_code=enterprise_code,
+                data_type=data_type,
+                summary=run_outcome,
+            )
             logging.error(f"Ошибка записи данных в базу: {str(e)}")
             logging.exception(
                 "DB session failure in process_database_service enterprise_code=%s data_type=%s",
@@ -213,7 +244,7 @@ async def _run_phase(
 
     try:
         result = await func(*args, **kwargs)
-    except Exception:
+    except Exception as exc:
         logging.exception(
             "Database service phase failure: enterprise_code=%s data_type=%s phase=%s%s",
             enterprise_code,
@@ -221,7 +252,7 @@ async def _run_phase(
             phase,
             f" records_count={records_count}" if records_count is not None else "",
         )
-        raise
+        raise PhaseExecutionError(phase) from exc
 
     if records_count is not None:
         logging.info(
@@ -287,6 +318,7 @@ async def _process_catalog_flow(
     cleaned_data: list,
     records_count: int,
     settings_context: SettingsContext,
+    run_outcome: RunOutcomeSummary,
 ):
     pre_delete_validation_summary = await _run_phase(
         enterprise_code,
@@ -311,6 +343,7 @@ async def _process_catalog_flow(
         session,
         enterprise_code,
     )
+    run_outcome.deleted_count = deleted_count or 0
     await _run_phase(
         enterprise_code,
         data_type,
@@ -332,6 +365,7 @@ async def _process_catalog_flow(
             records_count=records_count,
         ),
     )
+    _record_side_effect_attempt(run_outcome, "export_catalog")
     prepared_count = await _run_phase(
         enterprise_code,
         data_type,
@@ -342,6 +376,7 @@ async def _process_catalog_flow(
         enterprise_code,
         records_count=records_count,
     )
+    run_outcome.prepared_count = prepared_count or 0
     await _run_phase(
         enterprise_code,
         data_type,
@@ -366,6 +401,7 @@ async def _process_stock_flow(
     data_type: str,
     cleaned_data: list,
     settings_context: SettingsContext,
+    run_outcome: RunOutcomeSummary,
 ) -> list:
     pre_delete_validation_summary = await _run_phase(
         enterprise_code,
@@ -391,6 +427,7 @@ async def _process_stock_flow(
         session,
         enterprise_code,
     )
+    run_outcome.deleted_count = deleted_count or 0
 
     if settings_context.enterprise_settings:
         cleaned_data = await _run_phase(
@@ -414,6 +451,7 @@ async def _process_stock_flow(
                 enterprise_settings=settings_context.enterprise_settings,
                 developer_settings=settings_context.developer_settings,
             )
+            _record_side_effect_attempt(run_outcome, "update_stock")
             _log_side_effect_summary(
                 enterprise_code=enterprise_code,
                 data_type=data_type,
@@ -474,6 +512,7 @@ async def _process_stock_flow(
         enterprise_settings=settings_context.enterprise_settings,
         developer_settings=settings_context.developer_settings,
     )
+    _record_side_effect_attempt(run_outcome, "export_stock")
     _log_side_effect_summary(
         enterprise_code=enterprise_code,
         data_type=data_type,
@@ -494,6 +533,7 @@ async def _process_stock_flow(
         enterprise_code,
         records_count=len(cleaned_data),
     )
+    run_outcome.prepared_count = prepared_count or 0
     await _run_phase(
         enterprise_code,
         data_type,
@@ -701,6 +741,29 @@ def _log_side_effect_summary(
         summary.status,
         "yes" if summary.attempted else "no",
         summary.records_count,
+    )
+
+
+def _record_side_effect_attempt(summary: RunOutcomeSummary, phase: str) -> None:
+    if phase not in summary.side_effects_attempted:
+        summary.side_effects_attempted.append(phase)
+
+
+def _log_run_outcome_summary(
+    *,
+    enterprise_code: str,
+    data_type: str,
+    summary: RunOutcomeSummary,
+) -> None:
+    logging.info(
+        "Database service run outcome: enterprise_code=%s data_type=%s run_status=%s failed_phase=%s deleted_count=%s prepared_count=%s side_effects_attempted=%s",
+        enterprise_code,
+        data_type,
+        summary.run_status,
+        summary.failed_phase or "",
+        summary.deleted_count,
+        summary.prepared_count,
+        ",".join(summary.side_effects_attempted) if summary.side_effects_attempted else "-",
     )
 
 def apply_discount_rate(data: list, discount_rate: float):
