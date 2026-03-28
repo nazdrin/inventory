@@ -2,6 +2,7 @@ import sys
 import requests
 import json
 import asyncio
+import time
 from app.database import get_async_db, EnterpriseSettings, MappingBranch
 from app.services.database_service import process_database_service
 from sqlalchemy.future import select
@@ -13,11 +14,18 @@ load_dotenv()
 
 API_URL = "https://openapi.keycrm.app/v1/products"
 REQUEST_LIMIT_PER_MINUTE = 60
+PAGE_LIMIT = 15
+REQUEST_TIMEOUT_SEC = 30
+REQUEST_DELAY_SEC = 60 / REQUEST_LIMIT_PER_MINUTE if REQUEST_LIMIT_PER_MINUTE > 0 else 0
 
 
 def log_progress(page, count):
     sys.stdout.write(f"\rЗапрос: page={page} | Получено: {count} записей")
     sys.stdout.flush()
+
+
+class KeyCRMFetchError(RuntimeError):
+    pass
 
 
 async def fetch_enterprise_settings(enterprise_code):
@@ -35,7 +43,11 @@ async def fetch_branch_id(enterprise_code):
             select(MappingBranch.branch).where(MappingBranch.enterprise_code == enterprise_code) 
         ) 
         mapping = result.scalars().first() 
-        return mapping if mapping else "unknown"
+        if mapping:
+            return mapping
+        raise ValueError(
+            f"KeyCRM stock misconfiguration: branch mapping not found for enterprise_code={enterprise_code}"
+        )
 
 
 
@@ -47,24 +59,28 @@ def fetch_all_products(api_key):
 
     all_products = []
     page = 1
+    pages_fetched = 0
+    started = time.perf_counter()
 
     while True:
         params = {
-            "limit": 15,
+            "limit": PAGE_LIMIT,
             "page": page
         }
 
-        response = requests.get(API_URL, headers=headers, params=params)
+        response = requests.get(API_URL, headers=headers, params=params, timeout=REQUEST_TIMEOUT_SEC)
 
         if response.status_code != 200:
-            logging.error(f"Ошибка при запросе страницы {page}: {response.status_code}")
-            break
+            raise KeyCRMFetchError(
+                f"KeyCRM stock request failed: page={page} status={response.status_code}"
+            )
 
         json_data = response.json()
         products = json_data.get("data", [])
         if not products:
             break
 
+        pages_fetched += 1
         all_products.extend(products)
         log_progress(page, len(products))
 
@@ -72,10 +88,23 @@ def fetch_all_products(api_key):
             break
 
         page += 1
-        asyncio.sleep(1)  # контроль лимита API
+        if REQUEST_DELAY_SEC > 0:
+            time.sleep(REQUEST_DELAY_SEC)
 
     print(f"\nВсего получено: {len(all_products)} записей")
-    return all_products
+    elapsed = time.perf_counter() - started
+    logging.info(
+        "KeyCRM stock fetch summary: pages=%s fetched=%s page_limit=%s elapsed=%.3fs",
+        pages_fetched,
+        len(all_products),
+        PAGE_LIMIT,
+        elapsed,
+    )
+    return all_products, {
+        "pages_fetched": pages_fetched,
+        "fetched_records": len(all_products),
+        "elapsed": elapsed,
+    }
 
 def save_raw_input(data, enterprise_code):
     try:
@@ -95,9 +124,11 @@ def save_raw_input(data, enterprise_code):
 
 def transform_stock_data(products, branch_id):
     transformed = []
+    skipped_non_positive_qty = 0
     for item in products:
         quantity = item.get("quantity", 0)
         if quantity <= 0:
+            skipped_non_positive_qty += 1
             continue
 
         transformed.append({
@@ -107,7 +138,14 @@ def transform_stock_data(products, branch_id):
             "qty": int(quantity),
             "price_reserve": float(item.get("max_price", 0)),
         })
-    return transformed
+    logging.info(
+        "KeyCRM stock transform summary: incoming=%s transformed=%s skipped_non_positive_qty=%s branch=%s",
+        len(products),
+        len(transformed),
+        skipped_non_positive_qty,
+        branch_id,
+    )
+    return transformed, skipped_non_positive_qty
 
 
 def save_to_tempfile(data):
@@ -121,6 +159,7 @@ def save_to_tempfile(data):
 
 
 async def run_service(enterprise_code, file_type):
+    started = time.perf_counter()
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
     if not enterprise_settings:
         print("Настройки предприятия не найдены.")
@@ -137,7 +176,7 @@ async def run_service(enterprise_code, file_type):
         print(str(e))
         return
 
-    all_products = fetch_all_products(api_key)
+    all_products, fetch_summary = fetch_all_products(api_key)
     if not all_products:
         print("Данные не получены.")
         return
@@ -145,7 +184,7 @@ async def run_service(enterprise_code, file_type):
     # ✅ Сохраняем входящий файл до фильтрации
     save_raw_input(all_products, enterprise_code)
 
-    transformed_data = transform_stock_data(all_products, branch_id)
+    transformed_data, skipped_non_positive_qty = transform_stock_data(all_products, branch_id)
     if not transformed_data:
         print("Нет данных для сохранения после фильтрации.")
         return
@@ -155,6 +194,15 @@ async def run_service(enterprise_code, file_type):
         print("Ошибка сохранения JSON-файла.")
         return
 
+    logging.info(
+        "KeyCRM stock run summary: enterprise_code=%s pages=%s fetched=%s transformed=%s skipped_non_positive_qty=%s elapsed=%.3fs",
+        enterprise_code,
+        fetch_summary["pages_fetched"],
+        fetch_summary["fetched_records"],
+        len(transformed_data),
+        skipped_non_positive_qty,
+        time.perf_counter() - started,
+    )
     await process_database_service(json_file_path, "stock", enterprise_code)
 
 
