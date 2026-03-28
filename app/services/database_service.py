@@ -33,6 +33,20 @@ class ValidationSummary:
     invalid_samples: list[str]
 
 
+@dataclass
+class PersistenceSummary:
+    deleted_count: int
+    prepared_count: int
+
+
+@dataclass
+class SideEffectSummary:
+    phase: str
+    status: str
+    attempted: bool
+    records_count: int | None = None
+
+
 async def process_database_service(file_path: str, data_type: str, enterprise_code: str):
     """
     Обрабатывает данные из JSON и записывает их в базу данных.
@@ -289,7 +303,7 @@ async def _process_catalog_flow(
         phase="validate_catalog_payload",
         summary=validation_summary,
     )
-    await _run_phase(
+    deleted_count = await _run_phase(
         enterprise_code,
         data_type,
         "delete_old_catalog",
@@ -308,7 +322,17 @@ async def _process_catalog_flow(
         enterprise_settings=settings_context.enterprise_settings,
         developer_settings=settings_context.developer_settings,
     )
-    await _run_phase(
+    _log_side_effect_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        summary=SideEffectSummary(
+            phase="export_catalog",
+            status="done",
+            attempted=True,
+            records_count=records_count,
+        ),
+    )
+    prepared_count = await _run_phase(
         enterprise_code,
         data_type,
         "save_catalog",
@@ -325,6 +349,15 @@ async def _process_catalog_flow(
         session.flush,
         records_count=records_count,
     )
+    _log_persistence_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        phase="catalog_persistence",
+        summary=PersistenceSummary(
+            deleted_count=deleted_count or 0,
+            prepared_count=prepared_count or 0,
+        ),
+    )
 
 
 async def _process_stock_flow(
@@ -334,7 +367,23 @@ async def _process_stock_flow(
     cleaned_data: list,
     settings_context: SettingsContext,
 ) -> list:
-    await _run_phase(
+    pre_delete_validation_summary = await _run_phase(
+        enterprise_code,
+        data_type,
+        "pre_delete_validate_stock_payload",
+        _validate_stock_phase,
+        cleaned_data,
+        enterprise_code,
+        records_count=len(cleaned_data),
+    )
+    _log_validation_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        phase="pre_delete_validate_stock_payload",
+        summary=pre_delete_validation_summary,
+    )
+
+    deleted_count = await _run_phase(
         enterprise_code,
         data_type,
         "delete_old_stock",
@@ -365,6 +414,38 @@ async def _process_stock_flow(
                 enterprise_settings=settings_context.enterprise_settings,
                 developer_settings=settings_context.developer_settings,
             )
+            _log_side_effect_summary(
+                enterprise_code=enterprise_code,
+                data_type=data_type,
+                summary=SideEffectSummary(
+                    phase="update_stock",
+                    status="done",
+                    attempted=True,
+                    records_count=len(cleaned_data),
+                ),
+            )
+        else:
+            _log_side_effect_summary(
+                enterprise_code=enterprise_code,
+                data_type=data_type,
+                summary=SideEffectSummary(
+                    phase="update_stock",
+                    status="skipped_stock_correction_disabled",
+                    attempted=False,
+                    records_count=len(cleaned_data),
+                ),
+            )
+    else:
+        _log_side_effect_summary(
+            enterprise_code=enterprise_code,
+            data_type=data_type,
+            summary=SideEffectSummary(
+                phase="update_stock",
+                status="skipped_missing_enterprise_settings",
+                attempted=False,
+                records_count=len(cleaned_data),
+            ),
+        )
 
     validation_summary = await _run_phase(
         enterprise_code,
@@ -393,7 +474,17 @@ async def _process_stock_flow(
         enterprise_settings=settings_context.enterprise_settings,
         developer_settings=settings_context.developer_settings,
     )
-    await _run_phase(
+    _log_side_effect_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        summary=SideEffectSummary(
+            phase="export_stock",
+            status="done",
+            attempted=True,
+            records_count=len(cleaned_data),
+        ),
+    )
+    prepared_count = await _run_phase(
         enterprise_code,
         data_type,
         "save_stock",
@@ -409,6 +500,15 @@ async def _process_stock_flow(
         "flush_stock",
         session.flush,
         records_count=len(cleaned_data),
+    )
+    _log_persistence_summary(
+        enterprise_code=enterprise_code,
+        data_type=data_type,
+        phase="stock_persistence",
+        summary=PersistenceSummary(
+            deleted_count=deleted_count or 0,
+            prepared_count=prepared_count or 0,
+        ),
     )
     return cleaned_data
 
@@ -569,6 +669,40 @@ def _log_validation_summary(
         summary.normalized_count,
     )
 
+
+def _log_persistence_summary(
+    *,
+    enterprise_code: str,
+    data_type: str,
+    phase: str,
+    summary: PersistenceSummary,
+) -> None:
+    logging.info(
+        "Database service persistence summary: enterprise_code=%s data_type=%s phase=%s deleted=%s prepared=%s",
+        enterprise_code,
+        data_type,
+        phase,
+        summary.deleted_count,
+        summary.prepared_count,
+    )
+
+
+def _log_side_effect_summary(
+    *,
+    enterprise_code: str,
+    data_type: str,
+    summary: SideEffectSummary,
+) -> None:
+    logging.info(
+        "Database service side-effect summary: enterprise_code=%s data_type=%s phase=%s status=%s attempted=%s records_count=%s",
+        enterprise_code,
+        data_type,
+        summary.phase,
+        summary.status,
+        "yes" if summary.attempted else "no",
+        summary.records_count,
+    )
+
 def apply_discount_rate(data: list, discount_rate: float):
     """
     Применяет скидку к 'price_reserve' в данных.
@@ -586,17 +720,19 @@ async def delete_old_catalog_data(session: AsyncSession, enterprise_code: str):
     """
     Удаляет старые данные каталога по enterprise_code.
     """
-    await session.execute(
+    result = await session.execute(
         InventoryData.__table__.delete().where(InventoryData.enterprise_code == enterprise_code)
     )
+    return result.rowcount or 0
 
 async def delete_old_stock_data(session: AsyncSession, enterprise_code: str):
     """
     Удаляет старые данные остатков по enterprise_code.
     """
-    await session.execute(
+    result = await session.execute(
         InventoryStock.__table__.delete().where(InventoryStock.enterprise_code == enterprise_code)
     )
+    return result.rowcount or 0
 
 async def save_catalog_data(data: list, session: AsyncSession, enterprise_code: str):
     """
@@ -608,6 +744,7 @@ async def save_catalog_data(data: list, session: AsyncSession, enterprise_code: 
     for record in data:
         prepared_record = _prepare_catalog_record_for_persistence(record, enterprise_code)
         session.add(InventoryData(**prepared_record))
+    return len(data)
 
 async def save_stock_data(data: list, session: AsyncSession, enterprise_code: str):
     """
@@ -619,6 +756,7 @@ async def save_stock_data(data: list, session: AsyncSession, enterprise_code: st
     for record in data:
         prepared_record = _prepare_stock_record_for_persistence(record, enterprise_code)
         session.add(InventoryStock(**prepared_record))
+    return len(data)
 
 async def update_last_upload(
     session: AsyncSession,
