@@ -21,7 +21,7 @@ from app.checkbox_data_service.checkbox_catalog_conv import run_service as run_c
 from app.rozetka_data_service.rozetka_conv import run_service as run_rozetka
 from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
 from app.ftp_tabletki_data_service.ftp_tabletki_conv import run_service as run_ftp_tabletki
-from app.dsn_data_service.dsn_catalog_conv import run_service as run_dsn
+from app.dsn_data_service.dsn_conv import run_service as run_dsn
 from app.prom_data_service.prom_catalog import run_prom
 from app.torgsoft_google_data_service.torgsoft_google_drive import run_torgsoft_google
 from app.torgsoft_google_multi_data_service.torgsoft_multi_google_drive import run_torgsoft_google as run_torgsoft_multi
