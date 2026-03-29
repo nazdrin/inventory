@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from typing import Any
 
 import aiohttp
@@ -15,6 +16,7 @@ DEFAULT_VAT = 20.0
 AINUR_PRODUCTS_URL = "https://connect.ainur.app/api/v4/product"
 REQUEST_TIMEOUT_SEC = 60
 PAGE_LIMIT = 1000
+MAX_PAGES_PER_STORE = 100
 
 logger = logging.getLogger(__name__)
 
@@ -120,17 +122,32 @@ async def fetch_all_products_grouped_by_store(
     enterprise_code: str,
     token: str,
     store_ids: list[str],
-) -> dict[str, list[dict[str, Any]]]:
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SEC)
     grouped: dict[str, list[dict[str, Any]]] = {}
+    failed_store_ids: list[str] = []
+    store_page_counts: dict[str, int] = {}
+    total_products = 0
+    run_started_at = time.monotonic()
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for store_id in store_ids:
             try:
                 store_products: list[dict[str, Any]] = []
                 offset = 0
+                page_count = 0
+                previous_page_signature: tuple[str, ...] | None = None
 
                 while True:
+                    if page_count >= MAX_PAGES_PER_STORE:
+                        logger.warning(
+                            "Bioteca max pages reached: enterprise_code=%s store_id=%s max_pages=%s",
+                            enterprise_code,
+                            store_id,
+                            MAX_PAGES_PER_STORE,
+                        )
+                        break
+
                     page_products = await fetch_products_for_store(
                         session,
                         enterprise_code,
@@ -142,27 +159,53 @@ async def fetch_all_products_grouped_by_store(
                     if not page_products:
                         break
 
+                    page_count += 1
+                    page_signature = tuple(str(item.get("code")) for item in page_products if item.get("code"))
+                    if previous_page_signature is not None and page_signature == previous_page_signature:
+                        logger.warning(
+                            "Bioteca repeated page detected, stop paging: enterprise_code=%s store_id=%s offset=%s page=%s",
+                            enterprise_code,
+                            store_id,
+                            offset,
+                            page_count,
+                        )
+                        break
+
                     store_products.extend(page_products)
+                    previous_page_signature = page_signature
                     if len(page_products) < PAGE_LIMIT:
                         break
 
                     offset += PAGE_LIMIT
 
                 grouped[store_id] = store_products
+                store_page_counts[store_id] = page_count
+                total_products += len(store_products)
                 logger.info(
-                    "Bioteca store processed: enterprise_code=%s store_id=%s count=%s",
+                    "Bioteca store processed: enterprise_code=%s store_id=%s pages=%s count=%s",
                     enterprise_code,
                     store_id,
+                    page_count,
                     len(store_products),
                 )
             except Exception as exc:
+                failed_store_ids.append(store_id)
                 logger.error(
                     "Bioteca store fetch failed: enterprise_code=%s store_id=%s error=%s",
                     enterprise_code,
                     store_id,
                     exc,
                 )
-    return grouped
+    summary = {
+        "requested_stores": len(store_ids),
+        "processed_stores": len(grouped),
+        "failed_stores": len(failed_store_ids),
+        "failed_store_ids": failed_store_ids,
+        "store_page_counts": store_page_counts,
+        "total_products": total_products,
+        "elapsed": time.monotonic() - run_started_at,
+    }
+    return grouped, summary
 
 
 def transform_catalog(products_by_store: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -261,6 +304,7 @@ def save_to_json(data: list[dict[str, Any]], enterprise_code: str, file_type: st
 
 
 async def run_service(enterprise_code: str, file_type: str) -> None:
+    run_started_at = time.monotonic()
     logger.info("Bioteca service started: enterprise_code=%s file_type=%s", enterprise_code, file_type)
 
     enterprise_settings = await fetch_enterprise_settings(enterprise_code)
@@ -288,7 +332,24 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
         logger.warning("Bioteca no store_ids found: enterprise_code=%s", enterprise_code)
         return
 
-    products_by_store = await fetch_all_products_grouped_by_store(enterprise_code, token, unique_store_ids)
+    products_by_store, fetch_summary = await fetch_all_products_grouped_by_store(enterprise_code, token, unique_store_ids)
+    logger.info(
+        "Bioteca fetch summary: enterprise_code=%s type=%s requested_stores=%s processed_stores=%s failed_stores=%s total_products=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        fetch_summary["requested_stores"],
+        fetch_summary["processed_stores"],
+        fetch_summary["failed_stores"],
+        fetch_summary["total_products"],
+        fetch_summary["elapsed"],
+    )
+    if fetch_summary["failed_stores"] > 0:
+        logger.warning(
+            "Bioteca partial success: enterprise_code=%s type=%s failed_store_ids=%s",
+            enterprise_code,
+            file_type,
+            fetch_summary["failed_store_ids"],
+        )
     if not products_by_store:
         logger.warning("Bioteca no products fetched: enterprise_code=%s file_type=%s", enterprise_code, file_type)
         return
@@ -325,4 +386,12 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
 
     json_file_path = save_to_json(transformed_data, enterprise_code, file_type)
     await process_database_service(json_file_path, file_type, enterprise_code)
-    logger.info("Bioteca service finished: enterprise_code=%s file_type=%s", enterprise_code, file_type)
+    logger.info(
+        "Bioteca run summary: enterprise_code=%s type=%s stores=%s failed_stores=%s records=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        fetch_summary["processed_stores"],
+        fetch_summary["failed_stores"],
+        len(transformed_data),
+        time.monotonic() - run_started_at,
+    )
