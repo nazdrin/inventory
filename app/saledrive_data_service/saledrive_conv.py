@@ -21,7 +21,7 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 logger.propagate = False
 
-SALESDRIVE_YML_URL_TEMPLATE = "https://petrenko.salesdrive.me/export/yml/export.yml?publicKey={public_key}"
+COMBOKEYCRM_YML_URL_TEMPLATE_ENV = "COMBOKEYCRM_YML_URL_TEMPLATE"
 LEGACY_COMBOKEYCRM_FEED_URL = "https://cloud.data-aggregation.com/files/it_baza/products_feed.xml"
 
 
@@ -73,20 +73,31 @@ def _looks_like_url(value: str) -> bool:
     return bool(parsed.scheme and parsed.netloc)
 
 
+def _get_configured_yml_url_template() -> str:
+    return (os.getenv(COMBOKEYCRM_YML_URL_TEMPLATE_ENV) or "").strip()
+
+
 def resolve_feed_url(token: str | None, public_key: str | None) -> tuple[str, str]:
     token = (token or "").strip()
     public_key = (public_key or "").strip()
+    configured_template = _get_configured_yml_url_template()
 
     if token and _looks_like_url(token):
         return token, "token_url"
 
+    if configured_template and public_key:
+        return configured_template.format(public_key=public_key), "configured_template_public_key"
+
+    if configured_template and token:
+        return configured_template.format(public_key=token), "configured_template_token_public_key"
+
     if public_key:
-        return SALESDRIVE_YML_URL_TEMPLATE.format(public_key=public_key), "google_drive_folder_id_rest_public_key"
+        return LEGACY_COMBOKEYCRM_FEED_URL, "legacy_public_key_source"
 
     if token:
-        return SALESDRIVE_YML_URL_TEMPLATE.format(public_key=token), "token_public_key"
+        return LEGACY_COMBOKEYCRM_FEED_URL, "legacy_token_source"
 
-    raise ValueError("URL фида или publicKey не найдены")
+    raise ValueError("URL фида, publicKey или legacy source не найдены")
 
 
 def download_feed_with_fallback(url: str, source_type: str, enterprise_code: str) -> tuple[str, str, str]:
@@ -95,7 +106,7 @@ def download_feed_with_fallback(url: str, source_type: str, enterprise_code: str
     except RuntimeError as exc:
         error_text = str(exc)
         should_fallback_to_legacy = (
-            source_type in {"google_drive_folder_id_rest_public_key", "token_public_key"}
+            source_type in {"configured_template_public_key", "configured_template_token_public_key"}
             and ("HTTP 401" in error_text or "HTTP 403" in error_text)
         )
         if not should_fallback_to_legacy:
