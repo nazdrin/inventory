@@ -1,231 +1,238 @@
 import logging
 import os
-import tempfile 
+import tempfile
+import time
+
 from dotenv import load_dotenv
-load_dotenv()
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from sqlalchemy.future import select
-from app.database import get_async_db, EnterpriseSettings, DeveloperSettings
+
+from app.database import DeveloperSettings, EnterpriseSettings, get_async_db
 from app.google_drive.data_validator import validate_data
-from app.services.notification_service import send_notification  # Функция для отправки уведомлений
-from app.jetvet_data_service.jetvet_catalog_conv import process_jetvet_catalog
-from app.jetvet_data_service.jetvet_stock_conv import process_jetvet_stock
+from app.services.notification_service import send_notification
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+load_dotenv()
 
-def get_temp_dir():
-    """
-    Возвращает путь к временной папке.
-    Если указано в .env, используется путь из переменной окружения TEMP_DIR.
-    Иначе используется системная временная папка.
-    """
+
+def get_logger() -> logging.Logger:
+    logger = logging.getLogger("google_drive")
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+        logger.addHandler(handler)
+    logger.propagate = False
+    return logger
+
+
+logger = get_logger()
+
+
+def get_temp_dir() -> str:
     temp_dir = os.getenv("TEMP_DIR", tempfile.gettempdir())
     if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)  # Создаём папку, если её нет
+        os.makedirs(temp_dir)
     return temp_dir
 
-async def connect_to_google_drive():
-    """
-    Подключается к Google Drive API.
-    """
-    try:
 
-        # Получаем путь к файлу учетных данных из переменных окружения
+async def connect_to_google_drive():
+    try:
         google_drive_file_name = os.getenv("GOOGLE_DRIVE_CREDENTIALS_PATH")
         if not google_drive_file_name:
-            logging.error("Переменная окружения GOOGLE_DRIVE_CREDENTIALS_PATH не задана.")
-            send_notification(f"Переменная окружения GOOGLE_DRIVE_CREDENTIALS_PATH не задана.", "Разработчик")
+            logger.error("GOOGLE_DRIVE_CREDENTIALS_PATH не задан.")
+            send_notification("Переменная окружения GOOGLE_DRIVE_CREDENTIALS_PATH не задана.", "Разработчик")
             raise EnvironmentError("Не задан путь к учетным данным Google Drive.")
         if not os.path.exists(google_drive_file_name):
-            logging.error(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
+            logger.error("Не найден файл учетных данных Google Drive: %s", google_drive_file_name)
             send_notification(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}", "Разработчик")
             raise FileNotFoundError(f"Не найден файл учетных данных Google Drive: {google_drive_file_name}")
 
         credentials = service_account.Credentials.from_service_account_file(
             google_drive_file_name,
-            scopes=["https://www.googleapis.com/auth/drive"]
+            scopes=["https://www.googleapis.com/auth/drive"],
         )
-        return build('drive', 'v3', credentials=credentials)
-    except Exception as e:
-        logging.error(f"Ошибка при подключении к Google Drive: {str(e)}")
-        send_notification(f"Ошибка при подключении к Google Drive: {str(e)}", "Разработчик")
+        return build("drive", "v3", credentials=credentials)
+    except Exception as exc:
+        logger.error("Ошибка при подключении к Google Drive: %s", exc)
+        send_notification(f"Ошибка при подключении к Google Drive: {exc}", "Разработчик")
         raise
 
-async def fetch_files_from_folder(drive_service, folder_id):
-    """
-    Получает список файлов из указанной папки Google Drive.
-    """
+
+async def fetch_files_from_folder(drive_service, folder_id: str) -> list[dict]:
     try:
-        logging.info(f"Получение файлов из папки Google Drive с ID: {folder_id}")
+        logger.info("Google Drive list files: folder_id=%s", folder_id)
         results = drive_service.files().list(
             q=f"'{folder_id}' in parents and trashed=false",
-            fields="files(id, name)"
+            fields="files(id, name)",
         ).execute()
-        files = results.get('files', [])
-        logging.info(f"Найдено {len(files)} файлов в папке Google Drive ID: {folder_id}")
+        files = results.get("files", [])
+        logger.info("Google Drive files found: folder_id=%s count=%s", folder_id, len(files))
         return files
-    except Exception as e:
-        logging.error(f"Ошибка при получении файлов из папки {folder_id}: {str(e)}")
-        send_notification(f"Ошибка при получении файлов из папки {folder_id}: {str(e)}", "Разработчик")
+    except Exception as exc:
+        logger.error("Ошибка при получении файлов из папки %s: %s", folder_id, exc)
+        send_notification(f"Ошибка при получении файлов из папки {folder_id}: {exc}", "Разработчик")
         raise
 
-async def download_file(drive_service, file_id, file_name):
-    """
-    Скачивает файл из Google Drive.
-    """
+
+async def download_file(drive_service, file_id: str, file_name: str) -> str:
     try:
         request = drive_service.files().get_media(fileId=file_id)
-        # Используем универсальную временную папку
         temp_dir = get_temp_dir()
         file_path = os.path.join(temp_dir, file_name)
-        
+
         with open(file_path, "wb") as file:
             downloader = MediaIoBaseDownload(file, request)
             done = False
             while not done:
                 status, done = downloader.next_chunk()
-                logging.info(f"Скачивание {file_name}: {int(status.progress() * 100)}% завершено.")
-        
+                if status is not None:
+                    logger.info("Google Drive download progress: file=%s progress=%s%%", file_name, int(status.progress() * 100))
+
         return file_path
-    except Exception as e:
-        logging.error(f"Ошибка при скачивании файла {file_name}: {str(e)}")
-        send_notification(f"Ошибка при скачивании файла {file_name}: {str(e)}", "Разработчик")
+    except Exception as exc:
+        logger.error("Ошибка при скачивании файла %s: %s", file_name, exc)
+        send_notification(f"Ошибка при скачивании файла {file_name}: {exc}", "Разработчик")
         raise
 
-async def extract_stock_from_google_drive(enterprise_code: str, file_type):
-    """
-    Обрабатывает файлы остатков из Google Drive для указанного предприятия.
-    """
+
+async def _load_enterprise_drive_settings(enterprise_code: str, file_type: str):
+    folder_field = "google_drive_folder_id_ref" if file_type == "catalog" else "google_drive_folder_id_rest"
+
     async with get_async_db() as db:
-        try:
-            logging.info(f"Получение настроек для предприятия с кодом: {enterprise_code}")
+        logger.info("Google Drive settings lookup: enterprise_code=%s type=%s", enterprise_code, file_type)
+        result = await db.execute(
+            select(
+                EnterpriseSettings.enterprise_code,
+                EnterpriseSettings.single_store,
+                EnterpriseSettings.store_serial,
+                getattr(EnterpriseSettings, folder_field),
+            ).where(EnterpriseSettings.enterprise_code == enterprise_code)
+        )
+        enterprise = result.mappings().one_or_none()
+        if not enterprise:
+            logger.error("Не найдены настройки Google Drive для enterprise_code=%s", enterprise_code)
+            send_notification(f"Не найдены настройки для Google Drive с кодом {enterprise_code}.", "Разработчик")
+            return None
 
-            # Получение настроек предприятия
-            result = await db.execute(
-                select(
-                    EnterpriseSettings.enterprise_code,
-                    EnterpriseSettings.single_store,
-                    EnterpriseSettings.store_serial,
-                    EnterpriseSettings.google_drive_folder_id_rest,
-                    EnterpriseSettings.data_format,  # добавлено
-                ).where(EnterpriseSettings.enterprise_code == enterprise_code)
+        folder_id = enterprise[folder_field]
+        if not folder_id:
+            logger.error("Отсутствует folder_id для enterprise_code=%s type=%s", enterprise_code, file_type)
+            send_notification(
+                f"Отсутствует ID папки Google Drive для {file_type} для предприятия с кодом {enterprise_code}.",
+                "Разработчик",
             )
-            enterprise = result.mappings().one_or_none()
-            if not enterprise:
-                logging.error(f"Не найдены настройки для предприятия с кодом {enterprise_code}.")
-                send_notification(f"Не найдены настройки для обработки Google Drive  с кодом {enterprise_code}.", "Разработчик")
-                return
+            return None
 
-            if not enterprise["google_drive_folder_id_rest"]:
-                logging.error(f"Отсутствует ID папки Google Drive для остатков для предприятия с кодом {enterprise_code}.")
-                send_notification(f"Отсутствует ID папки Google Drive для остатков для предприятия с кодом {enterprise_code}.", "Разработчик")
-                return
+        result = await db.execute(select(DeveloperSettings).limit(1))
+        developer_settings = result.scalar_one_or_none()
+        if not developer_settings:
+            logger.error("Не найдены настройки разработчика для Google Drive.")
+            send_notification("Не найдены настройки разработчика для Google Drive.", "Разработчик")
+            return None
 
-            # Получение настроек разработчика
-            result = await db.execute(select(DeveloperSettings).limit(1))
-            developer_settings = result.scalar_one_or_none()
-            if not developer_settings:
-                logging.error("Не найдены настройки разработчика.")
-                send_notification("Не найдены настройки разработчика для Google Drive", "Разработчик")
-                return
+        return {
+            "enterprise_code": enterprise["enterprise_code"],
+            "single_store": enterprise["single_store"],
+            "store_serial": enterprise["store_serial"],
+            "folder_id": folder_id,
+        }
 
-            # Подключение к Google Drive
-            drive_service = await connect_to_google_drive()
-            logging.info(f"Успешно подключились к Google Drive для предприятия с кодом {enterprise_code}")
 
-            # Извлечение файлов остатков
-            stock_files = await fetch_files_from_folder(drive_service, enterprise["google_drive_folder_id_rest"])
+async def _process_google_drive_files(enterprise_code: str, file_type: str) -> None:
+    run_started_at = time.monotonic()
+    settings = await _load_enterprise_drive_settings(enterprise_code, file_type)
+    if not settings:
+        return
 
-            # Обработка каждого файла
-            for file in stock_files:
-                file_path = await download_file(drive_service, file['id'], file['name'])
-                try:
-                    await validate_data(
-                        enterprise_code=enterprise_code,
-                        file_path=file_path,
-                        file_type="stock",
-                        single_store=enterprise["single_store"],
-                        store_serial=enterprise["store_serial"],
-                    )
-                    logging.info(f"Stock file {file['name']} validated successfully for enterprise {enterprise_code}")
-                except Exception as e:
-                    logging.error(f"Ошибка валидации для stock файла {file['name']} для предприятия {enterprise_code}: {str(e)}")
-                    send_notification(f"Ошибка валидации для stock файла п{file['name']} для предприятия {enterprise_code}", "Разработчик")
-                finally:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        logging.info(f"Удален временный файл: {file_path}")
+    drive_service = await connect_to_google_drive()
+    logger.info("Google Drive connected: enterprise_code=%s type=%s", enterprise_code, file_type)
 
-        except Exception as e:
-            logging.error(f"Ошибка при обработке остатков для предприятия с кодом {enterprise_code}: {str(e)}")
-            send_notification(f"Ошибка при обработке остатков Google Drive для предприятия с кодом {enterprise_code}: {str(e)}", "Разработчик")
+    files = await fetch_files_from_folder(drive_service, settings["folder_id"])
+    if not files:
+        logger.warning("Google Drive no files found: enterprise_code=%s type=%s folder_id=%s", enterprise_code, file_type, settings["folder_id"])
+        return
+
+    success_count = 0
+    failed_count = 0
+    failed_files: list[str] = []
+
+    for file in files:
+        file_path = await download_file(drive_service, file["id"], file["name"])
+        try:
+            is_valid = await validate_data(
+                enterprise_code=enterprise_code,
+                file_path=file_path,
+                file_type=file_type,
+                single_store=settings["single_store"],
+                store_serial=settings["store_serial"],
+            )
+            if is_valid:
+                success_count += 1
+                logger.info(
+                    "Google Drive file processed: enterprise_code=%s type=%s file=%s status=success",
+                    enterprise_code,
+                    file_type,
+                    file["name"],
+                )
+            else:
+                failed_count += 1
+                failed_files.append(file["name"])
+                logger.warning(
+                    "Google Drive file processed: enterprise_code=%s type=%s file=%s status=failed",
+                    enterprise_code,
+                    file_type,
+                    file["name"],
+                )
+        except Exception as exc:
+            failed_count += 1
+            failed_files.append(file["name"])
+            logger.error(
+                "Ошибка валидации/обработки файла %s для enterprise=%s type=%s: %s",
+                file["name"],
+                enterprise_code,
+                file_type,
+                exc,
+            )
+            send_notification(
+                f"Ошибка обработки {file_type} файла {file['name']} для предприятия {enterprise_code}: {exc}",
+                "Разработчик",
+            )
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info("Google Drive temp file removed: %s", file_path)
+
+    logger.info(
+        "Google Drive run summary: enterprise_code=%s type=%s found_files=%s success=%s failed=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        len(files),
+        success_count,
+        failed_count,
+        time.monotonic() - run_started_at,
+    )
+    if failed_files:
+        logger.warning(
+            "Google Drive partial success: enterprise_code=%s type=%s failed_files=%s",
+            enterprise_code,
+            file_type,
+            failed_files,
+        )
+
+
+async def extract_stock_from_google_drive(enterprise_code: str, file_type):
+    try:
+        await _process_google_drive_files(enterprise_code, "stock")
+    except Exception as exc:
+        logger.error("Ошибка при обработке остатков для enterprise_code=%s: %s", enterprise_code, exc)
+        send_notification(f"Ошибка при обработке остатков Google Drive для предприятия с кодом {enterprise_code}: {exc}", "Разработчик")
+
 
 async def extract_catalog_from_google_drive(enterprise_code: str, file_type):
-    """
-    Обрабатывает файлы каталога из Google Drive для указанного предприятия.
-    """
-    async with get_async_db() as db:
-        try:
-            logging.info(f"Получение настроек для предприятия с кодом: {enterprise_code}")
-
-            # Получение настроек предприятия
-            result = await db.execute(
-                select(
-                    EnterpriseSettings.enterprise_code,
-                    EnterpriseSettings.single_store,
-                    EnterpriseSettings.store_serial,
-                    EnterpriseSettings.google_drive_folder_id_ref,
-                    EnterpriseSettings.data_format,  # добавлено
-                ).where(EnterpriseSettings.enterprise_code == enterprise_code)
-            )
-            enterprise = result.mappings().one_or_none()
-            if not enterprise:
-                logging.error(f"Не найдены настройки для Google Drive с кодом {enterprise_code}.")
-                send_notification(f"Не найдены настройки для Google Drive с кодом {enterprise_code}.", "Разработчик")
-                return
-
-            if not enterprise["google_drive_folder_id_ref"]:
-                logging.error(f"Отсутствует ID папки Google Drive для каталога для предприятия с кодом {enterprise_code}.")
-                send_notification(f"Отсутствует ID папки Google Drive для каталога для предприятия с кодом {enterprise_code}.", "Разработчик")
-                return
-
-            # Получение настроек разработчика
-            result = await db.execute(select(DeveloperSettings).limit(1))
-            developer_settings = result.scalar_one_or_none()
-            if not developer_settings:
-                logging.error("Не найдены настройки разработчика.")
-                send_notification("Не найдены настройки разработчика для Google Drive.", "Разработчик")
-                return
-
-            # Подключение к Google Drive
-            drive_service = await connect_to_google_drive()
-            logging.info(f"Успешно подключились к Google Drive для предприятия с кодом {enterprise_code}")
-
-            # Извлечение файлов каталога
-            catalog_files = await fetch_files_from_folder(drive_service, enterprise["google_drive_folder_id_ref"])
-
-            # Обработка каждого файла
-            for file in catalog_files:
-                file_path = await download_file(drive_service, file['id'], file['name'])
-                try:
-                    await validate_data(
-                        enterprise_code=enterprise_code,
-                        file_path=file_path,
-                        file_type="catalog",
-                        single_store=enterprise["single_store"],
-                        store_serial=enterprise["store_serial"],
-                    )
-                    logging.info(f"Catalog file {file['name']} validated successfully for enterprise {enterprise_code}")
-                except Exception as e:
-                    logging.error(f"Ошибка валидации для catalog файла {file['name']} для предприятия {enterprise_code}: {str(e)}")
-                    send_notification(f"Ошибка валидации для catalog файла {file['name']} для предприятия {enterprise_code}", "Разработчик")
-                finally:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        logging.info(f"Удален временный файл: {file_path}")
-
-        except Exception as e:
-            logging.error(f"Ошибка при обработке каталога для предприятия с кодом {enterprise_code}: {str(e)}")
-            send_notification(f"Ошибка при обработке каталога Google Drive для предприятия с кодом {enterprise_code}: {str(e)}", "Разработчик")
+    try:
+        await _process_google_drive_files(enterprise_code, "catalog")
+    except Exception as exc:
+        logger.error("Ошибка при обработке каталога для enterprise_code=%s: %s", enterprise_code, exc)
+        send_notification(f"Ошибка при обработке каталога Google Drive для предприятия с кодом {enterprise_code}: {exc}", "Разработчик")
