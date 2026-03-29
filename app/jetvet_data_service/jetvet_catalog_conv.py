@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from dotenv import load_dotenv
 from app.services.database_service import process_database_service
 import chardet
@@ -11,6 +12,7 @@ import re
 
 load_dotenv()
 DEFAULT_VAT = 20
+SAVE_ORIGINAL_CSV = os.getenv("JETVET_SAVE_ORIGINAL_CSV", "0") == "1"
 
 def detect_encoding(file_path):
     """
@@ -41,25 +43,28 @@ async def process_jetvet_catalog(
     Также сохраняет исходный файл для отладки.
     """
     try:
+        started_at = time.monotonic()
         items = []
         encoding = detect_encoding(file_path)
         logging.info(f"Определена кодировка файла: {encoding}")
 
-        # Сохраняем входной файл
-        try:
-            temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
-            os.makedirs(temp_dir, exist_ok=True)
-            saved_input_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_original.csv")
-            shutil.copy(file_path, saved_input_path)
-            logging.info(f"Исходный файл сохранён для отладки: {saved_input_path}")
-        except Exception as e:
-            logging.warning(f"Не удалось сохранить входной файл: {str(e)}")
+        temp_dir = os.getenv("TEMP_FILE_PATH", tempfile.gettempdir())
+        os.makedirs(temp_dir, exist_ok=True)
+
+        if SAVE_ORIGINAL_CSV:
+            try:
+                saved_input_path = os.path.join(temp_dir, f"{enterprise_code}_{file_type}_original.csv")
+                shutil.copy(file_path, saved_input_path)
+                logging.info(f"Исходный файл сохранён для отладки: {saved_input_path}")
+            except Exception as e:
+                logging.warning(f"Не удалось сохранить входной файл: {str(e)}")
 
         try:
             with open(file_path, mode="r", encoding=encoding, errors="replace") as csvfile:
                 reader = csv.DictReader(csvfile, delimiter=";")
 
                 logging.info(f"Заголовки CSV: {reader.fieldnames}")
+                skipped_rows = 0
 
                 for row in reader:
                     logging.debug(f"Обработка строки: {row}")
@@ -71,6 +76,7 @@ async def process_jetvet_catalog(
 
                     if not code or not name:
                         logging.warning(f"Пропущена строка: code={code}, name={name}, raw={row}")
+                        skipped_rows += 1
                         continue
 
                     item = {
@@ -81,6 +87,14 @@ async def process_jetvet_catalog(
                         "barcode": barcode
                     }
                     items.append(item)
+
+                logging.info(
+                    "JetVet catalog parse summary: enterprise_code=%s encoding=%s transformed=%s skipped=%s",
+                    enterprise_code,
+                    encoding,
+                    len(items),
+                    skipped_rows,
+                )
 
         except UnicodeDecodeError as e:
             logging.error(f"Ошибка декодирования файла {file_path} с кодировкой {encoding}: {e}")
@@ -98,6 +112,13 @@ async def process_jetvet_catalog(
 
         logging.info(f"Каталог JetVet успешно сконвертирован и сохранен: {output_path}")
         await process_database_service(output_path, file_type, enterprise_code)
+        logging.info(
+            "JetVet catalog converter run summary: enterprise_code=%s records=%s elapsed=%.2fs",
+            enterprise_code,
+            len(items),
+            time.monotonic() - started_at,
+        )
 
     except Exception as e:
         logging.error(f"Ошибка при обработке JetVet каталога: {str(e)}")
+        raise
