@@ -16,7 +16,7 @@ from app.dntrade_data_service.stock_fetch_convert import run_service
 from app.checkbox_data_service.checkbox_stock_conv import run_service as run_checkbox
 from app.rozetka_data_service.rozetka_conv import run_service as run_rozetka
 from app.key_crm_data_service.key_crm_stock_conv import run_service as run_key_crm
-from app.dsn_data_service.dsn_stock_conv import run_service as run_dsn
+from app.dsn_data_service.dsn_conv import run_service as run_dsn
 from app.ftp_data_service.ftp_stock_conv import run_service as run_ftp
 from app.prom_data_service.prom_stock import run_prom
 from app.torgsoft_google_data_service.torgsoft_google_drive import run_torgsoft_google
