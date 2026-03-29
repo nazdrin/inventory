@@ -18,7 +18,7 @@ KIEV_TZ = pytz.timezone("Europe/Kiev")
 # Импорт сервисов
 from app.dntrade_data_service.fetch_convert import run_service
 from app.checkbox_data_service.checkbox_catalog_conv import run_service as run_checkbox
-from app.rozetka_data_service.rozetka_catalog_conv import run_service as run_rozetka
+from app.rozetka_data_service.rozetka_conv import run_service as run_rozetka
 from app.hprofit_data_service.hprofit_conv import run_service as run_hprofit
 from app.ftp_tabletki_data_service.ftp_tabletki_conv import run_service as run_ftp_tabletki
 from app.dsn_data_service.dsn_catalog_conv import run_service as run_dsn
