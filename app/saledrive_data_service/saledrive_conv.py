@@ -5,6 +5,7 @@ import logging
 import time
 import requests
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 
 from sqlalchemy.future import select
 from app.database import get_async_db
@@ -20,16 +21,25 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 logger.propagate = False
 
+SALESDRIVE_YML_URL_TEMPLATE = "https://petrenko.salesdrive.me/export/yml/export.yml?publicKey={public_key}"
+
 
 # ---------- БД ----------
-async def fetch_feed_url(enterprise_code: str) -> str | None:
+async def fetch_feed_source(enterprise_code: str) -> tuple[str | None, str | None]:
     async with get_async_db() as session:
         result = await session.execute(
-            select(EnterpriseSettings.token).where(
+            select(
+                EnterpriseSettings.token,
+                EnterpriseSettings.google_drive_folder_id_rest,
+            ).where(
                 EnterpriseSettings.enterprise_code == enterprise_code
             )
         )
-        return result.scalars().first()
+        row = result.first()
+        if not row:
+            return None, None
+        token, google_drive_folder_id_rest = row
+        return token, google_drive_folder_id_rest
 
 
 async def fetch_branch_by_enterprise_code(enterprise_code: str) -> str:
@@ -55,6 +65,27 @@ def download_feed(url: str) -> str:
     if not text.strip():
         raise RuntimeError("Получен пустой фид")
     return text
+
+
+def _looks_like_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def resolve_feed_url(token: str | None, public_key: str | None) -> tuple[str, str]:
+    token = (token or "").strip()
+    public_key = (public_key or "").strip()
+
+    if token and _looks_like_url(token):
+        return token, "token_url"
+
+    if public_key:
+        return SALESDRIVE_YML_URL_TEMPLATE.format(public_key=public_key), "google_drive_folder_id_rest_public_key"
+
+    if token:
+        return SALESDRIVE_YML_URL_TEMPLATE.format(public_key=token), "token_public_key"
+
+    raise ValueError("URL фида или publicKey не найдены")
 
 
 def _safe_float(x, default: float = 0.0) -> float:
@@ -167,13 +198,13 @@ async def run_service(enterprise_code: str, file_type: str) -> str:
         raise ValueError("Тип файла должен быть 'catalog' или 'stock'")
 
     run_started_at = time.monotonic()
-    url = await fetch_feed_url(enterprise_code)
-    if not url:
-        raise ValueError(f"URL фида не найден для enterprise_code={enterprise_code}")
+    token, public_key = await fetch_feed_source(enterprise_code)
+    url, source_type = resolve_feed_url(token, public_key)
     logger.info(
-        "ComboKeyCRM run start: enterprise_code=%s type=%s source_url=%s",
+        "ComboKeyCRM run start: enterprise_code=%s type=%s source_type=%s source_url=%s",
         enterprise_code,
         file_type,
+        source_type,
         url,
     )
 
