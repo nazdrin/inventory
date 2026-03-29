@@ -22,6 +22,7 @@ logger.setLevel(logging.INFO)
 logger.propagate = False
 
 SALESDRIVE_YML_URL_TEMPLATE = "https://petrenko.salesdrive.me/export/yml/export.yml?publicKey={public_key}"
+LEGACY_COMBOKEYCRM_FEED_URL = "https://cloud.data-aggregation.com/files/it_baza/products_feed.xml"
 
 
 # ---------- БД ----------
@@ -86,6 +87,32 @@ def resolve_feed_url(token: str | None, public_key: str | None) -> tuple[str, st
         return SALESDRIVE_YML_URL_TEMPLATE.format(public_key=token), "token_public_key"
 
     raise ValueError("URL фида или publicKey не найдены")
+
+
+def download_feed_with_fallback(url: str, source_type: str, enterprise_code: str) -> tuple[str, str, str]:
+    try:
+        return download_feed(url), url, source_type
+    except RuntimeError as exc:
+        error_text = str(exc)
+        should_fallback_to_legacy = (
+            source_type in {"google_drive_folder_id_rest_public_key", "token_public_key"}
+            and ("HTTP 401" in error_text or "HTTP 403" in error_text)
+        )
+        if not should_fallback_to_legacy:
+            raise
+        logger.warning(
+            "ComboKeyCRM source failed for enterprise_code=%s source_type=%s url=%s error=%s; falling back to legacy source=%s",
+            enterprise_code,
+            source_type,
+            url,
+            error_text,
+            LEGACY_COMBOKEYCRM_FEED_URL,
+        )
+        return (
+            download_feed(LEGACY_COMBOKEYCRM_FEED_URL),
+            LEGACY_COMBOKEYCRM_FEED_URL,
+            "legacy_fallback_url",
+        )
 
 
 def _safe_float(x, default: float = 0.0) -> float:
@@ -209,11 +236,13 @@ async def run_service(enterprise_code: str, file_type: str) -> str:
     )
 
     download_started_at = time.monotonic()
-    feed_text = download_feed(url)
+    feed_text, resolved_url, resolved_source_type = download_feed_with_fallback(url, source_type, enterprise_code)
     logger.info(
-        "ComboKeyCRM download summary: enterprise_code=%s type=%s bytes=%s elapsed=%.2fs",
+        "ComboKeyCRM download summary: enterprise_code=%s type=%s source_type=%s source_url=%s bytes=%s elapsed=%.2fs",
         enterprise_code,
         file_type,
+        resolved_source_type,
+        resolved_url,
         len(feed_text.encode("utf-8")),
         time.monotonic() - download_started_at,
     )
