@@ -1,81 +1,131 @@
-# 📦 Универсальный скрипт для конвертации XML-фидов с интеграцией в Tabletki Data Service
-
-import os
 import json
 import logging
-import requests
+import os
+import time
 import xml.etree.ElementTree as ET
+from typing import Any
+
+import requests
 from sqlalchemy.future import select
-from app.database import get_async_db, EnterpriseSettings
+
+from app.database import EnterpriseSettings, get_async_db
 from app.models import MappingBranch
 from app.services.database_service import process_database_service
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+REQUEST_TIMEOUT_SEC = 30
+HTTP_RETRY_ATTEMPTS = 3
+HTTP_RETRY_BACKOFF_SEC = 0.5
+DEFAULT_VAT = 20.0
 
 
-async def fetch_feed_url(enterprise_code):
+def get_logger() -> logging.Logger:
+    logger = logging.getLogger("biotus")
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+        logger.addHandler(handler)
+    logger.propagate = False
+    return logger
+
+
+logger = get_logger()
+
+
+async def fetch_feed_url(enterprise_code: str) -> str | None:
     async with get_async_db() as session:
         result = await session.execute(
-            select(EnterpriseSettings.token).where(
-                EnterpriseSettings.enterprise_code == enterprise_code
-            )
+            select(EnterpriseSettings.token).where(EnterpriseSettings.enterprise_code == enterprise_code)
         )
-        return result.scalars().first()
+        value = result.scalars().first()
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+async def fetch_branch_by_enterprise_code(enterprise_code: str) -> str | None:
+    async with get_async_db() as session:
+        result = await session.execute(
+            select(MappingBranch.branch).where(MappingBranch.enterprise_code == enterprise_code)
+        )
+        branch = result.scalars().first()
+        if branch is None:
+            return None
+        branch_value = str(branch).strip()
+        return branch_value or None
+
+
+def _should_retry_status(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code < 600
 
 
 def download_feed(url: str) -> str:
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        raise Exception(f"Ошибка загрузки: {response.status_code}")
-    return response.text
+    started_at = time.monotonic()
+
+    for attempt in range(1, HTTP_RETRY_ATTEMPTS + 1):
+        logger.info("Biotus HTTP GET %s attempt=%s/%s", url, attempt, HTTP_RETRY_ATTEMPTS)
+        try:
+            response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
+        except requests.RequestException as exc:
+            logger.warning(
+                "Biotus request exception attempt=%s/%s error=%s",
+                attempt,
+                HTTP_RETRY_ATTEMPTS,
+                exc,
+            )
+            if attempt >= HTTP_RETRY_ATTEMPTS:
+                raise
+            time.sleep(HTTP_RETRY_BACKOFF_SEC * attempt)
+            continue
+
+        logger.info("Biotus HTTP response status=%s attempt=%s/%s", response.status_code, attempt, HTTP_RETRY_ATTEMPTS)
+        if _should_retry_status(response.status_code) and attempt < HTTP_RETRY_ATTEMPTS:
+            time.sleep(HTTP_RETRY_BACKOFF_SEC * attempt)
+            continue
+        if response.status_code != 200:
+            raise RuntimeError(f"Ошибка загрузки: HTTP {response.status_code}")
+
+        logger.info("Biotus download summary: bytes=%s elapsed=%.2fs", len(response.text), time.monotonic() - started_at)
+        return response.text
+
+    raise RuntimeError("Unexpected Biotus retry fallthrough")
 
 
-def parse_xml_feed(xml_text: str) -> list:
+def parse_xml_feed(xml_text: str) -> list[dict[str, Any]]:
     root = ET.fromstring(xml_text)
-    offers = root.findall(".//item")# вставить название секции с с товарами 
+    offers = root.findall(".//item")
     result = []
-    for offer in offers: # вставить название полей из которых берутся данные , например quantity_in_stock 
-        item = {
-            "productId": offer.findtext("sku"),  
-            "productName": offer.findtext("name"),
-            "brand": offer.findtext("vendor"),
-            "barcode": offer.findtext("barcode"),
-            "price": float(offer.findtext("price_rsp_uah") or 0),
-            "quantity": float(offer.findtext("in_stock") or 0),
-            "reserve": 0  # если нет в XML — по умолчанию
-        }
-        result.append(item)
+    for offer in offers:
+        result.append(
+            {
+                "productId": offer.findtext("sku"),
+                "productName": offer.findtext("name"),
+                "brand": offer.findtext("vendor"),
+                "barcode": offer.findtext("barcode"),
+                "price": float(offer.findtext("price_rsp_uah") or 0),
+                "quantity": float(offer.findtext("in_stock") or 0),
+                "reserve": 0,
+            }
+        )
+    logger.info("Biotus parse summary: offers=%s", len(result))
     return result
 
 
-async def fetch_branch_by_enterprise_code(enterprise_code):
-    async with get_async_db() as session:
-        result = await session.execute(
-            select(MappingBranch.branch).where(
-                MappingBranch.enterprise_code == enterprise_code
-            )
-        )
-        branch = result.scalars().first()
-        if not branch:
-            raise ValueError(f"Branch не найден для enterprise_code={enterprise_code}")
-        return str(branch)
-
-
-def transform_catalog(data: list) -> list:
-    return [
+def transform_catalog(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = [
         {
             "code": item.get("productId"),
             "name": item.get("productName"),
             "producer": item.get("brand") or "",
             "barcode": item.get("barcode"),
-            "vat": 20.0
+            "vat": DEFAULT_VAT,
         }
         for item in data
     ]
+    logger.info("Biotus catalog transform summary: incoming=%s transformed=%s", len(data), len(result))
+    return result
 
 
-def transform_stock(data: list, branch: str) -> list:
+def transform_stock(data: list[dict[str, Any]], branch: str) -> list[dict[str, Any]]:
     result = []
     for item in data:
         try:
@@ -83,60 +133,71 @@ def transform_stock(data: list, branch: str) -> list:
         except (ValueError, TypeError):
             qty = 0
 
-        result.append({
-            "branch": branch,
-            "code": item.get("productId"),
-            "price": item.get("price"),
-            "qty": max(qty, 0),
-            "price_reserve": item.get("price")
-        })
+        result.append(
+            {
+                "branch": branch,
+                "code": item.get("productId"),
+                "price": item.get("price"),
+                "qty": max(qty, 0),
+                "price_reserve": item.get("price"),
+            }
+        )
+    logger.info("Biotus stock transform summary: branch=%s incoming=%s transformed=%s", branch, len(data), len(result))
     return result
 
 
-def save_to_json(data, enterprise_code, file_type):
-    dir_path = os.path.join("temp", str(enterprise_code))
+def save_to_json(data: list[dict[str, Any]], enterprise_code: str, file_type: str) -> str:
+    temp_root = os.getenv("TEMP_FILE_PATH", "temp")
+    dir_path = os.path.join(temp_root, str(enterprise_code))
     os.makedirs(dir_path, exist_ok=True)
     file_path = os.path.join(dir_path, f"{file_type}.json")
 
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-    logging.info(f"✅ Данные сохранены: {file_path}")
+    logger.info("Biotus JSON saved: path=%s records=%s", file_path, len(data))
     return file_path
 
 
-async def send_catalog_data(file_path, enterprise_code):
-    await process_database_service(file_path, "catalog", enterprise_code)
-
-
-async def send_stock_data(file_path, enterprise_code):
-    await process_database_service(file_path, "stock", enterprise_code)
-
-
 async def run_service(enterprise_code: str, file_type: str):
+    run_started_at = time.monotonic()
+
     url = await fetch_feed_url(enterprise_code)
     if not url:
-        raise ValueError("❌ URL фида не найден")
+        raise ValueError(f"Biotus feed URL not found for enterprise_code={enterprise_code}")
 
     feed_text = download_feed(url)
     if not feed_text.strip():
-        raise ValueError("❌ Получен пустой фид")
+        raise ValueError("Получен пустой фид")
 
     try:
         raw_data = parse_xml_feed(feed_text)
-    except Exception as e:
-        raise ValueError(f"❌ Ошибка разбора XML: {e}")
+    except Exception as exc:
+        raise ValueError(f"Ошибка разбора XML: {exc}") from exc
 
     if file_type == "catalog":
         data = transform_catalog(raw_data)
         path = save_to_json(data, enterprise_code, "catalog")
-        await send_catalog_data(path, enterprise_code)
-
+        logger.info(
+            "Biotus catalog run summary: enterprise_code=%s records=%s elapsed=%.2fs",
+            enterprise_code,
+            len(data),
+            time.monotonic() - run_started_at,
+        )
+        await process_database_service(path, "catalog", enterprise_code)
     elif file_type == "stock":
         branch = await fetch_branch_by_enterprise_code(enterprise_code)
+        if not branch:
+            raise ValueError(f"Biotus branch not found for enterprise_code={enterprise_code}")
         data = transform_stock(raw_data, branch)
         path = save_to_json(data, enterprise_code, "stock")
-        await send_stock_data(path, enterprise_code)
-
+        logger.info(
+            "Biotus stock run summary: enterprise_code=%s branch=%s records=%s elapsed=%.2fs",
+            enterprise_code,
+            branch,
+            len(data),
+            time.monotonic() - run_started_at,
+        )
+        await process_database_service(path, "stock", enterprise_code)
     else:
         raise ValueError("Тип файла должен быть 'catalog' или 'stock'")
