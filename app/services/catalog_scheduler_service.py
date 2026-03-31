@@ -2,14 +2,11 @@ import os
 import asyncio
 import logging
 import time
+from time import perf_counter
 import pytz
 from datetime import datetime, timedelta, timezone
-from contextlib import asynccontextmanager
 from typing import Dict
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.sql import text
 
 # Установка временной зоны Киев
 os.environ['TZ'] = 'UTC'
@@ -80,42 +77,35 @@ async def create_error_report(error_message: str, enterprise_code: str):
         file.write(f"{datetime.now()} - Enterprise Code: {enterprise_code} - Error: {error_message}\n")
     logging.info(f"Ошибка создания отчета об ошибках: {file_name}")
 
-async def get_enterprises_for_catalog(db: AsyncSession):
+async def get_enterprises_for_catalog():
     """Получает список предприятий для обработки каталога."""
     try:
-        # Проверка соединения с БД
-        try:
-            
-            await db.execute(text("SELECT 1"))
-        except OperationalError:
-            await notify_error("Соединение с базой данных закрыто, попытка восстановления...")
-            await db.rollback()
-            return []
+        logging.info("Catalog scheduler: opening read-only session to load enterprises")
+        async with get_async_db(commit_on_exit=False) as db:
+            db.expire_all()
+            now = datetime.now(tz=timezone.utc).astimezone(KIEV_TZ)
+            logging.info(f"Текущее время: {now} [Timezone: {now.tzinfo}]")
 
-        db.expire_all()
-        now = datetime.now(tz=timezone.utc).astimezone(KIEV_TZ)
-        logging.info(f"Текущее время: {now} [Timezone: {now.tzinfo}]")
+            start_time = time.time()
+            result = await db.execute(select(EnterpriseSettings))
+            enterprises = result.scalars().all()
+            logging.info(f"SQL-запрос выполнен за {time.time() - start_time:.2f} секунд")
 
-        start_time = time.time()
-        result = await db.execute(select(EnterpriseSettings))
-        enterprises = result.scalars().all()
-        logging.info(f"SQL-запрос выполнен за {time.time() - start_time:.2f} секунд")
+            if not enterprises:
+                logging.warning("В базе данных нет предприятий для обработки.")
 
-        if not enterprises:
-            logging.warning("В базе данных нет предприятий для обработки.")
-
-        return [
-            enterprise for enterprise in enterprises
-            if enterprise.catalog_upload_frequency and enterprise.catalog_upload_frequency > 0 and
-            ((enterprise.last_catalog_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.catalog_upload_frequency))
-            if enterprise.last_catalog_upload else now) <= now
-        ]
+            return [
+                enterprise for enterprise in enterprises
+                if enterprise.catalog_upload_frequency and enterprise.catalog_upload_frequency > 0 and
+                ((enterprise.last_catalog_upload.astimezone(KIEV_TZ) + timedelta(minutes=enterprise.catalog_upload_frequency))
+                if enterprise.last_catalog_upload else now) <= now
+            ]
     except Exception as e:
         await notify_error(f"Ошибка при обработке предприятий в планировщике каталога: {str(e)}")
-        await db.rollback()
         return []
 
-async def process_catalog_for_enterprise(db: AsyncSession, enterprise: EnterpriseSettings):
+async def process_catalog_for_enterprise(enterprise: EnterpriseSettings):
+    started = perf_counter()
     try:
         if (
             enterprise.data_format == "Business"
@@ -151,7 +141,12 @@ async def process_catalog_for_enterprise(db: AsyncSession, enterprise: Enterpris
                 timeout=timeout_sec,
             )
             TIMEOUT_COOLDOWN_UNTIL.pop(enterprise.enterprise_code, None)
-            logging.info(f"Service run successfully for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
+            logging.info(
+                "Catalog scheduler: success enterprise_code=%s data_format=%s elapsed=%.3fs",
+                enterprise.enterprise_code,
+                enterprise.data_format,
+                perf_counter() - started,
+            )
         elif enterprise.data_format in ["Unipro", "Blank"]:
             logging.info(f"Skipping processing for Enterprise Code={enterprise.enterprise_code} with data format '{enterprise.data_format}'")
         else:
@@ -171,6 +166,12 @@ async def process_catalog_for_enterprise(db: AsyncSession, enterprise: Enterpris
         )
         await create_error_report("Catalog processing timeout", enterprise.enterprise_code)
     except Exception as e:
+        logging.exception(
+            "Catalog scheduler: failure enterprise_code=%s data_format=%s elapsed=%.3fs",
+            enterprise.enterprise_code,
+            enterprise.data_format,
+            perf_counter() - started,
+        )
         await notify_error(f"Ошибка обработки данных для предприятия {enterprise.enterprise_code}: {str(e)}", enterprise.enterprise_code)
         await create_error_report(str(e), enterprise.enterprise_code)
 
@@ -178,12 +179,19 @@ async def schedule_catalog_tasks():
     try:
         interval = 1  # Интервал выполнения расписания в минутах
         while True:
-            async with get_async_db() as db:
-                logging.info("Starting catalog scheduler loop...")
-                enterprises = await get_enterprises_for_catalog(db)
+            loop_started = perf_counter()
+            logging.info("Starting catalog scheduler loop...")
+            enterprises = await get_enterprises_for_catalog()
+            logging.info("Catalog scheduler: enterprises queued=%d", len(enterprises))
 
-                for enterprise in enterprises:
-                    await process_catalog_for_enterprise(db, enterprise)
+            for enterprise in enterprises:
+                await process_catalog_for_enterprise(enterprise)
+
+            logging.info(
+                "Catalog scheduler: cycle finished enterprises=%d elapsed=%.3fs",
+                len(enterprises),
+                perf_counter() - loop_started,
+            )
 
             await asyncio.sleep(interval * 60)
     except Exception as main_error:
