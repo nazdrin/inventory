@@ -1,4 +1,10 @@
 # Inventory Service
+# опотрные документы для рефакторинга ui
+  - docs/refactoring/22_ui_control_plane_refactor_plan.md
+  - docs/refactoring/23_settings_control_plane_matrix.md
+  - docs/refactoring/11_admin_settings_surface_audit.md
+
+
 
 ## Быстрые команды
 
