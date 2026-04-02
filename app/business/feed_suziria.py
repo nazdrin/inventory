@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import inspect
 import logging
 from typing import Any, Dict, List, Optional, Literal
 
@@ -17,6 +18,13 @@ logger = logging.getLogger(__name__)
 
 SUZIRIA_API_URL = "https://b2b.suziria.ua/rest/"
 WAREHOUSE_MAIN = "main"
+
+
+async def _notify(message: str) -> None:
+    """Support both the real sync notifier and the async fallback stub."""
+    result = send_notification(message)
+    if inspect.isawaitable(result):
+        await result
 
 
 async def _get_token_from_db(*, code: str) -> Optional[str]:
@@ -102,7 +110,7 @@ async def _parse_catalog(*, token: str, timeout: int) -> str:
         errors = payload.get("errors")
         msg = f"Suziria API returned status=false. errors={errors}"
         logger.error(msg)
-        await send_notification(msg)
+        await _notify(msg)
         return "[]"
 
     data = payload.get("data") or []
@@ -141,7 +149,7 @@ async def _parse_stock(*, token: str, timeout: int) -> str:
         errors = payload.get("errors")
         msg = f"Suziria API returned status=false. errors={errors}"
         logger.error(msg)
-        await send_notification(msg)
+        await _notify(msg)
         return "[]"
 
     data = payload.get("data") or []
@@ -206,7 +214,7 @@ async def parse_suziria_feed_to_json(
     if not token:
         msg = f"Suziria: token not found in dropship_enterprises.feed_url for code={code}"
         logger.error(msg)
-        await send_notification(msg)
+        await _notify(msg)
         return "[]"
 
     try:
@@ -220,12 +228,12 @@ async def parse_suziria_feed_to_json(
     except httpx.HTTPError as e:
         msg = f"Suziria HTTP error (mode={mode}, code={code}): {e}"
         logger.exception(msg)
-        await send_notification(msg)
+        await _notify(msg)
         return "[]"
     except Exception as e:
         msg = f"Suziria unexpected error (mode={mode}, code={code}): {e}"
         logger.exception(msg)
-        await send_notification(msg)
+        await _notify(msg)
         return "[]"
 
 
