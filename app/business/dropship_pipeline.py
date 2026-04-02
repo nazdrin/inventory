@@ -1856,24 +1856,25 @@ async def run_pipeline(
             logger.info("No active dropship enterprises.")
         else:
             for ent in suppliers:
+                supplier_code = str(getattr(ent, "code", "") or "")
                 try:
-                    if is_supplier_blocked(ent.code):
+                    if is_supplier_blocked(supplier_code):
                         logger.info(
                             "Поставщик %s заблокирован по расписанию. Удаляем старые offers.",
-                            ent.code,
+                            supplier_code,
                         )
                         try:
-                            deleted = await clear_offers_for_supplier(session, ent.code)
+                            deleted = await clear_offers_for_supplier(session, supplier_code)
                             logger.info(
                                 "Для заблокированного поставщика %s удалено %s offers.",
-                                ent.code,
+                                supplier_code,
                                 deleted,
                             )
                             await session.commit()
                         except Exception as exc:
                             logger.exception(
                                 "Не удалось удалить offers для заблокированного поставщика %s: %s",
-                                ent.code,
+                                supplier_code,
                                 exc,
                             )
                             await session.rollback()
@@ -1881,7 +1882,7 @@ async def run_pipeline(
                     await process_supplier(session, ent, PARSERS)
                     await session.commit()
                 except Exception as exc:
-                    logger.exception("Failed supplier %s: %s", ent.code, exc)
+                    logger.exception("Failed supplier %s: %s", supplier_code or "<unknown>", exc)
                     await session.rollback()
 
         # 2) Если нужно, формируем и отправляем пакет
