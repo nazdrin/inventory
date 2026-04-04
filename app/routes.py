@@ -13,7 +13,7 @@ from datetime import timedelta
 from app import crud, schemas, database
 from app.schemas import (
     EnterpriseSettingsSchema, DeveloperSettingsSchema, DataFormatSchema, 
-    MappingBranchSchema, LoginSchema
+    MappingBranchSchema, LoginSchema, BranchMappingListItemVM, BranchMappingDetailVM
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -46,6 +46,192 @@ from sqlalchemy.future import select
 from app.auth import verify_token  # как у enterprise
 from app.models import DropshipEnterprise
 from app.schemas import DropshipEnterpriseSchema
+
+
+def _mapping_semantic_store_label(data_format: str | None) -> str:
+    fmt = (data_format or "").strip()
+    labels = {
+        "Dntrade": "External Store",
+        "Bioteca": "External Store",
+        "Vetmanager": "Clinic/Store Mapping",
+        "FtpMulti": "Filename Mapping",
+        "TorgsoftGoogleMulti": "External Store",
+        "Unipro": "Source Routing Token",
+    }
+    return labels.get(fmt, "External Store / Mapping Value")
+
+
+def _mapping_runtime_consumers(
+    data_format: str | None,
+    *,
+    has_google_folder: bool,
+    has_telegram_target: bool,
+) -> list[str]:
+    fmt = (data_format or "").strip()
+    consumers: list[str] = ["Branch routing for stock/catalog runtime"]
+
+    if fmt in {"Dntrade", "Bioteca"}:
+        consumers.append("Adapter store-to-branch mapping")
+    elif fmt == "Vetmanager":
+        consumers.append("Clinic/store routing for Vetmanager stock flow")
+    elif fmt == "FtpMulti":
+        consumers.append("Filename-to-branch routing")
+    elif fmt in {"TorgsoftGoogle", "TorgsoftGoogleMulti", "JetVet"}:
+        consumers.append("File-driven branch routing")
+    elif fmt == "Unipro":
+        consumers.append("Source id to enterprise/branch routing")
+
+    if has_google_folder:
+        consumers.append("Google Drive folder-based branch lookup")
+    if has_telegram_target:
+        consumers.append("Telegram branch notifications")
+
+    return consumers
+
+
+def _mapping_field_notes(data_format: str | None, has_google_folder: bool) -> list[str]:
+    notes = [
+        "branch is the stable storage identity for MappingBranch and is used directly by runtime consumers",
+        "store_id remains the raw storage value and should be shown with semantic UI labels instead of being renamed in storage",
+    ]
+    if data_format == "Vetmanager":
+        notes.append("For Vetmanager, store_id may contain CSV-like clinic/store semantics rather than a single external store id")
+    if data_format == "FtpMulti":
+        notes.append("For FtpMulti, store_id may behave like a filename or source selector rather than a numeric store id")
+    if has_google_folder:
+        notes.append("google_folder_id is only relevant for file-driven branch/folder flows")
+    return notes
+
+
+def _mapping_overloaded_fields(data_format: str | None, has_google_folder: bool) -> list[str]:
+    overloaded = ["store_id"]
+    if has_google_folder or data_format in {"TorgsoftGoogle", "TorgsoftGoogleMulti", "JetVet"}:
+        overloaded.append("google_folder_id")
+    return overloaded
+
+
+def _mapping_semantics_summary(data_format: str | None, semantic_store_label: str) -> str:
+    fmt = (data_format or "").strip() or "unknown format"
+    return f"Format={fmt}; store_id should be presented as '{semantic_store_label}' rather than a raw generic storage field."
+
+
+def _build_mapping_conflict_flags(rows: list[dict]) -> dict[str, list[str]]:
+    duplicate_store_keys: set[tuple[str, str]] = set()
+    duplicate_folder_keys: set[tuple[str, str]] = set()
+    store_seen: dict[tuple[str, str], int] = {}
+    folder_seen: dict[tuple[str, str], int] = {}
+
+    for row in rows:
+        enterprise_code = str(row["enterprise_code"])
+        store_id = str(row.get("store_id") or "").strip()
+        folder_id = str(row.get("google_folder_id") or "").strip()
+        if store_id:
+            key = (enterprise_code, store_id)
+            store_seen[key] = store_seen.get(key, 0) + 1
+        if folder_id:
+            key = (enterprise_code, folder_id)
+            folder_seen[key] = folder_seen.get(key, 0) + 1
+
+    for key, count in store_seen.items():
+        if count > 1:
+            duplicate_store_keys.add(key)
+    for key, count in folder_seen.items():
+        if count > 1:
+            duplicate_folder_keys.add(key)
+
+    conflict_flags: dict[str, list[str]] = {}
+    for row in rows:
+        branch = str(row["branch"])
+        enterprise_code = str(row["enterprise_code"])
+        store_id = str(row.get("store_id") or "").strip()
+        folder_id = str(row.get("google_folder_id") or "").strip()
+        flags: list[str] = []
+        if store_id and (enterprise_code, store_id) in duplicate_store_keys:
+            flags.append("duplicate_store_id_within_enterprise")
+        if folder_id and (enterprise_code, folder_id) in duplicate_folder_keys:
+            flags.append("duplicate_google_folder_id_within_enterprise")
+        conflict_flags[branch] = flags
+    return conflict_flags
+
+
+def _build_branch_mapping_list_vm(rows: list[dict]) -> list[BranchMappingListItemVM]:
+    conflict_flags_by_branch = _build_mapping_conflict_flags(rows)
+    items: list[BranchMappingListItemVM] = []
+
+    for row in rows:
+        enterprise_code = str(row["enterprise_code"])
+        enterprise_name = str(row.get("enterprise_name") or "").strip()
+        data_format = str(row.get("data_format") or "").strip() or None
+        branch = str(row["branch"])
+        store_id = str(row.get("store_id") or "")
+        google_folder_id = row.get("google_folder_id")
+        id_telegram = row.get("id_telegram") or []
+        has_telegram_target = bool(id_telegram)
+        semantic_store_label = _mapping_semantic_store_label(data_format)
+        runtime_consumers = _mapping_runtime_consumers(
+            data_format,
+            has_google_folder=bool(google_folder_id),
+            has_telegram_target=has_telegram_target,
+        )
+
+        items.append(
+            BranchMappingListItemVM(
+                mapping_key=branch,
+                enterprise_code=enterprise_code,
+                enterprise_display_label=f"{enterprise_name} ({enterprise_code})" if enterprise_name else enterprise_code,
+                branch=branch,
+                semantic_store_label=semantic_store_label,
+                store_mapping_value=store_id,
+                google_folder_id=google_folder_id,
+                has_telegram_target=has_telegram_target,
+                field_semantics_summary=_mapping_semantics_summary(data_format, semantic_store_label),
+                runtime_usage_hints_summary="; ".join(runtime_consumers),
+                conflict_flags=conflict_flags_by_branch.get(branch, []),
+                readonly_fields=["mapping_key"],
+            )
+        )
+
+    return items
+
+
+def _build_branch_mapping_detail_vm(row: dict, conflict_flags: list[str]) -> BranchMappingDetailVM:
+    enterprise_code = str(row["enterprise_code"])
+    enterprise_name = str(row.get("enterprise_name") or "").strip()
+    data_format = str(row.get("data_format") or "").strip() or None
+    branch = str(row["branch"])
+    google_folder_id = row.get("google_folder_id")
+    id_telegram = row.get("id_telegram") or []
+    semantic_store_label = _mapping_semantic_store_label(data_format)
+    runtime_consumers = _mapping_runtime_consumers(
+        data_format,
+        has_google_folder=bool(google_folder_id),
+        has_telegram_target=bool(id_telegram),
+    )
+
+    return BranchMappingDetailVM(
+        mapping_key=branch,
+        enterprise_code=enterprise_code,
+        enterprise_display_label=f"{enterprise_name} ({enterprise_code})" if enterprise_name else enterprise_code,
+        data_format=data_format,
+        branch=branch,
+        store_id=str(row.get("store_id") or ""),
+        semantic_store_label=semantic_store_label,
+        google_folder_id=google_folder_id,
+        id_telegram=list(id_telegram),
+        runtime_consumers=runtime_consumers,
+        runtime_usage_hints_summary="; ".join(runtime_consumers),
+        field_notes=_mapping_field_notes(data_format, bool(google_folder_id)),
+        overloaded_fields=_mapping_overloaded_fields(data_format, bool(google_folder_id)),
+        conflict_flags=conflict_flags,
+        readonly_fields=["mapping_key"],
+        computed_fields=[
+            "enterprise_display_label",
+            "semantic_store_label",
+            "runtime_consumers",
+            "runtime_usage_hints_summary",
+            "conflict_flags",
+        ],
+    )
 
 # List
 @router.get("/dropship/enterprises/", dependencies=[Depends(verify_token)])
@@ -183,6 +369,72 @@ async def add_data_format(data_format: DataFormatSchema, db: AsyncSession = Depe
 async def get_data_formats(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DataFormat))
     return result.scalars().all()
+
+# 🔒 Mapping Branch read models
+@router.get(
+    "/mapping_branch/view/",
+    response_model=List[BranchMappingListItemVM],
+    dependencies=[Depends(verify_token)],
+)
+async def get_mapping_branch_view_list(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(
+            MappingBranch.enterprise_code,
+            MappingBranch.branch,
+            MappingBranch.store_id,
+            MappingBranch.google_folder_id,
+            MappingBranch.id_telegram,
+            EnterpriseSettings.enterprise_name,
+            EnterpriseSettings.data_format,
+        )
+        .outerjoin(
+            EnterpriseSettings,
+            EnterpriseSettings.enterprise_code == MappingBranch.enterprise_code,
+        )
+        .order_by(MappingBranch.enterprise_code, MappingBranch.branch)
+    )
+    rows = [dict(row._mapping) for row in result.fetchall()]
+    return _build_branch_mapping_list_vm(rows)
+
+
+@router.get(
+    "/mapping_branch/view/{branch}",
+    response_model=BranchMappingDetailVM,
+    dependencies=[Depends(verify_token)],
+)
+async def get_mapping_branch_view_detail(branch: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(
+            MappingBranch.enterprise_code,
+            MappingBranch.branch,
+            MappingBranch.store_id,
+            MappingBranch.google_folder_id,
+            MappingBranch.id_telegram,
+            EnterpriseSettings.enterprise_name,
+            EnterpriseSettings.data_format,
+        )
+        .outerjoin(
+            EnterpriseSettings,
+            EnterpriseSettings.enterprise_code == MappingBranch.enterprise_code,
+        )
+        .where(MappingBranch.branch == branch)
+    )
+    row = result.mappings().one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Mapping branch not found.")
+
+    sibling_rows_result = await db.execute(
+        select(
+            MappingBranch.enterprise_code,
+            MappingBranch.branch,
+            MappingBranch.store_id,
+            MappingBranch.google_folder_id,
+        ).where(MappingBranch.enterprise_code == row["enterprise_code"])
+    )
+    sibling_rows = [dict(r._mapping) for r in sibling_rows_result.fetchall()]
+    conflict_flags = _build_mapping_conflict_flags(sibling_rows).get(branch, [])
+    return _build_branch_mapping_detail_vm(dict(row), conflict_flags)
+
 
 # 🔒 Mapping Branch
 @router.post("/mapping_branch/", dependencies=[Depends(verify_token)])

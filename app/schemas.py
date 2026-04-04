@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -86,6 +86,40 @@ class MappingBranchSchema(BaseModel):
     id_telegram: Optional[List[str]]
     class Config:
         from_attributes = True  # Включено для использования from_orm
+
+
+class BranchMappingListItemVM(BaseModel):
+    mapping_key: str
+    enterprise_code: str
+    enterprise_display_label: str
+    branch: str
+    semantic_store_label: str
+    store_mapping_value: str
+    google_folder_id: Optional[str] = None
+    has_telegram_target: bool = False
+    field_semantics_summary: str
+    runtime_usage_hints_summary: str
+    conflict_flags: List[str] = Field(default_factory=list)
+    readonly_fields: List[str] = Field(default_factory=list)
+
+
+class BranchMappingDetailVM(BaseModel):
+    mapping_key: str
+    enterprise_code: str
+    enterprise_display_label: str
+    data_format: Optional[str] = None
+    branch: str
+    store_id: str
+    semantic_store_label: str
+    google_folder_id: Optional[str] = None
+    id_telegram: List[str] = Field(default_factory=list)
+    runtime_consumers: List[str] = Field(default_factory=list)
+    runtime_usage_hints_summary: str
+    field_notes: List[str] = Field(default_factory=list)
+    overloaded_fields: List[str] = Field(default_factory=list)
+    conflict_flags: List[str] = Field(default_factory=list)
+    readonly_fields: List[str] = Field(default_factory=list)
+    computed_fields: List[str] = Field(default_factory=list)
 
 
 # Схема для глобальных настроек системы
