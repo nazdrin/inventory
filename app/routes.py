@@ -13,7 +13,8 @@ from datetime import timedelta
 from app import crud, schemas, database
 from app.schemas import (
     EnterpriseSettingsSchema, DeveloperSettingsSchema, DataFormatSchema, 
-    MappingBranchSchema, LoginSchema, BranchMappingListItemVM, BranchMappingDetailVM
+    MappingBranchSchema, LoginSchema, BranchMappingListItemVM, BranchMappingDetailVM,
+    MappingBranchConstrainedUpdateSchema,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -233,6 +234,47 @@ def _build_branch_mapping_detail_vm(row: dict, conflict_flags: list[str]) -> Bra
         ],
     )
 
+
+async def _get_branch_mapping_view_row(db: AsyncSession, branch: str) -> dict:
+    result = await db.execute(
+        select(
+            MappingBranch.enterprise_code,
+            MappingBranch.branch,
+            MappingBranch.store_id,
+            MappingBranch.google_folder_id,
+            MappingBranch.id_telegram,
+            EnterpriseSettings.enterprise_name,
+            EnterpriseSettings.data_format,
+        )
+        .outerjoin(
+            EnterpriseSettings,
+            EnterpriseSettings.enterprise_code == MappingBranch.enterprise_code,
+        )
+        .where(MappingBranch.branch == branch)
+    )
+    row = result.mappings().one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Mapping branch not found.")
+    return dict(row)
+
+
+async def _build_branch_mapping_detail_response(
+    db: AsyncSession,
+    branch: str,
+) -> BranchMappingDetailVM:
+    row = await _get_branch_mapping_view_row(db, branch)
+    sibling_rows_result = await db.execute(
+        select(
+            MappingBranch.enterprise_code,
+            MappingBranch.branch,
+            MappingBranch.store_id,
+            MappingBranch.google_folder_id,
+        ).where(MappingBranch.enterprise_code == row["enterprise_code"])
+    )
+    sibling_rows = [dict(r._mapping) for r in sibling_rows_result.fetchall()]
+    conflict_flags = _build_mapping_conflict_flags(sibling_rows).get(branch, [])
+    return _build_branch_mapping_detail_vm(row, conflict_flags)
+
 # List
 @router.get("/dropship/enterprises/", dependencies=[Depends(verify_token)])
 async def get_all_dropship_enterprises(db: AsyncSession = Depends(get_db)):
@@ -403,52 +445,74 @@ async def get_mapping_branch_view_list(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(verify_token)],
 )
 async def get_mapping_branch_view_detail(branch: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(
-            MappingBranch.enterprise_code,
-            MappingBranch.branch,
-            MappingBranch.store_id,
-            MappingBranch.google_folder_id,
-            MappingBranch.id_telegram,
-            EnterpriseSettings.enterprise_name,
-            EnterpriseSettings.data_format,
-        )
-        .outerjoin(
-            EnterpriseSettings,
-            EnterpriseSettings.enterprise_code == MappingBranch.enterprise_code,
-        )
-        .where(MappingBranch.branch == branch)
-    )
-    row = result.mappings().one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Mapping branch not found.")
-
-    sibling_rows_result = await db.execute(
-        select(
-            MappingBranch.enterprise_code,
-            MappingBranch.branch,
-            MappingBranch.store_id,
-            MappingBranch.google_folder_id,
-        ).where(MappingBranch.enterprise_code == row["enterprise_code"])
-    )
-    sibling_rows = [dict(r._mapping) for r in sibling_rows_result.fetchall()]
-    conflict_flags = _build_mapping_conflict_flags(sibling_rows).get(branch, [])
-    return _build_branch_mapping_detail_vm(dict(row), conflict_flags)
+    return await _build_branch_mapping_detail_response(db, branch)
 
 
 # 🔒 Mapping Branch
 @router.post("/mapping_branch/", dependencies=[Depends(verify_token)])
 async def create_mapping_branch(mapping_data: MappingBranchSchema, db: AsyncSession = Depends(get_db)):
-    existing_entry = await db.execute(select(MappingBranch).filter(MappingBranch.branch == mapping_data.branch))
+    normalized_branch = (mapping_data.branch or "").strip()
+    normalized_store_id = (mapping_data.store_id or "").strip()
+    normalized_enterprise_code = (mapping_data.enterprise_code or "").strip()
+    normalized_google_folder_id = mapping_data.google_folder_id
+    if isinstance(normalized_google_folder_id, str):
+        normalized_google_folder_id = normalized_google_folder_id.strip() or None
+
+    if not normalized_branch:
+        raise HTTPException(status_code=400, detail="branch must not be empty.")
+    if not normalized_store_id:
+        raise HTTPException(status_code=400, detail="store_id must not be empty.")
+    if not normalized_enterprise_code:
+        raise HTTPException(status_code=400, detail="enterprise_code must not be empty.")
+
+    existing_entry = await db.execute(select(MappingBranch).filter(MappingBranch.branch == normalized_branch))
     if existing_entry.scalars().first():
         raise HTTPException(status_code=400, detail="Branch already exists.")
 
-    new_entry = MappingBranch(**mapping_data.dict())
+    new_entry = MappingBranch(
+        enterprise_code=normalized_enterprise_code,
+        branch=normalized_branch,
+        store_id=normalized_store_id,
+        google_folder_id=normalized_google_folder_id,
+        id_telegram=mapping_data.id_telegram or [],
+    )
     db.add(new_entry)
     await db.commit()
     await db.refresh(new_entry)
 
     return {"detail": "Mapping branch created successfully", "data": new_entry}
+
+
+@router.put(
+    "/mapping_branch/{branch}",
+    response_model=BranchMappingDetailVM,
+    dependencies=[Depends(verify_token)],
+)
+async def update_mapping_branch(
+    branch: str,
+    payload: MappingBranchConstrainedUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(MappingBranch).where(MappingBranch.branch == branch))
+    mapping_entry = result.scalars().first()
+    if not mapping_entry:
+        raise HTTPException(status_code=404, detail="Mapping branch not found.")
+
+    normalized_store_id = (payload.store_id or "").strip()
+    if not normalized_store_id:
+        raise HTTPException(status_code=400, detail="store_id must not be empty.")
+
+    normalized_google_folder_id = payload.google_folder_id
+    if isinstance(normalized_google_folder_id, str):
+        normalized_google_folder_id = normalized_google_folder_id.strip() or None
+
+    mapping_entry.store_id = normalized_store_id
+    mapping_entry.google_folder_id = normalized_google_folder_id
+
+    await db.commit()
+    await db.refresh(mapping_entry)
+
+    return await _build_branch_mapping_detail_response(db, branch)
 
 # 🟢 Публичные эндпоинты
 @router.post("/unipro/data")

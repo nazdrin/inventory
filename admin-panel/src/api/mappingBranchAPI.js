@@ -48,6 +48,16 @@ export const getMappingBranchViewDetail = async (branch) => {
     }
 };
 
+export const updateMappingBranch = async (branch, payload) => {
+    try {
+        const response = await axios.put(`${API_BASE_URL}/mapping_branch/${branch}`, payload, getAuthHeaders());
+        return response.data;
+    } catch (error) {
+        console.error("Error updating mapping branch:", error);
+        throw error;
+    }
+};
+
 // Функция выхода (очистка токена)
 export const logout = () => {
     localStorage.removeItem("token");
