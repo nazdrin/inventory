@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createMappingBranch, getMappingBranchViewList } from "../api/mappingBranchAPI";
+import { createMappingBranch, getMappingBranchViewList, updateMappingBranch } from "../api/mappingBranchAPI";
 import { getEnterprises } from "../api/enterpriseApi";
 
 const pageStyle = {
@@ -113,6 +113,11 @@ const MappingBranchPage = () => {
     const [listLoading, setListLoading] = useState(true);
     const [listError, setListError] = useState("");
     const [saveError, setSaveError] = useState("");
+    const [editError, setEditError] = useState("");
+    const [editSuccess, setEditSuccess] = useState("");
+    const [editingBranch, setEditingBranch] = useState(null);
+    const [editingStoreId, setEditingStoreId] = useState("");
+    const [editingGoogleFolderId, setEditingGoogleFolderId] = useState("");
 
     const [branch, setBranch] = useState("");
     const [storeId, setStoreId] = useState("");
@@ -162,6 +167,11 @@ const MappingBranchPage = () => {
         [mappingRecords, selectedEnterpriseCode]
     );
 
+    const editingMapping = useMemo(
+        () => filteredMappings.find((item) => item.branch === editingBranch) || null,
+        [filteredMappings, editingBranch]
+    );
+
     const handleSave = async () => {
         setSaveError("");
         if (!branch || !storeId || !selectedEnterpriseCode || !googleFolderId) {
@@ -172,7 +182,7 @@ const MappingBranchPage = () => {
             branch,
             store_id: storeId,
             enterprise_code: selectedEnterpriseCode,
-            google_folder_id: googleFolderId,
+            google_folder_id: googleFolderId.trim() || null,
             id_telegram: [],
         };
 
@@ -186,6 +196,47 @@ const MappingBranchPage = () => {
         } catch (error) {
             console.error("Error saving mapping branch:", error);
             setSaveError("Ошибка при сохранении маппинга филиала.");
+        }
+    };
+
+    const startEdit = (item) => {
+        setEditError("");
+        setEditSuccess("");
+        setEditingBranch(item.branch);
+        setEditingStoreId(item.store_mapping_value || "");
+        setEditingGoogleFolderId(item.google_folder_id || "");
+    };
+
+    const cancelEdit = () => {
+        setEditError("");
+        setEditSuccess("");
+        setEditingBranch(null);
+        setEditingStoreId("");
+        setEditingGoogleFolderId("");
+    };
+
+    const handleUpdate = async () => {
+        setEditError("");
+        setEditSuccess("");
+
+        const normalizedStoreId = editingStoreId.trim();
+        if (!editingBranch || !normalizedStoreId) {
+            setEditError("Поле 'Внешний store / mapping' должно быть заполнено.");
+            return;
+        }
+
+        try {
+            const updated = await updateMappingBranch(editingBranch, {
+                store_id: normalizedStoreId,
+                google_folder_id: editingGoogleFolderId.trim() || null,
+            });
+            setEditSuccess("Изменения сохранены.");
+            setEditingGoogleFolderId(updated.google_folder_id || "");
+            setEditingStoreId(updated.store_id || "");
+            await loadMappingViewList();
+        } catch (error) {
+            console.error("Error updating mapping branch:", error);
+            setEditError("Ошибка при обновлении маппинга филиала.");
         }
     };
 
@@ -271,7 +322,7 @@ const MappingBranchPage = () => {
                             <label style={labelStyle}>Google Folder ID</label>
                             <input
                                 type="text"
-                                placeholder="Введите Google Folder ID"
+                                placeholder="Введите Google Folder ID (необязательно)"
                                 value={googleFolderId}
                                 onChange={(e) => setGoogleFolderId(e.target.value)}
                                 style={inputStyle}
@@ -282,11 +333,11 @@ const MappingBranchPage = () => {
 
                         <button
                             onClick={handleSave}
-                            disabled={!branch || !storeId || !googleFolderId || !selectedEnterpriseCode}
+                            disabled={!branch || !storeId || !selectedEnterpriseCode}
                             style={{
                                 ...primaryButtonStyle,
-                                opacity: !branch || !storeId || !googleFolderId || !selectedEnterpriseCode ? 0.6 : 1,
-                                cursor: !branch || !storeId || !googleFolderId || !selectedEnterpriseCode ? "not-allowed" : "pointer",
+                                opacity: !branch || !storeId || !selectedEnterpriseCode ? 0.6 : 1,
+                                cursor: !branch || !storeId || !selectedEnterpriseCode ? "not-allowed" : "pointer",
                             }}
                         >
                             Записать
@@ -296,30 +347,107 @@ const MappingBranchPage = () => {
 
                 <div style={{ display: "grid", gap: "20px" }}>
                     <div style={{ ...cardStyle, padding: "18px 20px" }}>
+                    <div style={{ display: "grid", gap: "12px" }}>
+                        <h2 style={sectionTitleStyle}>Информация по предприятию</h2>
+                        {selectedEnterprise ? (
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                                    gap: "12px",
+                                }}
+                            >
+                                <EnterpriseInfoItem label="Название" value={selectedEnterprise.enterprise_name} />
+                                <EnterpriseInfoItem label="Код предприятия" value={selectedEnterprise.enterprise_code} />
+                                <EnterpriseInfoItem label="Формат" value={selectedEnterprise.data_format || emptyValue} />
+                                <EnterpriseInfoItem
+                                    label="Последняя загрузка каталога"
+                                    value={formatDate(selectedEnterprise.last_catalog_upload)}
+                                />
+                                <EnterpriseInfoItem
+                                    label="Последняя загрузка остатков"
+                                    value={formatDate(selectedEnterprise.last_stock_upload)}
+                                />
+                            </div>
+                        ) : (
+                            <p style={mutedTextStyle}>Выберите предприятие, чтобы увидеть краткую информацию.</p>
+                        )}
+                    </div>
+                    </div>
+
+                    <div style={{ ...cardStyle, padding: "18px 20px" }}>
                         <div style={{ display: "grid", gap: "12px" }}>
-                            <h2 style={sectionTitleStyle}>Информация по предприятию</h2>
-                            {selectedEnterprise ? (
-                                <div
-                                    style={{
-                                        display: "grid",
-                                        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                                        gap: "12px",
-                                    }}
-                                >
-                                    <EnterpriseInfoItem label="Название" value={selectedEnterprise.enterprise_name} />
-                                    <EnterpriseInfoItem label="Код предприятия" value={selectedEnterprise.enterprise_code} />
-                                    <EnterpriseInfoItem label="Формат" value={selectedEnterprise.data_format || emptyValue} />
-                                    <EnterpriseInfoItem
-                                        label="Последняя загрузка каталога"
-                                        value={formatDate(selectedEnterprise.last_catalog_upload)}
-                                    />
-                                    <EnterpriseInfoItem
-                                        label="Последняя загрузка остатков"
-                                        value={formatDate(selectedEnterprise.last_stock_upload)}
-                                    />
-                                </div>
+                            <h2 style={sectionTitleStyle}>Редактировать маппинг</h2>
+                            {!editingMapping ? (
+                                <p style={mutedTextStyle}>
+                                    Выберите строку в списке ниже и нажмите «Редактировать».
+                                </p>
                             ) : (
-                                <p style={mutedTextStyle}>Выберите предприятие, чтобы увидеть краткую информацию.</p>
+                                <>
+                                    <div
+                                        style={{
+                                            display: "grid",
+                                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                                            gap: "12px",
+                                        }}
+                                    >
+                                        <EnterpriseInfoItem
+                                            label="Предприятие"
+                                            value={editingMapping.enterprise_display_label}
+                                        />
+                                        <EnterpriseInfoItem label="Филиал" value={editingMapping.branch} />
+                                    </div>
+
+                                    <div>
+                                        <label style={labelStyle}>{editingMapping.semantic_store_label}</label>
+                                        <input
+                                            type="text"
+                                            value={editingStoreId}
+                                            onChange={(e) => setEditingStoreId(e.target.value)}
+                                            style={inputStyle}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label style={labelStyle}>Google Folder ID</label>
+                                        <input
+                                            type="text"
+                                            value={editingGoogleFolderId}
+                                            onChange={(e) => setEditingGoogleFolderId(e.target.value)}
+                                            style={inputStyle}
+                                        />
+                                    </div>
+
+                                    <p style={mutedTextStyle}>
+                                        Поля «Филиал» и предприятие не редактируются на этом шаге.
+                                    </p>
+
+                                    {editError ? <div style={{ color: "#b91c1c", fontWeight: 600 }}>{editError}</div> : null}
+                                    {editSuccess ? <div style={{ color: "#166534", fontWeight: 600 }}>{editSuccess}</div> : null}
+
+                                    <div style={{ display: "flex", gap: "10px" }}>
+                                        <button
+                                            onClick={handleUpdate}
+                                            style={{ ...primaryButtonStyle, width: "auto", padding: "12px 18px" }}
+                                        >
+                                            Сохранить
+                                        </button>
+                                        <button
+                                            onClick={cancelEdit}
+                                            style={{
+                                                width: "auto",
+                                                padding: "12px 18px",
+                                                borderRadius: "8px",
+                                                border: "1px solid #cbd5e1",
+                                                backgroundColor: "#ffffff",
+                                                cursor: "pointer",
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Отмена
+                                        </button>
+                                    </div>
+                                </>
                             )}
                         </div>
                     </div>
@@ -367,64 +495,108 @@ const MappingBranchPage = () => {
                                 Для выбранного предприятия записи маппинга пока не найдены.
                             </div>
                         ) : (
-                            <div style={{ display: "grid" }}>
-                                <div
-                                    style={{
-                                        display: "grid",
-                                        gridTemplateColumns: "140px minmax(220px, 1fr) minmax(220px, 1fr) 120px 120px",
-                                        gap: "12px",
-                                        padding: "14px 20px",
-                                        backgroundColor: "#f8fafc",
-                                        borderBottom: "1px solid #e2e8f0",
-                                        fontSize: "13px",
-                                        fontWeight: 700,
-                                        color: "#334155",
-                                    }}
-                                >
-                                    <div>Филиал</div>
-                                    <div>Внешний store / mapping</div>
-                                    <div>Google Folder ID</div>
-                                    <div>Telegram</div>
-                                    <div>Статус</div>
-                                </div>
-
+                            <div style={{ display: "grid", gap: "12px", padding: "16px" }}>
                                 {filteredMappings.map((item) => (
                                     <div
                                         key={item.mapping_key}
                                         style={{
                                             display: "grid",
-                                            gridTemplateColumns: "140px minmax(220px, 1fr) minmax(220px, 1fr) 120px 120px",
                                             gap: "12px",
-                                            padding: "14px 20px",
-                                            borderBottom: "1px solid #edf2f7",
-                                            alignItems: "center",
+                                            padding: "16px",
+                                            border: "1px solid #e2e8f0",
+                                            borderRadius: "10px",
+                                            backgroundColor: "#ffffff",
                                         }}
                                     >
-                                        <div style={{ fontWeight: 700, color: "#111827" }}>{item.branch}</div>
-                                        <div style={{ display: "grid", gap: "4px" }}>
-                                            <div style={{ color: "#111827", fontWeight: 600 }}>
-                                                {item.store_mapping_value || emptyValue}
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                alignItems: "flex-start",
+                                                gap: "12px",
+                                                flexWrap: "wrap",
+                                            }}
+                                        >
+                                            <div style={{ display: "grid", gap: "4px" }}>
+                                                <div style={{ fontWeight: 700, color: "#111827" }}>
+                                                    Филиал: {item.branch}
+                                                </div>
+                                                <div style={{ ...mutedTextStyle, fontSize: "12px" }}>
+                                                    {item.enterprise_display_label}
+                                                </div>
                                             </div>
-                                            <div style={{ ...mutedTextStyle, fontSize: "12px" }}>
-                                                {item.semantic_store_label}
+                                            <button
+                                                onClick={() => startEdit(item)}
+                                                style={{
+                                                    padding: "8px 12px",
+                                                    borderRadius: "8px",
+                                                    border: "1px solid #cbd5e1",
+                                                    backgroundColor: "#ffffff",
+                                                    cursor: "pointer",
+                                                    fontWeight: 600,
+                                                }}
+                                            >
+                                                Редактировать
+                                            </button>
+                                        </div>
+
+                                        <div
+                                            style={{
+                                                display: "grid",
+                                                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                                gap: "12px",
+                                            }}
+                                        >
+                                            <div style={{ display: "grid", gap: "4px" }}>
+                                                <div style={{ ...mutedTextStyle, fontSize: "12px" }}>
+                                                    Внешний store / mapping
+                                                </div>
+                                                <div style={{ color: "#111827", fontWeight: 600 }}>
+                                                    {item.store_mapping_value || emptyValue}
+                                                </div>
+                                                <div style={{ ...mutedTextStyle, fontSize: "12px" }}>
+                                                    {item.semantic_store_label}
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div style={{ color: "#111827", wordBreak: "break-word" }}>
-                                            {item.google_folder_id || emptyValue}
-                                        </div>
-                                        <div>
-                                            <span style={item.has_telegram_target ? badgeStyle : { ...badgeStyle, backgroundColor: "#f1f5f9" }}>
-                                                {item.has_telegram_target ? "Есть" : "Нет"}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            {item.conflict_flags.length > 0 ? (
-                                                <span style={warningBadgeStyle}>Конфликт</span>
-                                            ) : (
-                                                <span style={{ ...badgeStyle, backgroundColor: "#ecfdf5", color: "#166534" }}>
-                                                    Ок
-                                                </span>
-                                            )}
+
+                                            <div style={{ display: "grid", gap: "4px" }}>
+                                                <div style={{ ...mutedTextStyle, fontSize: "12px" }}>
+                                                    Google Folder ID
+                                                </div>
+                                                <div style={{ color: "#111827", wordBreak: "break-word" }}>
+                                                    {item.google_folder_id || emptyValue}
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: "grid", gap: "8px", alignContent: "start" }}>
+                                                <div style={{ ...mutedTextStyle, fontSize: "12px" }}>
+                                                    Telegram
+                                                </div>
+                                                <div>
+                                                    <span
+                                                        style={
+                                                            item.has_telegram_target
+                                                                ? badgeStyle
+                                                                : { ...badgeStyle, backgroundColor: "#f1f5f9" }
+                                                        }
+                                                    >
+                                                        {item.has_telegram_target ? "Есть" : "Нет"}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: "grid", gap: "8px", alignContent: "start" }}>
+                                                <div style={{ ...mutedTextStyle, fontSize: "12px" }}>Статус</div>
+                                                <div>
+                                                    {item.conflict_flags.length > 0 ? (
+                                                        <span style={warningBadgeStyle}>Конфликт</span>
+                                                    ) : (
+                                                        <span style={{ ...badgeStyle, backgroundColor: "#ecfdf5", color: "#166534" }}>
+                                                            Ок
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 ))}

@@ -82,8 +82,8 @@ class MappingBranchSchema(BaseModel):
     enterprise_code: str
     branch: str
     store_id: str
-    google_folder_id: str
-    id_telegram: Optional[List[str]]
+    google_folder_id: Optional[str] = None
+    id_telegram: Optional[List[str]] = None
     class Config:
         from_attributes = True  # Включено для использования from_orm
 
@@ -120,6 +120,11 @@ class BranchMappingDetailVM(BaseModel):
     conflict_flags: List[str] = Field(default_factory=list)
     readonly_fields: List[str] = Field(default_factory=list)
     computed_fields: List[str] = Field(default_factory=list)
+
+
+class MappingBranchConstrainedUpdateSchema(BaseModel):
+    store_id: str
+    google_folder_id: Optional[str] = None
 
 
 # Схема для глобальных настроек системы
