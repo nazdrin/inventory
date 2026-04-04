@@ -1,9 +1,6 @@
 import axios from "axios";
 import { API_BASE_URL } from "../config";
 
-// Функция для получения токена из localStorage
-const getAuthToken = () => localStorage.getItem("token");
-
 // Конфиг для axios с заголовком Authorization
 const getAuthHeaders = () => {
     const token = localStorage.getItem("token");
@@ -27,6 +24,26 @@ export const createMappingBranch = async (mappingData) => {
         return response.data;
     } catch (error) {
         console.error("Error creating mapping branch:", error);
+        throw error;
+    }
+};
+
+export const getMappingBranchViewList = async () => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/mapping_branch/view/`, getAuthHeaders());
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching mapping branch view list:", error);
+        throw error;
+    }
+};
+
+export const getMappingBranchViewDetail = async (branch) => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/mapping_branch/view/${branch}`, getAuthHeaders());
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching mapping branch detail:", error);
         throw error;
     }
 };
