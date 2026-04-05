@@ -18,6 +18,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 # ========= Утилиты уведомлений =========
 
+def _success_notifications_enabled() -> bool:
+    return os.getenv("COMPETITOR_SCHEDULER_NOTIFY_SUCCESS", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
 async def notify_error(message: str, enterprise_code: str = "unknown"):
     logging.error(message)
     # если send_notification синхронная — вызываем без await
@@ -122,7 +127,8 @@ async def schedule_competitor_price_loader():
                     f"• Длительность: {duration_s:.1f} сек\n"
                     f"• Проверка шедулера: {trigger_dt_kiev.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
-                await notify_info(msg, "competitor_price_scheduler")
+                if _success_notifications_enabled():
+                    await notify_info(msg, "competitor_price_scheduler")
 
                 logging.info(
                     "[Competitor Scheduler] Загрузка цен конкурентов успешно завершена за %.1f сек.",

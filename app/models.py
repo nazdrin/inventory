@@ -122,6 +122,8 @@ class EnterpriseSettings(Base, TimestampMixin):
     single_store = Column(Boolean, nullable=False, server_default=text("false"))
     order_fetcher = Column(Boolean, nullable=False, server_default=text("false"))
     auto_confirm = Column(Boolean, nullable=False, server_default=text("false"))
+    catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
@@ -291,6 +293,28 @@ class Offer(Base):
         Index("ix_offers_city_product_price", "city", "product_code", "price"),
         Index("ix_offers_city_stock_pos", "city",
               postgresql_where=text("stock > 0")),
+    )
+
+
+class OfferBlockRule(Base, TimestampMixin):
+    __tablename__ = "offer_block_rules"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    product_code = Column(String, nullable=False, index=True)
+    supplier_code = Column(String, nullable=True, index=True)
+    blocked_until = Column(DateTime(timezone=True), nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    reason = Column(String(500), nullable=True)
+    created_by = Column(String(255), nullable=True)
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_offer_block_rules_product_supplier_active",
+            "product_code",
+            "supplier_code",
+            "is_active",
+        ),
     )
 
 

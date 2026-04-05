@@ -104,6 +104,23 @@ def _env_int_list(name: str, default: List[int]) -> List[int]:
     return default
 
 
+def _env_comma_separated_ints(name: str) -> List[int]:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return []
+
+    parsed: List[int] = []
+    for part in str(raw).split(","):
+        item = part.strip()
+        if not item:
+            continue
+        try:
+            parsed.append(int(item))
+        except (TypeError, ValueError):
+            logger.warning("Неверное значение в %s: %r (пропущено)", name, item)
+    return parsed
+
+
 def _parse_csv_items(value: str) -> List[str]:
     if not value:
         return []
@@ -442,6 +459,7 @@ async def _process_fallback_orders_batch(
     *,
     source: str,
     orders: List[Dict[str, Any]],
+    enterprise_code: str,
     api_key: str,
     client: httpx.AsyncClient,
     now_kyiv: datetime,
@@ -516,6 +534,7 @@ async def _process_fallback_orders_batch(
                     tabletki_login=tabletki_login,
                     tabletki_password=tabletki_password,
                     cancel_reason=tabletki_cancel_reason_default,
+                    enterprise_code=enterprise_code,
                 )
             counters["sent_tabletki"] += 1
         except Exception as exc:
@@ -688,10 +707,14 @@ async def np_create_ttn(
     service_type: str,
     has_postpay: bool,
     postpay_sum: Optional[float],
+    sender_address_ref: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     sender_ref = _env_str("NP_SENDER_REF", "2fbfd260-ba45-11f0-a1d5-48df37b921da")
     contact_sender_ref = _env_str("NP_CONTACT_SENDER_REF", "77739776-ba74-11f0-a1d5-48df37b921da")
-    sender_address_ref = _env_str("NP_SENDER_ADDRESS_REF", "9e6adf20-8502-11e4-acce-0050568002cf")
+    sender_address_ref = sender_address_ref or _env_str(
+        "NP_SENDER_ADDRESS_REF",
+        "9e6adf20-8502-11e4-acce-0050568002cf",
+    )
     city_sender_ref = _env_str("NP_CITY_SENDER_REF", "8d5a980d-391c-11dd-90d9-001a92567626")
     sender_phone = _env_str("NP_SENDER_PHONE", "380672399124")
 
@@ -796,6 +819,7 @@ async def process_biotus_orders(
     tabletki_cancel_reason_default = _env_int("TABLETKI_CANCEL_REASON_DEFAULT", 18)
     allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
     allowed_supplier_ids_set = set(allowed_supplier_ids)
+    fulfillment_supplier_ids = _env_comma_separated_ints("NP_FULFILLMENT_SUPPLIER_IDS")
     matched: List[Dict[str, Any]] = []
     unhandled_by_main: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
@@ -1012,6 +1036,51 @@ async def process_biotus_orders(
                 )
                 continue
 
+            default_sender_address_ref = _env_str(
+                "NP_SENDER_ADDRESS_REF",
+                "9e6adf20-8502-11e4-acce-0050568002cf",
+            )
+            fulfillment_sender_address_ref = os.getenv("NP_FULFILLMENT_ADDRESS_REF")
+            supplier_id_raw = order.get("supplierlist")
+            normalized_supplier_id = _parse_supplier_id(order)
+            shipping_mode = "default"
+            selected_sender_address_ref = default_sender_address_ref
+            if supplier_id_raw not in (None, "") and normalized_supplier_id is None:
+                logger.warning(
+                    "Failed to normalize supplier_id for order_id=%s supplier_id_raw=%r; "
+                    "fulfillment_supplier_ids=%s mode=%s",
+                    order_id,
+                    supplier_id_raw,
+                    fulfillment_supplier_ids,
+                    shipping_mode,
+                )
+            if normalized_supplier_id in fulfillment_supplier_ids:
+                shipping_mode = "fulfillment"
+                if fulfillment_sender_address_ref:
+                    selected_sender_address_ref = fulfillment_sender_address_ref
+                else:
+                    logger.warning(
+                        "Fulfillment sender address env missing for order_id=%s supplier_id_raw=%r "
+                        "supplier_id=%s fulfillment_supplier_ids=%s mode=%s; "
+                        "fallback to default sender_address_ref=%s",
+                        order_id,
+                        supplier_id_raw,
+                        normalized_supplier_id,
+                        fulfillment_supplier_ids,
+                        shipping_mode,
+                        default_sender_address_ref,
+                    )
+            logger.info(
+                "NP sender address selected: order_id=%s supplier_id_raw=%r supplier_id=%s "
+                "fulfillment_supplier_ids=%s mode=%s sender_address_ref=%s",
+                order_id,
+                supplier_id_raw,
+                normalized_supplier_id,
+                fulfillment_supplier_ids,
+                shipping_mode,
+                selected_sender_address_ref,
+            )
+
             ttn_number, err = await np_create_ttn(
                 client,
                 np_api_key,
@@ -1023,6 +1092,7 @@ async def process_biotus_orders(
                 service_type=service_type,
                 has_postpay=has_postpay,
                 postpay_sum=postpay_sum,
+                sender_address_ref=selected_sender_address_ref,
             )
             if err or not ttn_number:
                 logger.error("Не удалось создать ТТН для заказа %s: %s", order_id, err)
@@ -1056,6 +1126,7 @@ async def process_biotus_orders(
                 c_main = await _process_fallback_orders_batch(
                     source="status1_unhandled",
                     orders=from_status1_orders,
+                    enterprise_code=str(enterprise_code),
                     api_key=api_key,
                     client=client,
                     now_kyiv=now_kyiv,
@@ -1081,6 +1152,7 @@ async def process_biotus_orders(
                 c_additional = await _process_fallback_orders_batch(
                     source="status_9_19_18_20",
                     orders=additional_orders,
+                    enterprise_code=str(enterprise_code),
                     api_key=api_key,
                     client=client,
                     now_kyiv=now_kyiv,

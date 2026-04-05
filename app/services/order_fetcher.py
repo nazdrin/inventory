@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models import DeveloperSettings, EnterpriseSettings, MappingBranch
 from app.services.auto_confirm import process_orders
-from app.services.order_sender import send_orders_to_tabletki
+from app.services.order_sender import process_due_tabletki_cancel_retries, send_orders_to_tabletki
 from app.services.order_sender import send_single_order_status_2
 from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
 from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
@@ -58,6 +58,10 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
     if not enterprise.order_fetcher:
         logger.info("order_fetcher disabled, skip enterprise_code=%s", enterprise_code)
         return []
+
+    retry_stats = await process_due_tabletki_cancel_retries(session, enterprise_code=enterprise_code)
+    if retry_stats["due_found"]:
+        logger.info("Processed due Tabletki cancel retries: %s", retry_stats)
 
     auth_header = base64.b64encode(
         f"{enterprise.tabletki_login}:{enterprise.tabletki_password}".encode()
@@ -116,6 +120,7 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                             tabletki_login=enterprise.tabletki_login,
                                             tabletki_password=enterprise.tabletki_password,
                                             cancel_reason=2,
+                                            enterprise_code=enterprise_code,
                                         )
 
                                     if status == 0 and ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS:
@@ -160,11 +165,12 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                         elif status in [2, 4, 4.1]:
                                             # TODO: передача статуса продавцу
                                             # Отправка актуального статуса продавцу через соответствующий обработчик
-                                            status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
-                                            if status_checker:
-                                                await status_checker(order, enterprise_code, branch)
-                                            else:
-                                                logger.warning("No status checker for data_format=%s", enterprise.data_format)
+                                            if enterprise.data_format != "Business":
+                                                status_checker = ORDER_STATUS_CHECKERS.get(enterprise.data_format)
+                                                if status_checker:
+                                                    await status_checker(order, enterprise_code, branch)
+                                                else:
+                                                    logger.warning("No status checker for data_format=%s", enterprise.data_format)
                                         all_orders.append(order)
                                     if status == 0 and ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS:
                                         order_codes = list({order["code"] for order in data if "code" in order})

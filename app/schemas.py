@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -62,6 +62,8 @@ class EnterpriseSettingsSchema(BaseModel):
     single_store: Optional[bool] = False
     order_fetcher: Optional[bool] = False
     auto_confirm: Optional[bool] = False
+    catalog_enabled: Optional[bool] = True
+    stock_enabled: Optional[bool] = True
     store_serial: Optional[str] = None  # Серийный номер магазина
     stock_upload_frequency: Optional[int] = None  # Частота загрузки остатков
     catalog_upload_frequency: Optional[int] = None  # Частота загрузки каталога
@@ -77,15 +79,100 @@ class EnterpriseSettingsSchema(BaseModel):
         from_attributes = True  # Включено для использования from_orm
 
 
+class EnterpriseFieldMetaVM(BaseModel):
+    key: str
+    label: str
+    field_type: str
+    readonly: bool = False
+    help_text: Optional[str] = None
+
+
+class EnterpriseSectionVM(BaseModel):
+    key: str
+    title: str
+    description: Optional[str] = None
+    collapsible: bool = False
+    default_open: bool = True
+    field_keys: List[str] = Field(default_factory=list)
+
+
+class EnterpriseListItemVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+    branch_id: Optional[str] = None
+    catalog_upload_frequency: Optional[int] = None
+    stock_upload_frequency: Optional[int] = None
+    catalog_enabled: bool = True
+    stock_enabled: bool = True
+    order_fetcher: bool = False
+    last_stock_upload: Optional[datetime] = None
+    last_catalog_upload: Optional[datetime] = None
+    is_blank_format: bool = False
+    has_format_specific_fields: bool = False
+
+
+class EnterpriseDetailVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+    catalog_enabled: bool = True
+    stock_enabled: bool = True
+    values: Dict[str, Any] = Field(default_factory=dict)
+    field_meta: List[EnterpriseFieldMetaVM] = Field(default_factory=list)
+    sections: List[EnterpriseSectionVM] = Field(default_factory=list)
+    show_format_fields_block: bool = False
+    show_runtime_block: bool = True
+
+
 # Схема таблицы mapping
 class MappingBranchSchema(BaseModel):
     enterprise_code: str
     branch: str
     store_id: str
-    google_folder_id: str
-    id_telegram: Optional[List[str]]
+    google_folder_id: Optional[str] = None
+    id_telegram: Optional[List[str]] = None
     class Config:
         from_attributes = True  # Включено для использования from_orm
+
+
+class BranchMappingListItemVM(BaseModel):
+    mapping_key: str
+    enterprise_code: str
+    enterprise_display_label: str
+    branch: str
+    semantic_store_label: str
+    store_mapping_value: str
+    google_folder_id: Optional[str] = None
+    has_telegram_target: bool = False
+    field_semantics_summary: str
+    runtime_usage_hints_summary: str
+    conflict_flags: List[str] = Field(default_factory=list)
+    readonly_fields: List[str] = Field(default_factory=list)
+
+
+class BranchMappingDetailVM(BaseModel):
+    mapping_key: str
+    enterprise_code: str
+    enterprise_display_label: str
+    data_format: Optional[str] = None
+    branch: str
+    store_id: str
+    semantic_store_label: str
+    google_folder_id: Optional[str] = None
+    id_telegram: List[str] = Field(default_factory=list)
+    runtime_consumers: List[str] = Field(default_factory=list)
+    runtime_usage_hints_summary: str
+    field_notes: List[str] = Field(default_factory=list)
+    overloaded_fields: List[str] = Field(default_factory=list)
+    conflict_flags: List[str] = Field(default_factory=list)
+    readonly_fields: List[str] = Field(default_factory=list)
+    computed_fields: List[str] = Field(default_factory=list)
+
+
+class MappingBranchConstrainedUpdateSchema(BaseModel):
+    store_id: str
+    google_folder_id: Optional[str] = None
 
 
 # Схема для глобальных настроек системы

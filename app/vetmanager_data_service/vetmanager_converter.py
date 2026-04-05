@@ -19,8 +19,9 @@ import os
 import json
 import logging
 import asyncio
+import time
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -33,21 +34,43 @@ from app.models import MappingBranch
 from app.services.database_service import process_database_service
 
 
-# ===== НАСТРОЙКИ (дефолты; реальные значения берём из БД mapping_branch.store_id) =====
-PREFERRED_CLINIC_ID = "999"           # дефолт (перекрывается store_id[0])
-TARGET_STORE_ID = 999               # дефолт (перекрывается store_id[1] или store_id[0])
+# ===== НАСТРОЙКИ =====
 X_REST_TIME_ZONE = "Europe/Kiev"    # На вашем инстансе 'Europe/Kyiv' может давать 500
 LOG_PROGRESS_EVERY = 200            # Шаг прогресс-логов
 MAX_CONCURRENCY = 16                # Одновременных запросов к остаткам
 REQUEST_TIMEOUT_SEC = 25            # Таймаут запроса остатков
 CATALOG_PAGE_LIMIT = 200            # Пагинация каталога
+SYNC_HTTP_RETRY_ATTEMPTS = 3
+ASYNC_HTTP_RETRY_ATTEMPTS = 3
+HTTP_RETRY_BACKOFF_SEC = 0.5
+
+
+@dataclass(frozen=True)
+class VetmanagerApiConfig:
+    domain: str
+    api_key: str
+
+
+@dataclass(frozen=True)
+class VetmanagerStoreMapping:
+    preferred_clinic_id: str
+    target_store_id: str
+    raw_value: str
+
+
+@dataclass
+class StockFetchStats:
+    requested_goods: int = 0
+    successful_goods: int = 0
+    failed_goods: int = 0
+    non_200_goods: int = 0
+    exception_goods: int = 0
+    zero_qty_goods: int = 0
+    positive_qty_goods: int = 0
+    skipped_missing_id_goods: int = 0
 
 
 # ===== ЛОГИ (только консоль) =====
-def _ts() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
-
-
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(f"vetmanager.min.{name}")
     if not logger.handlers:
@@ -55,6 +78,7 @@ def get_logger(name: str) -> logging.Logger:
         h = logging.StreamHandler()
         h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
         logger.addHandler(h)
+    logger.propagate = False
     return logger
 
 
@@ -62,19 +86,32 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
+def save_json_payload(data: List[Dict[str, Any]], enterprise_code: str, file_type: str) -> str:
+    out_dir = os.path.join("temp", str(enterprise_code))
+    ensure_dir(out_dir)
+    final = os.path.join(out_dir, f"{file_type}.json")
+    with open(final, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return final
+
+
 # ===== БД =====
-async def get_domain_and_key(session, enterprise_code: str) -> Tuple[str, str]:
+def parse_token_contract(token_value: str) -> VetmanagerApiConfig:
+    parts = [p.strip() for p in token_value.strip().split(",")]
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        raise ValueError("Некорректный token. Ожидается 'domain, api_key'")
+    return VetmanagerApiConfig(domain=parts[0], api_key=parts[1])
+
+
+async def get_domain_and_key(session, enterprise_code: str) -> VetmanagerApiConfig:
     stmt = select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
     row = (await session.execute(stmt)).scalar_one_or_none()
     if not row or not getattr(row, "token", None):
         raise ValueError(f"Не найден token для enterprise_code={enterprise_code}")
-    parts = [p.strip() for p in row.token.strip().split(",")]
-    if len(parts) < 2:
-        raise ValueError("Некорректный token. Ожидается 'domain, api_key'")
-    return parts[0], parts[1]
+    return parse_token_contract(row.token)
 
 
-async def get_branches(session, enterprise_code: str) -> List[str]:
+async def get_branches(session, enterprise_code: str, logger: logging.Logger) -> List[str]:
     """
     Нужны для формирования stock по всем филиалам Tabletki (как раньше).
     Источник не меняем: остаётся MappingBranch.branch.
@@ -83,10 +120,21 @@ async def get_branches(session, enterprise_code: str) -> List[str]:
     rows = (await session.execute(stmt)).scalars().all()
     if not rows:
         raise ValueError(f"В mapping_branch нет записей для enterprise_code={enterprise_code}")
-    return [str(getattr(r, "branch", "")) for r in rows if getattr(r, "branch", None)]
+    raw_branches = [str(getattr(r, "branch", "")).strip() for r in rows if getattr(r, "branch", None)]
+    branches = list(dict.fromkeys([branch for branch in raw_branches if branch]))
+    if not branches:
+        raise ValueError(f"Не найдено непустых branch в mapping_branch для enterprise_code={enterprise_code}")
+    if len(branches) != len(raw_branches):
+        logger.warning(
+            "Detected duplicated/empty branch values for enterprise_code=%s: raw=%s unique=%s",
+            enterprise_code,
+            raw_branches,
+            branches,
+        )
+    return branches
 
 
-def _parse_store_id_csv(s: str) -> Tuple[str, str]:
+def _parse_store_id_csv(s: str) -> VetmanagerStoreMapping:
     """
     Принимает строку вида '4, 24' и возвращает (preferred_clinic_id, target_store_id).
     Пробелы допускаются. Пустые элементы игнорируем.
@@ -98,10 +146,18 @@ def _parse_store_id_csv(s: str) -> Tuple[str, str]:
         raise ValueError("store_id пустой — ожидается строка вида '4, 24'")
     preferred = parts[0]
     target = parts[1] if len(parts) > 1 else parts[0]
-    return str(preferred), str(target)
+    return VetmanagerStoreMapping(
+        preferred_clinic_id=str(preferred),
+        target_store_id=str(target),
+        raw_value=s,
+    )
 
 
-async def get_ids_from_mapping_branch(session, enterprise_code: str) -> Tuple[str, str]:
+async def get_ids_from_mapping_branch(
+    session,
+    enterprise_code: str,
+    logger: logging.Logger,
+) -> VetmanagerStoreMapping:
     """
     Возвращает (preferred_clinic_id, target_store_id) из mapping_branch.store_id.
     Берём первую непустую строку store_id и парсим как CSV.
@@ -121,13 +177,14 @@ async def get_ids_from_mapping_branch(session, enterprise_code: str) -> Tuple[st
 
     chosen = unique_values[0]
     if len(unique_values) > 1:
-        logging.getLogger("vetmanager.min").warning(
-            f"Найдено несколько различных store_id для enterprise_code={enterprise_code}: {unique_values}. "
-            f"Использую первое: '{chosen}'."
+        logger.warning(
+            "Найдено несколько различных store_id для enterprise_code=%s: %s. Использую первое: '%s'.",
+            enterprise_code,
+            unique_values,
+            chosen,
         )
 
-    preferred_clinic_id, target_store_id = _parse_store_id_csv(chosen)
-    return preferred_clinic_id, target_store_id
+    return _parse_store_id_csv(chosen)
 
 
 # ===== HTTP (sync для каталога) =====
@@ -139,12 +196,44 @@ def vet_headers(api_key: str) -> Dict[str, str]:
     }
 
 
+def _should_retry_status(status_code: int) -> bool:
+    return status_code == 429 or 500 <= status_code < 600
+
+
 def http_get(url: str, headers: Dict[str, str], logger: logging.Logger) -> requests.Response:
-    logger.info(f"HTTP GET → {url}")
-    resp = requests.get(url, headers=headers, timeout=30)
-    logger.info(f"HTTP {resp.status_code} ← {url}")
-    resp.raise_for_status()
-    return resp
+    for attempt in range(1, SYNC_HTTP_RETRY_ATTEMPTS + 1):
+        logger.info("HTTP GET → %s attempt=%s/%s", url, attempt, SYNC_HTTP_RETRY_ATTEMPTS)
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+        except requests.RequestException as exc:
+            logger.warning(
+                "HTTP request exception for %s attempt=%s/%s error=%s",
+                url,
+                attempt,
+                SYNC_HTTP_RETRY_ATTEMPTS,
+                exc,
+            )
+            if attempt >= SYNC_HTTP_RETRY_ATTEMPTS:
+                raise
+            time.sleep(HTTP_RETRY_BACKOFF_SEC * attempt)
+            continue
+
+        logger.info("HTTP %s ← %s attempt=%s/%s", resp.status_code, url, attempt, SYNC_HTTP_RETRY_ATTEMPTS)
+        if _should_retry_status(resp.status_code) and attempt < SYNC_HTTP_RETRY_ATTEMPTS:
+            logger.warning(
+                "Retrying HTTP %s for %s attempt=%s/%s",
+                resp.status_code,
+                url,
+                attempt,
+                SYNC_HTTP_RETRY_ATTEMPTS,
+            )
+            time.sleep(HTTP_RETRY_BACKOFF_SEC * attempt)
+            continue
+
+        resp.raise_for_status()
+        return resp
+
+    raise RuntimeError(f"Unexpected retry fallthrough for URL: {url}")
 
 
 # ===== УТИЛИТЫ =====
@@ -219,10 +308,16 @@ def discover_single_clinic(
     Жёстко используем clinic_id = preferred_clinic_id (из mapping_branch.store_id[0]).
     Проверяем, что пользователю эта клиника доступна.
     """
+    started_at = time.monotonic()
     uid = discover_user_id(domain, api_key, logger)
     clinics = discover_clinics(domain, api_key, logger, uid)
     if preferred_clinic_id in clinics:
-        logger.info(f"Using FIXED clinic_id={preferred_clinic_id} (allowed={clinics})")
+        logger.info(
+            "Using FIXED clinic_id=%s (allowed=%s elapsed=%.2fs)",
+            preferred_clinic_id,
+            clinics,
+            time.monotonic() - started_at,
+        )
         return uid, preferred_clinic_id
     logger.error(
         f"Requested fixed clinic_id={preferred_clinic_id} is not allowed for user_id={uid}. Allowed clinics: {clinics}"
@@ -340,18 +435,29 @@ async def fetch_qty_for_good(
     user_id: str,
     gid: str,
     target_store_id: str
-) -> Tuple[str, int]:
+) -> Tuple[str, int, str]:
     """
-    Возвращает (gid, qty_on_target_store_id). Ошибки -> qty=0.
+    Возвращает (gid, qty_on_target_store_id, status).
+    status: ok | non_200 | exception
     """
     url = f"{base_stock}?clinic_id={clinic_id}&good_id={gid}&user_id={user_id}"
-    try:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return gid, 0
-            pj = await resp.json(content_type=None)
-    except Exception:
-        return gid, 0
+    for attempt in range(1, ASYNC_HTTP_RETRY_ATTEMPTS + 1):
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    if _should_retry_status(resp.status) and attempt < ASYNC_HTTP_RETRY_ATTEMPTS:
+                        await asyncio.sleep(HTTP_RETRY_BACKOFF_SEC * attempt)
+                        continue
+                    return gid, 0, "non_200"
+                pj = await resp.json(content_type=None)
+                break
+        except Exception:
+            if attempt < ASYNC_HTTP_RETRY_ATTEMPTS:
+                await asyncio.sleep(HTTP_RETRY_BACKOFF_SEC * attempt)
+                continue
+            return gid, 0, "exception"
+    else:
+        return gid, 0, "exception"
 
     balances = (pj.get("data") or {}).get("stock_balances") or []
     qty_store = 0
@@ -362,7 +468,7 @@ async def fetch_qty_for_good(
                 continue
             raw_q = row.get("qty") or row.get("quantity") or 0
             qty_store += parse_qty_to_int_floor(raw_q)
-    return gid, int(qty_store)
+    return gid, int(qty_store), "ok"
 
 
 async def fetch_stock_concurrent(
@@ -372,10 +478,10 @@ async def fetch_stock_concurrent(
     goods: List[Dict[str, Any]],
     preferred_clinic_id: str,
     target_store_id: str,
-) -> Dict[str, int]:
+) -> Tuple[Dict[str, int], StockFetchStats]:
     """
     Асинхронно, с ограничением конкурентности, тянем остатки по target_store_id для всех goods.
-    Возвращаем только товары с qty>0.
+    Возвращаем только товары с qty>0 и агрегированную статистику по fetch phase.
     """
     uid, clinic_id = discover_single_clinic(domain, api_key, logger, preferred_clinic_id)
     base_stock = f"https://{domain}/rest/api/Good/StockBalancesForProduct"
@@ -388,6 +494,7 @@ async def fetch_stock_concurrent(
     }
 
     qty_by_good: Dict[str, int] = {}
+    stats = StockFetchStats(requested_goods=len(goods))
     sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
     async with aiohttp.TCPConnector(limit=None) as connector:
@@ -395,15 +502,27 @@ async def fetch_stock_concurrent(
 
             async def bounded_fetch(gid: str) -> None:
                 async with sem:
-                    g, q = await fetch_qty_for_good(http, base_stock, clinic_id, uid, gid, target_store_id)
+                    g, q, status = await fetch_qty_for_good(http, base_stock, clinic_id, uid, gid, target_store_id)
+                    if status == "ok":
+                        stats.successful_goods += 1
+                    else:
+                        stats.failed_goods += 1
+                        if status == "non_200":
+                            stats.non_200_goods += 1
+                        elif status == "exception":
+                            stats.exception_goods += 1
                     if q > 0:
                         qty_by_good[g] = q
+                        stats.positive_qty_goods += 1
+                    else:
+                        stats.zero_qty_goods += 1
 
             total = len(goods)
             tasks: List[asyncio.Task] = []
             for idx, g in enumerate(goods, start=1):
                 gid_val = g.get("id")
                 if gid_val is None:
+                    stats.skipped_missing_id_goods += 1
                     continue
                 gid = str(gid_val)
                 tasks.append(asyncio.create_task(bounded_fetch(gid)))
@@ -413,8 +532,19 @@ async def fetch_stock_concurrent(
             if tasks:
                 await asyncio.gather(*tasks)
 
-            logger.info(f"[done] fetched qty>0 for {len(qty_by_good)} goods (store_id={target_store_id})")
-            return qty_by_good
+            logger.info(
+                "[done] stock fetch summary: requested=%s success=%s failed=%s non_200=%s exceptions=%s qty>0=%s qty=0=%s skipped_missing_id=%s store_id=%s",
+                stats.requested_goods,
+                stats.successful_goods,
+                stats.failed_goods,
+                stats.non_200_goods,
+                stats.exception_goods,
+                stats.positive_qty_goods,
+                stats.zero_qty_goods,
+                stats.skipped_missing_id_goods,
+                target_store_id,
+            )
+            return qty_by_good, stats
 
 
 # ===== СБОРКА STOCK =====
@@ -467,50 +597,117 @@ async def send_stock_data(file_path, enterprise_code):
 async def run_service(enterprise_code: str, file_type: str) -> None:
     logger = get_logger(enterprise_code)
     logger.info(f"START run_service enterprise={enterprise_code} type={file_type}")
+    run_started_at = time.monotonic()
 
     async with get_async_db() as session:
-        domain, api_key = await get_domain_and_key(session, enterprise_code)
-        branches = await get_branches(session, enterprise_code)
+        api_config = await get_domain_and_key(session, enterprise_code)
+        branches = await get_branches(session, enterprise_code, logger)
 
         # Новая логика: оба ID из mapping_branch.store_id CSV
-        preferred_clinic_id, target_store_id = await get_ids_from_mapping_branch(session, enterprise_code)
+        store_mapping = await get_ids_from_mapping_branch(session, enterprise_code, logger)
 
         logger.info(f"branches loaded: {len(branches)} -> {branches}")
-        logger.info(f"settings: domain={domain}, api_key_masked={api_key[:4]}{'*'*(len(api_key)-4)}")
-        logger.info(f"clinic_id(from store_id[0])={preferred_clinic_id}, target store_id(from store_id[1] or [0])={target_store_id}")
+        logger.info(
+            "settings: domain=%s, api_key_masked=%s, store_id_raw=%s",
+            api_config.domain,
+            f"{api_config.api_key[:4]}{'*' * (len(api_config.api_key) - 4)}",
+            store_mapping.raw_value,
+        )
+        logger.info(
+            "clinic_id(from store_id[0])=%s, target store_id(from store_id[1] or [0])=%s",
+            store_mapping.preferred_clinic_id,
+            store_mapping.target_store_id,
+        )
 
         # 1) Каталог
         logger.info("===== STAGE: Fetch GOODS =====")
-        all_goods = fetch_goods_paginated(domain, api_key, logger, limit=CATALOG_PAGE_LIMIT)
+        goods_fetch_started_at = time.monotonic()
+        all_goods = fetch_goods_paginated(api_config.domain, api_config.api_key, logger, limit=CATALOG_PAGE_LIMIT)
         goods = filter_goods_for_catalog(all_goods, logger)
         catalog = transform_catalog(goods, logger)
+        logger.info(
+            "phase summary [catalog_fetch]: fetched_goods=%s filtered_goods=%s unique_catalog=%s elapsed=%.2fs",
+            len(all_goods),
+            len(goods),
+            len(catalog),
+            time.monotonic() - goods_fetch_started_at,
+        )
 
         if file_type == "catalog":
-            out_dir = f"temp/{enterprise_code}"
-            ensure_dir(out_dir)
-            final = os.path.join(out_dir, "catalog.json")
-            with open(final, "w", encoding="utf-8") as f:
-                json.dump(catalog, f, ensure_ascii=False, indent=2)
+            final = save_json_payload(catalog, enterprise_code, "catalog")
             await send_catalog_data(final, enterprise_code)
+            logger.info(
+                "run summary: type=%s branches=%s catalog_rows=%s elapsed=%.2fs",
+                file_type,
+                len(branches),
+                len(catalog),
+                time.monotonic() - run_started_at,
+            )
             logger.info("DONE catalog")
             logger.info("FINISH run_service")
             return
 
         # 2) Остатки (параллельно) → результат только с qty>0
-        logger.info(f"===== STAGE: Fetch STOCK (concurrent; store_id={target_store_id}) =====")
-        qty_by_good = await fetch_stock_concurrent(
-            domain, api_key, logger, goods, preferred_clinic_id, target_store_id
+        logger.info(f"===== STAGE: Fetch STOCK (concurrent; store_id={store_mapping.target_store_id}) =====")
+        stock_fetch_started_at = time.monotonic()
+        qty_by_good, stock_stats = await fetch_stock_concurrent(
+            api_config.domain,
+            api_config.api_key,
+            logger,
+            goods,
+            store_mapping.preferred_clinic_id,
+            store_mapping.target_store_id,
         )
+        logger.info(
+            "phase summary [stock_fetch]: requested=%s success=%s failed=%s non_200=%s exceptions=%s qty>0=%s qty=0=%s skipped_missing_id=%s elapsed=%.2fs",
+            stock_stats.requested_goods,
+            stock_stats.successful_goods,
+            stock_stats.failed_goods,
+            stock_stats.non_200_goods,
+            stock_stats.exception_goods,
+            stock_stats.positive_qty_goods,
+            stock_stats.zero_qty_goods,
+            stock_stats.skipped_missing_id_goods,
+            time.monotonic() - stock_fetch_started_at,
+        )
+        if stock_stats.failed_goods > 0:
+            logger.warning(
+                "Vetmanager stock fetch degraded: failed=%s non_200=%s exceptions=%s requested=%s",
+                stock_stats.failed_goods,
+                stock_stats.non_200_goods,
+                stock_stats.exception_goods,
+                stock_stats.requested_goods,
+            )
+        if stock_stats.positive_qty_goods == 0:
+            logger.warning(
+                "Vetmanager stock fetch returned zero positive goods: requested=%s zero_qty=%s",
+                stock_stats.requested_goods,
+                stock_stats.zero_qty_goods,
+            )
 
         # 3) Сборка stock с ценой из каталога (по clinic_id из store_id[0])
-        stock = build_stock(branches, goods, qty_by_good, preferred_clinic_id, logger)
+        stock_build_started_at = time.monotonic()
+        stock = build_stock(branches, goods, qty_by_good, store_mapping.preferred_clinic_id, logger)
+        logger.info(
+            "phase summary [stock_build]: positive_goods=%s branches=%s stock_rows=%s elapsed=%.2fs",
+            len(qty_by_good),
+            len(branches),
+            len(stock),
+            time.monotonic() - stock_build_started_at,
+        )
 
-        out_dir = f"temp/{enterprise_code}"
-        ensure_dir(out_dir)
-        final = os.path.join(out_dir, "stock.json")
-        with open(final, "w", encoding="utf-8") as f:
-            json.dump(stock, f, ensure_ascii=False, indent=2)
+        final = save_json_payload(stock, enterprise_code, "stock")
         await send_stock_data(final, enterprise_code)
+        logger.info(
+            "run summary: type=%s branches=%s fetched_goods=%s filtered_goods=%s stock_positive_goods=%s stock_rows=%s elapsed=%.2fs",
+            file_type,
+            len(branches),
+            len(all_goods),
+            len(goods),
+            len(qty_by_good),
+            len(stock),
+            time.monotonic() - run_started_at,
+        )
         logger.info("DONE stock")
 
     logger.info("FINISH run_service")

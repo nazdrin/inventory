@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from asyncio import sleep
 import logging
 import os
 from dataclasses import dataclass
@@ -18,11 +19,15 @@ SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необх�
 
 # Импорт для cancelled-orders API
 from app.business.cancelled_orders_fetcher import get_cancelled_orders, acknowledge_cancelled_orders
-from app.business.supplier_identity import SUPPLIERLIST_MAP
+from app.business.supplier_identity import (
+    SUPPLIERLIST_MAP,
+    get_supplier_display_name_by_code,
+    get_supplier_id_by_code,
+)
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
-from app.models import Offer, DropshipEnterprise, CatalogMapping, EnterpriseSettings
+from app.models import Offer, DropshipEnterprise, CatalogMapping, CatalogSupplierMapping, EnterpriseSettings, MasterCatalog
 import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
@@ -37,6 +42,8 @@ logger = logging.getLogger(__name__)
 _LOG_LEVEL = os.getenv("ORDER_SENDER_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
 VERBOSE_SD_LOGS = os.getenv("ORDER_SENDER_VERBOSE_SALESDRIVE_LOGS", "0") == "1"
+SALESDRIVE_RETRY_ATTEMPTS = max(1, int(os.getenv("SALESDRIVE_RETRY_ATTEMPTS", "3")))
+SALESDRIVE_RETRY_DELAY_SEC = max(0.0, float(os.getenv("SALESDRIVE_RETRY_DELAY_SEC", "2")))
 
 
 # Глобальный допуск по цене для поиска поставщика
@@ -71,6 +78,9 @@ SUPPLIER_CITY_TAG_MAP = {
     "D11": "Київ",
     "D12": "Київ",
 }
+
+D14_SUPPLIER_CODE = "D14"
+D14_SALESDRIVE_STOCK_ID = 2
 
 def _notify_business(msg: str) -> None:
     try:
@@ -110,61 +120,118 @@ async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
         "X-Api-Key": api_key,
     }
 
+    last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=15) as client:
-        try:
+        for attempt in range(1, SALESDRIVE_RETRY_ATTEMPTS + 1):
             if VERBOSE_SD_LOGS:
                 logger.info("📦 Payload для SalesDrive:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
 
-            response = await client.post(url, json=payload, headers=headers)
+            try:
+                response = await client.post(url, json=payload, headers=headers)
 
-            # In prod (default) keep logs compact; in test (verbose) log full response body.
-            logger.info(
-                "📤 SalesDrive POST /handler/ status=%s externalId=%s",
-                response.status_code,
-                payload.get("externalId"),
-            )
-            if VERBOSE_SD_LOGS:
-                logger.info("📨 Ответ от SalesDrive: %s", response.text)
-            else:
-                logger.debug("📨 SalesDrive response (truncated): %.2000s", response.text)
-            response.raise_for_status()
-        except httpx.RequestError as e:
-            err_msg = f"❌ Помилка підключення до SalesDrive: {e}"
-            logger.error(err_msg)
-            try:
-                send_notification(err_msg, "Business")
-            except Exception:
-                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (RequestError)")
-        except httpx.HTTPStatusError as e:
-            err_msg = f"❌ HTTP-помилка від SalesDrive: {e.response.status_code} — {e.response.text}"
-            logger.error(err_msg)
-            try:
-                send_notification(err_msg, "Business")
-            except Exception:
-                logger.exception("Не удалось отправить уведомление об ошибке SalesDrive (HTTPStatusError)")
+                logger.info(
+                    "📤 SalesDrive POST /handler/ attempt=%s/%s status=%s externalId=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    response.status_code,
+                    payload.get("externalId"),
+                )
+                if VERBOSE_SD_LOGS:
+                    logger.info("📨 Ответ от SalesDrive: %s", response.text)
+                else:
+                    logger.debug("📨 SalesDrive response (truncated): %.2000s", response.text)
+                response.raise_for_status()
+                return
+            except httpx.RequestError as e:
+                last_error = e
+                logger.warning(
+                    "SalesDrive request error attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    e,
+                )
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                logger.warning(
+                    "SalesDrive HTTP error attempt=%s/%s externalId=%s status=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    e.response.status_code,
+                )
+
+            if attempt < SALESDRIVE_RETRY_ATTEMPTS:
+                await sleep(SALESDRIVE_RETRY_DELAY_SEC)
+
+    err_msg = (
+        f"❌ SalesDrive send failed after {SALESDRIVE_RETRY_ATTEMPTS} attempts | "
+        f"externalId={payload.get('externalId')} | err={last_error}"
+    )
+    logger.error(err_msg)
+    try:
+        send_notification(err_msg, "Business")
+    except Exception:
+        logger.exception("Не удалось отправить уведомление об ошибке SalesDrive")
+    raise RuntimeError(err_msg) from last_error
 
 # --- HELPER для обновления заявки в SalesDrive через /api/order/update/
-async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> Optional[httpx.Response]:
+async def _salesdrive_update_order(update_url: str, api_key: str, payload: Dict[str, Any]) -> tuple[Optional[httpx.Response], bool]:
     """
     Обновление заявки в SalesDrive через /api/order/update/.
     Требует X-Api-Key. update_url — полный URL до /api/order/update/.
     payload — тело запроса с externalId и data.
-    Возвращает httpx.Response или None при сетевой/HTTP ошибке.
+    Возвращает (response, should_acknowledge).
+    Для HTTP 422 считаем ошибку терминальной и возвращаем should_acknowledge=True без retry.
     """
     headers = {
         "accept": "application/json",
         "Content-Type": "application/json",
         "X-Api-Key": api_key,
     }
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(update_url, json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp
-    except httpx.RequestError:
-        return None
-    except httpx.HTTPStatusError:
-        return None
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(timeout=20) as client:
+        for attempt in range(1, SALESDRIVE_RETRY_ATTEMPTS + 1):
+            try:
+                resp = await client.post(update_url, json=payload, headers=headers)
+                resp.raise_for_status()
+                return resp, True
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status_code = exc.response.status_code if exc.response is not None else None
+                response_text = exc.response.text if exc.response is not None else ""
+                if status_code == 422:
+                    logger.info(
+                        "SalesDrive update skipped as terminal 422: externalId=%s body=%s",
+                        payload.get("externalId"),
+                        response_text[:1000],
+                    )
+                    return None, True
+                logger.warning(
+                    "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    exc,
+                )
+            except httpx.RequestError as exc:
+                last_error = exc
+                logger.warning(
+                    "SalesDrive update retry attempt=%s/%s externalId=%s err=%s",
+                    attempt,
+                    SALESDRIVE_RETRY_ATTEMPTS,
+                    payload.get("externalId"),
+                    exc,
+                )
+                if attempt < SALESDRIVE_RETRY_ATTEMPTS:
+                    await sleep(SALESDRIVE_RETRY_DELAY_SEC)
+    logger.error(
+        "SalesDrive update failed after %s attempts | externalId=%s | err=%s",
+        SALESDRIVE_RETRY_ATTEMPTS,
+        payload.get("externalId"),
+        last_error,
+    )
+    return None, False
 
 def _as_decimal(x: Any) -> Decimal:
     if isinstance(x, Decimal):
@@ -244,7 +311,12 @@ async def _fetch_supplier_name(session: AsyncSession, supplier_code: str) -> Opt
         .limit(1)
     )
     res = await session.execute(q)
-    return res.scalar_one_or_none()
+    db_name = res.scalar_one_or_none()
+    return db_name or get_supplier_display_name_by_code(supplier_code)
+
+
+def _is_d14_supplier(supplier_code: Optional[str]) -> bool:
+    return str(supplier_code or "").strip().upper() == D14_SUPPLIER_CODE
 async def _get_supplier_priority(session: AsyncSession, supplier_code: str) -> int:
     q = select(DropshipEnterprise.priority).where(DropshipEnterprise.code == str(supplier_code)).limit(1)
     res = await session.execute(q)
@@ -614,8 +686,67 @@ async def _fetch_sku_from_catalog_mapping(
     res = await session.execute(q)
     return res.scalar_one_or_none()
 
-# NEW: fetch barcode and supplier item code from CatalogMapping
-from typing import Optional, Tuple
+
+def _use_master_mapping_for_orders() -> bool:
+    return os.getenv("USE_MASTER_MAPPING_FOR_STOCK", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _fetch_sku_from_master_mapping(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Optional[str]:
+    supplier_id = get_supplier_id_by_code(supplier_code)
+    if not supplier_id:
+        return None
+
+    row = (
+        await session.execute(
+            select(CatalogSupplierMapping.supplier_code)
+            .where(
+                CatalogSupplierMapping.sku == str(goods_code),
+                CatalogSupplierMapping.supplier_id == supplier_id,
+                CatalogSupplierMapping.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row
+
+
+async def _fetch_barcode_and_supplier_code_master(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    supplier_id = get_supplier_id_by_code(supplier_code)
+    if not supplier_id:
+        return (None, None, None)
+
+    row = (
+        await session.execute(
+            select(
+                MasterCatalog.barcode,
+                CatalogSupplierMapping.supplier_code,
+                CatalogSupplierMapping.supplier_product_name_raw,
+                CatalogSupplierMapping.barcode,
+            )
+            .join(MasterCatalog, MasterCatalog.sku == CatalogSupplierMapping.sku)
+            .where(
+                CatalogSupplierMapping.sku == str(goods_code),
+                CatalogSupplierMapping.supplier_id == supplier_id,
+                CatalogSupplierMapping.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).first()
+    if not row:
+        return (None, None, None)
+
+    master_barcode, supplier_item_code, supplier_item_name, mapping_barcode = row
+    return (
+        master_barcode or mapping_barcode,
+        supplier_item_code,
+        supplier_item_name,
+    )
+
+
 async def _fetch_barcode_and_supplier_code(
     session: AsyncSession, goods_code: str, supplier_code: str
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -638,6 +769,26 @@ async def _fetch_barcode_and_supplier_code(
     if not row:
         return (None, None, None)
     return (row[0], row[1], row[2])
+
+
+async def _fetch_sku_for_order_line(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Optional[str]:
+    if _use_master_mapping_for_orders():
+        master_value = await _fetch_sku_from_master_mapping(session, goods_code, supplier_code)
+        if master_value:
+            return master_value
+    return await _fetch_sku_from_catalog_mapping(session, goods_code, supplier_code)
+
+
+async def _fetch_barcode_and_supplier_code_for_order_line(
+    session: AsyncSession, goods_code: str, supplier_code: str
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    if _use_master_mapping_for_orders():
+        master_row = await _fetch_barcode_and_supplier_code_master(session, goods_code, supplier_code)
+        if any(master_row):
+            return master_row
+    return await _fetch_barcode_and_supplier_code(session, goods_code, supplier_code)
 
 
 def _build_novaposhta_block(d: Dict[str, str]) -> Dict[str, Any]:
@@ -760,8 +911,8 @@ async def process_cancelled_orders_service(
             },
         }
 
-        resp = await _salesdrive_update_order(update_url, api_key, payload)
-        if resp is not None:
+        resp, should_ack = await _salesdrive_update_order(update_url, api_key, payload)
+        if should_ack:
             acknowledged_ids.append(ext_id)
 
     if acknowledged_ids:
@@ -860,6 +1011,7 @@ async def _initiate_refusal_stub(order: Dict[str, Any], reason: str, enterprise_
                 tabletki_login=tabletki_login,
                 tabletki_password=tabletki_password,
                 cancel_reason=cancel_reason_code,
+                enterprise_code=enterprise_code,
             )
             logger.info(
                 "✅ Отказ отправлен: id=%s, enterprise=%s, reason=%r → code=%s",
@@ -1036,8 +1188,8 @@ async def _build_products_block(
         effective_supplier_name: Optional[str] = None
         if effective_supplier_code:
             # SKU/Barcode/Code/Name тянем по поставщику конкретной строки
-            sku = await _fetch_sku_from_catalog_mapping(session, r.goodsCode, effective_supplier_code)
-            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code(
+            sku = await _fetch_sku_for_order_line(session, r.goodsCode, effective_supplier_code)
+            barcode, supplier_item_code, supplier_item_name = await _fetch_barcode_and_supplier_code_for_order_line(
                 session, r.goodsCode, effective_supplier_code
             )
             # Имя поставщика тоже подтягиваем (для отображения в description)
@@ -1045,19 +1197,28 @@ async def _build_products_block(
 
         description = str(supplier_item_code) if supplier_item_code else ""
 
-        products.append(
-            {
-                "id": r.goodsCode,
-                "name": display_name,
-                "costPerItem": str(r.price),  # исх. цена позиции
-                "amount": str(r.qty),
-                "expenses": "0",
-                "description": description,
-                "barcode": str(barcode) if barcode else "",
-                "discount": "",
-                "sku": str(r.goodsCode),
-            }
-        )
+        product_payload = {
+            "id": r.goodsCode,
+            "name": display_name,
+            "costPerItem": str(r.price),  # исх. цена позиции
+            "amount": str(r.qty),
+            "expenses": "0",
+            "description": description,
+            "barcode": str(barcode) if barcode else "",
+            "discount": "",
+            "sku": str(r.goodsCode),
+        }
+
+        if _is_d14_supplier(effective_supplier_code):
+            product_payload["stockId"] = D14_SALESDRIVE_STOCK_ID
+            logger.info(
+                "SalesDrive line stockId override applied: goodsCode=%s supplier=%s stockId=%s",
+                r.goodsCode,
+                effective_supplier_code,
+                D14_SALESDRIVE_STOCK_ID,
+            )
+
+        products.append(product_payload)
     return products
 
 
@@ -1196,6 +1357,12 @@ async def build_salesdrive_payload(
     supplierlist_val = ""
     if supplier_code:
         supplierlist_val = SUPPLIERLIST_MAP.get(str(supplier_code), "")
+        if _is_d14_supplier(supplier_code):
+            logger.info(
+                "SalesDrive supplier recognized as D14: supplier_code=%s supplierlist=%s",
+                supplier_code,
+                supplierlist_val,
+            )
 
     supplier_city_tag = ""
     if supplier_code:
@@ -1224,7 +1391,7 @@ async def build_salesdrive_payload(
         "sajt": str(branch or ""),
         "externalId": order.get("id", ""),
         "organizationId": "1",
-        "stockId": "",
+        "stockId": D14_SALESDRIVE_STOCK_ID if _is_d14_supplier(supplier_code) else "",
         "novaposhta": _build_novaposhta_block(d),
         "ukrposhta": _build_ukrposhta_block(d),
         "meest": _build_meest_block(d),
@@ -1239,6 +1406,13 @@ async def build_salesdrive_payload(
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
         "supplierlist": supplierlist_val,
     }
+    if _is_d14_supplier(supplier_code):
+        logger.info(
+            "SalesDrive root stockId override applied: externalId=%s supplier=%s stockId=%s",
+            order.get("id", ""),
+            supplier_code,
+            D14_SALESDRIVE_STOCK_ID,
+        )
     return payload
 
 
@@ -1313,14 +1487,10 @@ async def process_and_send_order(
                 # 2) Нет поставщика в допуске 10 копеек — ищем ближайшего по цене
                 nearest = await _find_nearest_supplier_by_price(session, r.goodsCode, r.price)
                 if nearest:
-                    supplier_code, supplier_price = nearest
+                    supplier_code, _supplier_price = nearest
                     supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
-                    # supplier заполняем, в comment предупреждение
-                    comment_override = (
-                        "⚠️ Ціна постачальника відрізняється від ціни в замовленні: "
-                        f"постачальник {supplier_name}, ціна постачальника {supplier_price}, "
-                        f"ціна в замовленні {r.price}."
-                    )
+                    # supplier заполняем именем поставщика
+                    comment_override = supplier_name
                 else:
                     # 3) Вообще нет офферов этого товара — supplier пустой, comment с предупреждением
                     supplier_code = None

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from dotenv import load_dotenv
 from app.services.database_service import process_database_service
 import chardet
@@ -35,6 +36,7 @@ async def process_jetvet_stock(
     Обработка CSV-файла JetVet остатков и сохранение в JSON.
     """
     try:
+        started_at = time.monotonic()
         encoding = detect_encoding(file_path)
         logging.info(f"Определена кодировка файла: {encoding}")
 
@@ -44,6 +46,7 @@ async def process_jetvet_stock(
         logging.info(f"Загружено строк из файла: {len(df)}")
 
         items = []
+        skipped_rows = 0
 
         for _, row in df.iterrows():
             code = (row.get("code") or row.get("id", "")).strip()
@@ -56,10 +59,12 @@ async def process_jetvet_stock(
                 qty_int = int(round(qty_float))
             except ValueError:
                 logging.warning(f"Пропущена строка из-за ошибки преобразования: {row.to_dict()}")
+                skipped_rows += 1
                 continue
 
             if not code:
                 logging.warning(f"Пропущена строка без кода: {row.to_dict()}")
+                skipped_rows += 1
                 continue
 
             item = {
@@ -70,6 +75,15 @@ async def process_jetvet_stock(
                 "price_reserve": price_float
             }
             items.append(item)
+
+        logging.info(
+            "JetVet stock parse summary: enterprise_code=%s branch=%s encoding=%s transformed=%s skipped=%s",
+            enterprise_code,
+            branch,
+            encoding,
+            len(items),
+            skipped_rows,
+        )
 
         if not items:
             logging.warning(f"Пустой результат при обработке остатков JetVet для {enterprise_code}")
@@ -84,6 +98,14 @@ async def process_jetvet_stock(
 
         logging.info(f"Остатки JetVet успешно сконвертированы и сохранены: {output_path}")
         await process_database_service(output_path, file_type, enterprise_code)
+        logging.info(
+            "JetVet stock converter run summary: enterprise_code=%s branch=%s records=%s elapsed=%.2fs",
+            enterprise_code,
+            branch,
+            len(items),
+            time.monotonic() - started_at,
+        )
 
     except Exception as e:
         logging.error(f"Ошибка при обработке JetVet остатков: {str(e)}")
+        raise

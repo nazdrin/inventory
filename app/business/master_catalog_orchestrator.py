@@ -18,6 +18,10 @@ from app.business.d10_barcode_mapping_sync import sync_d10_supplier_mapping_by_b
 from app.business.d10_content_sync import sync_d10_content
 from app.business.d10_images_sync import sync_d10_images
 from app.business.d10_master_feed_loader import load_d10_raw_supplier_feed
+from app.business.d13_barcode_mapping_sync import sync_d13_supplier_mapping_by_barcode
+from app.business.d13_content_sync import sync_d13_content
+from app.business.d13_images_sync import sync_d13_images
+from app.business.d13_master_feed_loader import load_d13_raw_supplier_feed
 from app.business.d11_barcode_mapping_sync import sync_d11_supplier_mapping_by_barcode
 from app.business.d11_master_feed_loader import load_d11_raw_supplier_feed
 from app.business.d12_barcode_mapping_sync import sync_d12_supplier_mapping_by_barcode
@@ -48,11 +52,13 @@ from app.business.d9_master_feed_loader import sync_d9_master_feed
 from app.business.master_archive_import import import_master_archive
 from app.business.master_catalog_coverage_report import build_master_catalog_coverage_report
 from app.business.master_content_fallback_d10_select import select_d10_fallback_content
+from app.business.master_content_fallback_d13_select import select_d13_fallback_content
 from app.business.master_content_fallback_d2_select import select_d2_fallback_content
 from app.business.master_content_fallback_d3_select import select_d3_fallback_content
 from app.business.master_content_fallback_d5_select import select_d5_fallback_content
 from app.business.master_content_select import select_master_content
 from app.business.master_images_fallback_d10_select import select_d10_fallback_main_images
+from app.business.master_images_fallback_d13_select import select_d13_fallback_main_images
 from app.business.master_images_fallback_d2_select import select_d2_fallback_main_images
 from app.business.master_images_fallback_d3_select import select_d3_fallback_main_images
 from app.business.master_images_fallback_d5_select import select_d5_fallback_main_images
@@ -146,6 +152,10 @@ def _build_suppliers_steps() -> List[Dict[str, Any]]:
         _make_step("d10_barcode_mapping_sync", lambda: sync_d10_supplier_mapping_by_barcode(limit=0)),
         _make_step("d10_images_sync", lambda: sync_d10_images(limit=0)),
         _make_step("d10_content_sync", lambda: sync_d10_content(limit=0)),
+        _make_step("d13_master_feed_loader", lambda: load_d13_raw_supplier_feed(limit=0)),
+        _make_step("d13_barcode_mapping_sync", lambda: sync_d13_supplier_mapping_by_barcode(limit=0)),
+        _make_step("d13_images_sync", lambda: sync_d13_images(limit=0)),
+        _make_step("d13_content_sync", lambda: sync_d13_content(limit=0)),
     ]
 
 
@@ -161,6 +171,8 @@ def _build_selection_steps() -> List[Dict[str, Any]]:
         _make_step("master_content_fallback_d5_select", select_d5_fallback_content),
         _make_step("master_images_fallback_d10_select", select_d10_fallback_main_images),
         _make_step("master_content_fallback_d10_select", select_d10_fallback_content),
+        _make_step("master_images_fallback_d13_select", select_d13_fallback_main_images),
+        _make_step("master_content_fallback_d13_select", select_d13_fallback_content),
     ]
 
 
@@ -209,6 +221,15 @@ def _build_report_steps() -> List[Dict[str, Any]]:
 
 
 def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, limit: int, send: bool, skip_salesdrive: bool, skip_archive: bool, skip_report: bool) -> List[Dict[str, Any]]:
+    if mode == "weekly_enrichment":
+        steps: List[Dict[str, Any]] = []
+        steps.extend(_build_tabletki_steps())
+        steps.extend(_build_suppliers_steps())
+        steps.extend(_build_selection_steps())
+        if not skip_report:
+            steps.extend(_build_report_steps())
+        return steps
+
     if mode == "full":
         steps: List[Dict[str, Any]] = []
         steps.extend(_build_tabletki_steps())
@@ -320,7 +341,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["tabletki", "suppliers", "selection", "archive", "salesdrive", "publish", "report", "full"],
+        choices=["tabletki", "suppliers", "selection", "archive", "salesdrive", "publish", "report", "weekly_enrichment", "full"],
         help="режим запуска orchestration pipeline",
     )
     parser.add_argument(

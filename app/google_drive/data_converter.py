@@ -193,6 +193,9 @@ async def transform_data_types(data, file_type,enterprise_code):
     
     try:
         transformed_data = []
+        seen_catalog_codes = set()
+        skipped_invalid_catalog = 0
+        skipped_duplicate_catalog = 0
         for item in data:
             # Очистка ключей и значений
             item = clean_record_keys_and_values(item)
@@ -207,9 +210,29 @@ async def transform_data_types(data, file_type,enterprise_code):
             transformed_item = {}
 
             if file_type == "catalog":
+                code_value = str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0)))
+                name_value = str(item.get("name", "")).strip()
+                if not code_value or not name_value:
+                    skipped_invalid_catalog += 1
+                    logging.warning(
+                        "Google Drive catalog normalization: enterprise_code=%s skip invalid row code=%s name=%s",
+                        enterprise_code,
+                        code_value or "<empty>",
+                        name_value or "<empty>",
+                    )
+                    continue
+                if code_value in seen_catalog_codes:
+                    skipped_duplicate_catalog += 1
+                    logging.warning(
+                        "Google Drive catalog normalization: enterprise_code=%s skip duplicate code=%s",
+                        enterprise_code,
+                        code_value,
+                    )
+                    continue
+                seen_catalog_codes.add(code_value)
                 transformed_item = {
-                    "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),
-                    "name": str(item.get("name", "")).strip(),
+                    "code": code_value,
+                    "name": name_value,
                     "vat": float(item.get("vat", 0.0)),
                     "producer": str(item.get("producer", "")).strip(),
                     "morion": str(item.get("morion", "")).strip(),
@@ -219,16 +242,38 @@ async def transform_data_types(data, file_type,enterprise_code):
                     "optima": str(item.get("optima", "")).strip(),
                 }
             elif file_type == "stock":
+                price = float(item.get("price", 0))
+                price_reserve = float(item.get("pricereserve", 0))
+                if price_reserve > price:
+                    logging.warning(
+                        "Google Drive stock normalization: enterprise_code=%s code=%s branch=%s price_reserve=%s > price=%s; clamping to price",
+                        enterprise_code,
+                        item.get("code", ""),
+                        item.get("branch", ""),
+                        price_reserve,
+                        price,
+                    )
+                    price_reserve = price
                 transformed_item = {
                     "branch": str(item.get("branch", "")).strip(),
                     "code": str(item.get("code", "")).strip() if isinstance(item.get("code", ""), str) else str(int(item.get("code", 0))),  
-                    "price": float(item.get("price", 0)),
+                    "price": price,
                     "qty": int(item.get("qty", 0)),
-                    "price_reserve": float(item.get("pricereserve", 0))
+                    "price_reserve": price_reserve
                 }
             
             transformed_data.append(transformed_item)
-        logging.info(f"Преобразование типов данных завершено")
+        if file_type == "catalog":
+            logging.info(
+                "Google Drive catalog transform summary: enterprise_code=%s incoming=%s transformed=%s skipped_invalid=%s skipped_duplicates=%s",
+                enterprise_code,
+                len(data),
+                len(transformed_data),
+                skipped_invalid_catalog,
+                skipped_duplicate_catalog,
+            )
+        else:
+            logging.info("Преобразование типов данных завершено")
         return transformed_data
     except Exception as e:
         logging.error(f"Ошибка преобразования типов данных: {str(e)}")

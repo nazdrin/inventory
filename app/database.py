@@ -8,6 +8,7 @@ from .models import Base, DeveloperSettings, InventoryData, InventoryStock, Rese
 from contextlib import asynccontextmanager
 import logging
 DATABASE_URL = os.getenv("DATABASE_URL")
+logger = logging.getLogger(__name__)
 
 # Проверяем, что переменная окружения установлена
 if not DATABASE_URL:
@@ -37,27 +38,34 @@ async def create_tables():
 
 
 @asynccontextmanager
-async def get_async_db():
-    """Контекстный менеджер для управления асинхронной сессией."""
+async def get_async_db(*, commit_on_exit: bool = True):
+    """Контекстный менеджер для управления асинхронной сессией.
+
+    По умолчанию сохраняет историческое поведение с commit на выходе.
+    Для read-only/долгих runtime-сценариев можно передать commit_on_exit=False,
+    чтобы не держать лишнюю commit boundary на завершении контекста.
+    """
     async_session = AsyncSessionLocal()
     try:
-        # logging.info("📡 Создание сессии базы данных")
-
         # Проверяем соединение перед работой
         try:
             await async_session.execute(text("SELECT 1"))
         except Exception:
-            logging.warning("🔴 Соединение с БД потеряно, пересоздаём сессию...")
+            logger.warning("🔴 Соединение с БД потеряно при открытии сессии, выполняется rollback")
             await async_session.rollback()
             yield async_session
             return
 
         yield async_session  # Позволяет использовать `async with get_async_db() as db:`
-        await async_session.commit()
+        if commit_on_exit:
+            logger.debug("DB session commit on exit")
+            await async_session.commit()
     except Exception as e:
-        await async_session.rollback()  # Откат зависших транзакций
-        logging.error(f"🔥 Ошибка в сессии БД: {e}")
+        try:
+            await async_session.rollback()  # Откат зависших транзакций
+        except Exception as rollback_error:
+            logger.error("🔥 Ошибка rollback в сессии БД: %s", rollback_error)
+        logger.error(f"🔥 Ошибка в сессии БД: {e}")
         raise
     finally:
         await async_session.close()
-        # logging.info("✅ Сессия базы данных закрыта")

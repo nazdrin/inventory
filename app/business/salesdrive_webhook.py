@@ -12,7 +12,7 @@ from sqlalchemy.future import select
 # Импорты из проекта
 from app.database import get_async_db, EnterpriseSettings
 from app.models import MappingBranch
-from app.services.order_sender import send_orders_to_tabletki
+from app.services.order_sender import process_due_tabletki_cancel_retries, send_orders_to_tabletki
 from app.services.send_TTN import send_ttn  # async def send_ttn(...) -> bool
 from app.services.telegram_bot import notify_call_request
 
@@ -153,6 +153,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
 
     order_obj = {
         "id": external_id,
+        "tabletkiOrder": str(data.get("tabletkiOrder") or data.get("TabletkiOrder") or ""),
         "statusID": mapped_status,
         "branchID": str(branch_value) if branch_value is not None else "",
         "rows": _build_order_rows(products),
@@ -171,6 +172,9 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
             logger.error("⛔ tabletki_login/password не найдены для enterprise_code=%s", enterprise_code)
             return
         tabletki_login, tabletki_password = creds
+        retry_stats = await process_due_tabletki_cancel_retries(session, enterprise_code=enterprise_code)
+        if retry_stats["due_found"]:
+            logger.info("Processed due Tabletki cancel retries from webhook path: %s", retry_stats)
 
         # === Отправка подтверждения / отказа ===
         if status_in in (4, 10, 16):
@@ -181,7 +185,8 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
                     orders=orders,
                     tabletki_login=tabletki_login,
                     tabletki_password=tabletki_password,
-                    cancel_reason=1
+                    cancel_reason=1,
+                    enterprise_code=enterprise_code,
                 )
                 logger.info("✅ Подтверждение: id=%s, status_in=%s → statusID=%s, enterprise=%s",
                             external_id, status_in, mapped_status, enterprise_code)
@@ -203,7 +208,8 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
                     orders=orders,
                     tabletki_login=tabletki_login,
                     tabletki_password=tabletki_password,
-                    cancel_reason=cancel_reason
+                    cancel_reason=cancel_reason,
+                    enterprise_code=enterprise_code,
                 )
                 logger.info("✅ Отказ: id=%s, status_in=6 → statusID=%s, reason=%s, enterprise=%s",
                             external_id, mapped_status, cancel_reason, enterprise_code)

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import developerApi from "../api/developerApi";
 import Form from "../components/Form";
 
 const DeveloperPanel = ({ authUser }) => {
+    const navigate = useNavigate();
     const [currentSetting, setCurrentSetting] = useState(null);
     const [editing, setEditing] = useState(false);
     const [error, setError] = useState(null);
-    const [dataFormats, setDataFormats] = useState([]);
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -39,20 +40,8 @@ const DeveloperPanel = ({ authUser }) => {
             }
         };
 
-        const fetchDataFormats = async () => {
-            try {
-                console.log("📌 Запрашиваем форматы данных...");
-                const formats = await developerApi.getDataFormats();
-                console.log("✅ Получены форматы данных:", formats);
-                setDataFormats(formats);
-            } catch (err) {
-                console.error("❌ Ошибка загрузки форматов данных:", err);
-            }
-        };
-
         fetchSettings();
-        fetchDataFormats();
-    }, []);
+    }, [authUser.developer_login]);
 
     useEffect(() => {
         console.log("📌 Обновление currentSetting:", currentSetting);
@@ -74,17 +63,6 @@ const DeveloperPanel = ({ authUser }) => {
         } catch (err) {
             console.error("❌ Ошибка при сохранении настроек:", err);
             setError("Failed to save the settings. Please check the input and try again.");
-        }
-    };
-
-    const handleAddDataFormat = async (newFormat) => {
-        try {
-            console.log("📌 Добавляем новый формат:", newFormat);
-            await developerApi.addDataFormat(newFormat);
-            const formats = await developerApi.getDataFormats();
-            setDataFormats(formats);
-        } catch (err) {
-            console.error("❌ Ошибка добавления формата:", err);
         }
     };
 
@@ -166,28 +144,34 @@ const DeveloperPanel = ({ authUser }) => {
                             onSubmit={handleSave}
                         />
                     )}
-                    <div>
-                        <h2>Data Formats</h2>
-                        <ul>
-                            {dataFormats.map((format) => (
-                                <li key={format.id}>{format.format_name}</li>
-                            ))}
-                        </ul>
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                const newFormat = e.target.newFormat.value.trim();
-                                if (newFormat) {
-                                    handleAddDataFormat({ format_name: newFormat });
-                                    e.target.reset();
-                                }
+                    <div
+                        style={{
+                            marginTop: "24px",
+                            backgroundColor: "#ffffff",
+                            border: "1px solid #ddd",
+                            borderRadius: "8px",
+                            padding: "20px",
+                        }}
+                    >
+                        <h2 style={{ marginTop: 0 }}>Форматы данных</h2>
+                        <p style={{ color: "#555", lineHeight: 1.5 }}>
+                            Реестр форматов вынесен в отдельную поверхность. Developer Panel больше не является
+                            основным экраном для управления registry форматов.
+                        </p>
+                        <button
+                            onClick={() => navigate("/formats")}
+                            style={{
+                                padding: "10px 16px",
+                                backgroundColor: "#2563eb",
+                                color: "white",
+                                border: "none",
+                                borderRadius: "6px",
+                                cursor: "pointer",
+                                fontWeight: "bold",
                             }}
-                            style={{ display: "flex", alignItems: "center", marginTop: "20px" }}
                         >
-                            <label htmlFor="newFormat">Add New Format:</label>
-                            <input id="newFormat" name="newFormat" type="text" />
-                            <button type="submit">Add</button>
-                        </form>
+                            Открыть реестр форматов
+                        </button>
                     </div>
                 </div>
             </div>

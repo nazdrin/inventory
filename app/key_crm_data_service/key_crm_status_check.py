@@ -76,7 +76,14 @@ async def check_statuses_key_crm(order: dict, enterprise_code: str, branch: str)
                     order["statusID"] = mapped_status
                     logging.info(f"📦 Підготовка до надсилання замовлення з товарами: {order['rows']}")
 
-                    await send_orders_to_tabletki(session, [order], enterprise.tabletki_login, enterprise.tabletki_password,cancel_reason=cancel_reason,)
+                    await send_orders_to_tabletki(
+                        session,
+                        [order],
+                        enterprise.tabletki_login,
+                        enterprise.tabletki_password,
+                        cancel_reason=cancel_reason,
+                        enterprise_code=enterprise_code,
+                    )
                     logging.info(f"✅ Оновлений статус до {mapped_status} та надіслано в Tabletki.ua")
                 else:
                     logging.info(f"ℹ️ Статус продавця ({seller_status_group_id}) не вищий за наш ({order['statusID']}), оновлення не потрібно")

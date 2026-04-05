@@ -3,7 +3,6 @@ import logging
 import json
 import aiohttp
 from sqlalchemy.future import select
-import asyncio
 from datetime import datetime, timezone
 import pytz
 from app.database import get_async_db, DeveloperSettings, EnterpriseSettings
@@ -31,7 +30,13 @@ async def save_stock_log(enterprise_code: str, formatted_json: dict):
     except Exception as e:
         logging.error(f"Failed to save stock JSON log for enterprise_code={enterprise_code}: {str(e)}")
 
-async def process_stock_file(enterprise_code: str, stock_file: list):
+async def process_stock_file(
+    enterprise_code: str,
+    stock_file: list,
+    *,
+    enterprise_settings: EnterpriseSettings | None = None,
+    developer_settings: DeveloperSettings | None = None,
+):
     """Форматирует данные и отправляет их на API."""
 
     if not stock_file:
@@ -42,63 +47,67 @@ async def process_stock_file(enterprise_code: str, stock_file: list):
         logging.error(f"Invalid type for enterprise_code: {type(enterprise_code)}. Converting to string.")
         enterprise_code = str(enterprise_code)
 
-    async with get_async_db() as db:
-        try:
-            query = select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
-            result = await db.execute(query)
-            enterprise_settings = result.scalar_one_or_none()
+    try:
+        if enterprise_settings is None or developer_settings is None:
+            async with get_async_db(commit_on_exit=False) as db:
+                if enterprise_settings is None:
+                    query = select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == enterprise_code)
+                    result = await db.execute(query)
+                    enterprise_settings = result.scalar_one_or_none()
 
-            if not enterprise_settings:
-                logging.error(f"No settings found for enterprise_code={enterprise_code}")
-                send_notification(f"Нет настроек предприятия для отправки стока {enterprise_code}", enterprise_code)
-                return
+                if developer_settings is None:
+                    result = await db.execute(select(DeveloperSettings).limit(1))
+                    developer_settings = result.scalar_one_or_none()
 
-            # Преобразуем данные в нужный формат
-            branches_data = {}
-            for item in stock_file:
-                item['branch'] = str(int(float(item['branch']))) if isinstance(item['branch'], float) else str(item['branch'])
-                item['code'] = str(int(item['code'])) if isinstance(item['code'], float) else str(item['code'])
+        if not enterprise_settings:
+            logging.error(f"No settings found for enterprise_code={enterprise_code}")
+            send_notification(f"Нет настроек предприятия для отправки стока {enterprise_code}", enterprise_code)
+            return
 
-                branch_code = str(item['branch'])
-                if branch_code not in branches_data:
-                    branches_data[branch_code] = {
-                        "Code": branch_code,
-                        "Rests": [],
-                        "DateTime": datetime.now(timezone.utc).astimezone(local_tz).strftime("%d.%m.%Y %H:%M:%S")
-                    }
+        # Преобразуем данные в нужный формат
+        branches_data = {}
+        for item in stock_file:
+            item['branch'] = str(int(float(item['branch']))) if isinstance(item['branch'], float) else str(item['branch'])
+            item['code'] = str(int(item['code'])) if isinstance(item['code'], float) else str(item['code'])
 
-                branches_data[branch_code]['Rests'].append({
-                    "Code": str(item['code']),
-                    "Price": item['price'],
-                    "Qty": item['qty'],
-                    "PriceReserve": item['price_reserve']
-                })
+            branch_code = str(item['branch'])
+            if branch_code not in branches_data:
+                branches_data[branch_code] = {
+                    "Code": branch_code,
+                    "Rests": [],
+                    "DateTime": datetime.now(timezone.utc).astimezone(local_tz).strftime("%d.%m.%Y %H:%M:%S")
+                }
 
-            formatted_json = {"Branches": list(branches_data.values())}
+            branches_data[branch_code]['Rests'].append({
+                "Code": str(item['code']),
+                "Price": item['price'],
+                "Qty": item['qty'],
+                "PriceReserve": item['price_reserve']
+            })
 
-            await save_stock_log(enterprise_code, formatted_json)
+        formatted_json = {"Branches": list(branches_data.values())}
 
-            result = await db.execute(select(DeveloperSettings).limit(1))
-            developer_settings = result.scalar_one_or_none()
-            if not developer_settings:
-                logging.error("No developer settings found.")
-                send_notification(f"Нет настроек разработчика для отправки стока {enterprise_code}", enterprise_code)
-                return
+        await save_stock_log(enterprise_code, formatted_json)
 
-            endpoint = f"{developer_settings.endpoint_stock}/Import/Rests"
-            login = enterprise_settings.tabletki_login
-            password = enterprise_settings.tabletki_password
+        if not developer_settings:
+            logging.error("No developer settings found.")
+            send_notification(f"Нет настроек разработчика для отправки стока {enterprise_code}", enterprise_code)
+            return
 
-            await send_to_endpoint(endpoint, formatted_json, login, password, enterprise_code)
-            
-            logging.info(f"Stock file for enterprise_code={enterprise_code} processed successfully.")
+        endpoint = f"{developer_settings.endpoint_stock}/Import/Rests"
+        login = enterprise_settings.tabletki_login
+        password = enterprise_settings.tabletki_password
 
-            if developer_settings.message_orders:
-                send_notification(f"✅ Сток успешно отправлен!", enterprise_code)
+        await send_to_endpoint(endpoint, formatted_json, login, password, enterprise_code)
+        
+        logging.info(f"Stock file for enterprise_code={enterprise_code} processed successfully.")
 
-        except Exception as e:
-            logging.exception(f"Error processing stock file for {enterprise_code}: {str(e)}")
-            send_notification(f"Ошибка отправки стока для {enterprise_code}: {str(e)}", enterprise_code)
+        if developer_settings.message_orders:
+            send_notification(f"✅ Сток успешно отправлен!", enterprise_code)
+
+    except Exception as e:
+        logging.exception(f"Error processing stock file for {enterprise_code}: {str(e)}")
+        send_notification(f"Ошибка отправки стока для {enterprise_code}: {str(e)}", enterprise_code)
 
 async def send_to_endpoint(endpoint: str, data: list, login: str, password: str, enterprise_code):
     """Отправляет данные на указанный API-эндпоинт."""

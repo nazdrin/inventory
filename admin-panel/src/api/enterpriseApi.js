@@ -31,6 +31,16 @@ export const getEnterprises = async () => {
     }
 };
 
+export const getEnterpriseViewList = async () => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/enterprise/settings/view`, getAuthHeaders());
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching enterprise view list:", error);
+        throw error;
+    }
+};
+
 // Получить предприятие по коду (защищённый эндпоинт)
 export const getEnterpriseByCode = async (enterpriseCode) => {
     try {
@@ -38,6 +48,16 @@ export const getEnterpriseByCode = async (enterpriseCode) => {
         return response.data;
     } catch (error) {
         console.error("Error fetching enterprise by code:", error);
+        throw error;
+    }
+};
+
+export const getEnterpriseViewDetail = async (enterpriseCode) => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/enterprise/settings/${enterpriseCode}/view`, getAuthHeaders());
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching enterprise view detail:", error);
         throw error;
     }
 };

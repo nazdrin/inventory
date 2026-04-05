@@ -2,8 +2,10 @@
 import os
 import json
 import logging
+import time
 import requests
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 
 from sqlalchemy.future import select
 from app.database import get_async_db
@@ -17,17 +19,28 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_h)
 logger.setLevel(logging.INFO)
+logger.propagate = False
+
+COMBOKEYCRM_YML_URL_TEMPLATE_ENV = "COMBOKEYCRM_YML_URL_TEMPLATE"
+LEGACY_COMBOKEYCRM_FEED_URL = "https://cloud.data-aggregation.com/files/it_baza/products_feed.xml"
 
 
 # ---------- БД ----------
-async def fetch_feed_url(enterprise_code: str) -> str | None:
+async def fetch_feed_source(enterprise_code: str) -> tuple[str | None, str | None]:
     async with get_async_db() as session:
         result = await session.execute(
-            select(EnterpriseSettings.token).where(
+            select(
+                EnterpriseSettings.token,
+                EnterpriseSettings.google_drive_folder_id_rest,
+            ).where(
                 EnterpriseSettings.enterprise_code == enterprise_code
             )
         )
-        return result.scalars().first()
+        row = result.first()
+        if not row:
+            return None, None
+        token, google_drive_folder_id_rest = row
+        return token, google_drive_folder_id_rest
 
 
 async def fetch_branch_by_enterprise_code(enterprise_code: str) -> str:
@@ -53,6 +66,64 @@ def download_feed(url: str) -> str:
     if not text.strip():
         raise RuntimeError("Получен пустой фид")
     return text
+
+
+def _looks_like_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def _get_configured_yml_url_template() -> str:
+    return (os.getenv(COMBOKEYCRM_YML_URL_TEMPLATE_ENV) or "").strip()
+
+
+def resolve_feed_url(token: str | None, public_key: str | None) -> tuple[str, str]:
+    token = (token or "").strip()
+    public_key = (public_key or "").strip()
+    configured_template = _get_configured_yml_url_template()
+
+    if token and _looks_like_url(token):
+        return token, "token_url"
+
+    if configured_template and public_key:
+        return configured_template.format(public_key=public_key), "configured_template_public_key"
+
+    if configured_template and token:
+        return configured_template.format(public_key=token), "configured_template_token_public_key"
+
+    if public_key:
+        return LEGACY_COMBOKEYCRM_FEED_URL, "legacy_public_key_source"
+
+    if token:
+        return LEGACY_COMBOKEYCRM_FEED_URL, "legacy_token_source"
+
+    raise ValueError("URL фида, publicKey или legacy source не найдены")
+
+
+def download_feed_with_fallback(url: str, source_type: str, enterprise_code: str) -> tuple[str, str, str]:
+    try:
+        return download_feed(url), url, source_type
+    except RuntimeError as exc:
+        error_text = str(exc)
+        should_fallback_to_legacy = (
+            source_type in {"configured_template_public_key", "configured_template_token_public_key"}
+            and ("HTTP 401" in error_text or "HTTP 403" in error_text)
+        )
+        if not should_fallback_to_legacy:
+            raise
+        logger.warning(
+            "ComboKeyCRM source failed for enterprise_code=%s source_type=%s url=%s error=%s; falling back to legacy source=%s",
+            enterprise_code,
+            source_type,
+            url,
+            error_text,
+            LEGACY_COMBOKEYCRM_FEED_URL,
+        )
+        return (
+            download_feed(LEGACY_COMBOKEYCRM_FEED_URL),
+            LEGACY_COMBOKEYCRM_FEED_URL,
+            "legacy_fallback_url",
+        )
 
 
 def _safe_float(x, default: float = 0.0) -> float:
@@ -164,25 +235,82 @@ async def run_service(enterprise_code: str, file_type: str) -> str:
     if file_type not in ("catalog", "stock"):
         raise ValueError("Тип файла должен быть 'catalog' или 'stock'")
 
-    url = await fetch_feed_url(enterprise_code)
-    url = "https://cloud.data-aggregation.com/files/it_baza/products_feed.xml"
-    if not url:
-        raise ValueError(f"URL фида не найден для enterprise_code={enterprise_code}")
+    run_started_at = time.monotonic()
+    token, public_key = await fetch_feed_source(enterprise_code)
+    url, source_type = resolve_feed_url(token, public_key)
+    logger.info(
+        "ComboKeyCRM run start: enterprise_code=%s type=%s source_type=%s source_url=%s",
+        enterprise_code,
+        file_type,
+        source_type,
+        url,
+    )
 
-    feed_text = download_feed(url)
+    download_started_at = time.monotonic()
+    feed_text, resolved_url, resolved_source_type = download_feed_with_fallback(url, source_type, enterprise_code)
+    logger.info(
+        "ComboKeyCRM download summary: enterprise_code=%s type=%s source_type=%s source_url=%s bytes=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        resolved_source_type,
+        resolved_url,
+        len(feed_text.encode("utf-8")),
+        time.monotonic() - download_started_at,
+    )
+
+    parse_started_at = time.monotonic()
     raw = parse_xml_feed(feed_text)
+    logger.info(
+        "ComboKeyCRM parse summary: enterprise_code=%s type=%s offers=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        len(raw),
+        time.monotonic() - parse_started_at,
+    )
 
     if file_type == "catalog":
+        transform_started_at = time.monotonic()
         data = transform_catalog(raw)
+        logger.info(
+            "ComboKeyCRM transform summary: enterprise_code=%s type=%s records=%s elapsed=%.2fs",
+            enterprise_code,
+            file_type,
+            len(data),
+            time.monotonic() - transform_started_at,
+        )
         path = save_to_json(data, enterprise_code, "catalog")
         await send_catalog_data(path, enterprise_code)
+        logger.info(
+            "ComboKeyCRM run summary: enterprise_code=%s type=%s records=%s elapsed=%.2fs",
+            enterprise_code,
+            file_type,
+            len(data),
+            time.monotonic() - run_started_at,
+        )
         return path
 
     # stock
     branch = await fetch_branch_by_enterprise_code(enterprise_code)
+    transform_started_at = time.monotonic()
     data = transform_stock(raw, branch)
+    logger.info(
+        "ComboKeyCRM transform summary: enterprise_code=%s type=%s branch=%s records=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        branch,
+        len(data),
+        time.monotonic() - transform_started_at,
+    )
     path = save_to_json(data, enterprise_code, "stock")
     await send_stock_data(path, enterprise_code)
+    logger.info(
+        "ComboKeyCRM run summary: enterprise_code=%s type=%s branch=%s records=%s elapsed=%.2fs",
+        enterprise_code,
+        file_type,
+        branch,
+        len(data),
+        time.monotonic() - run_started_at,
+    )
     return path
 
 
