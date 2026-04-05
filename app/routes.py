@@ -14,7 +14,8 @@ from app import crud, schemas, database
 from app.schemas import (
     EnterpriseSettingsSchema, DeveloperSettingsSchema, DataFormatSchema, 
     MappingBranchSchema, LoginSchema, BranchMappingListItemVM, BranchMappingDetailVM,
-    MappingBranchConstrainedUpdateSchema,
+    MappingBranchConstrainedUpdateSchema, EnterpriseListItemVM, EnterpriseDetailVM,
+    EnterpriseFieldMetaVM, EnterpriseSectionVM,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -114,6 +115,239 @@ def _mapping_overloaded_fields(data_format: str | None, has_google_folder: bool)
 def _mapping_semantics_summary(data_format: str | None, semantic_store_label: str) -> str:
     fmt = (data_format or "").strip() or "unknown format"
     return f"Format={fmt}; store_id should be presented as '{semantic_store_label}' rather than a raw generic storage field."
+
+
+def _enterprise_is_file_related_format(data_format: str | None) -> bool:
+    return (data_format or "").strip() in {
+        "GoogleDrive",
+        "JetVet",
+        "TorgsoftGoogle",
+        "TorgsoftGoogleMulti",
+        "Ftp",
+        "FtpMulti",
+        "FtpZoomagazin",
+        "FtpTabletki",
+    }
+
+
+def _enterprise_has_format_specific_fields(enterprise: EnterpriseSettings) -> bool:
+    return bool(
+        enterprise.single_store
+        or (enterprise.store_serial or "").strip()
+        or (enterprise.google_drive_folder_id_ref or "").strip()
+        or (enterprise.google_drive_folder_id_rest or "").strip()
+    )
+
+
+def _enterprise_field_meta() -> list[EnterpriseFieldMetaVM]:
+    return [
+        EnterpriseFieldMetaVM(key="enterprise_code", label="Код предприятия", field_type="text"),
+        EnterpriseFieldMetaVM(key="enterprise_name", label="Название предприятия", field_type="text"),
+        EnterpriseFieldMetaVM(
+            key="data_format",
+            label="Формат данных",
+            field_type="select",
+            help_text="Формат определяет runtime adapter. Значение Blank остаётся legacy-семантикой для части ingest-flow, а не рекомендуемым способом отключения предприятия.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="branch_id",
+            label="Branch ID",
+            field_type="text",
+            help_text="Используется в export/routing потоках и связан с enterprise-level routing.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="catalog_upload_frequency",
+            label="Частота загрузки каталога",
+            field_type="number",
+        ),
+        EnterpriseFieldMetaVM(
+            key="stock_upload_frequency",
+            label="Частота загрузки остатков",
+            field_type="number",
+        ),
+        EnterpriseFieldMetaVM(
+            key="order_fetcher",
+            label="Получение заказов",
+            field_type="checkbox",
+            help_text="Отдельный toggle заказов. Не заменяет и не описывает отключение catalog/stock ingest.",
+        ),
+        EnterpriseFieldMetaVM(key="tabletki_login", label="Логин Tabletki", field_type="text"),
+        EnterpriseFieldMetaVM(key="tabletki_password", label="Пароль Tabletki", field_type="password"),
+        EnterpriseFieldMetaVM(key="auto_confirm", label="Автоматическое бронирование", field_type="checkbox"),
+        EnterpriseFieldMetaVM(
+            key="discount_rate",
+            label="Размер скидки",
+            field_type="number",
+        ),
+        EnterpriseFieldMetaVM(
+            key="stock_correction",
+            label="Коррекция остатков",
+            field_type="checkbox",
+        ),
+        EnterpriseFieldMetaVM(
+            key="token",
+            label="Токен / URL / ключ подключения",
+            field_type="text",
+            help_text="Универсальное поле подключения. Его смысл зависит от выбранного формата.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="single_store",
+            label="Single Store",
+            field_type="checkbox",
+            help_text="Используется только в части file/google-driven форматов.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="store_serial",
+            label="Store Serial",
+            field_type="text",
+            help_text="Дополнительное file/google-driven поле маршрутизации.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="google_drive_folder_id_ref",
+            label="Google Drive Folder ID для каталога",
+            field_type="text",
+            help_text="Используется только в file/google-driven сценариях.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="google_drive_folder_id_rest",
+            label="Google Drive Folder ID для остатков",
+            field_type="text",
+            help_text="Используется только в file/google-driven сценариях.",
+        ),
+        EnterpriseFieldMetaVM(
+            key="last_stock_upload",
+            label="Последняя загрузка остатков",
+            field_type="datetime",
+            readonly=True,
+        ),
+        EnterpriseFieldMetaVM(
+            key="last_catalog_upload",
+            label="Последняя загрузка каталога",
+            field_type="datetime",
+            readonly=True,
+        ),
+    ]
+
+
+def _enterprise_sections(show_format_fields_block: bool) -> list[EnterpriseSectionVM]:
+    sections = [
+        EnterpriseSectionVM(
+            key="main",
+            title="Основное",
+            field_keys=["enterprise_code", "enterprise_name", "data_format", "branch_id"],
+        ),
+        EnterpriseSectionVM(
+            key="scheduler",
+            title="Расписание",
+            field_keys=["catalog_upload_frequency", "stock_upload_frequency", "order_fetcher"],
+        ),
+        EnterpriseSectionVM(
+            key="orders_export",
+            title="Экспорт и заказы",
+            field_keys=["tabletki_login", "tabletki_password", "auto_confirm", "discount_rate", "stock_correction"],
+        ),
+        EnterpriseSectionVM(
+            key="source",
+            title="Источник / подключение",
+            field_keys=["token"],
+        ),
+    ]
+
+    if show_format_fields_block:
+        sections.append(
+            EnterpriseSectionVM(
+                key="format_fields",
+                title="Дополнительные поля формата",
+                description="Поля показываются только для file/google-driven форматов или если уже заполнены.",
+                collapsible=True,
+                default_open=False,
+                field_keys=[
+                    "single_store",
+                    "store_serial",
+                    "google_drive_folder_id_ref",
+                    "google_drive_folder_id_rest",
+                ],
+            )
+        )
+
+    sections.append(
+        EnterpriseSectionVM(
+            key="runtime",
+            title="Служебная информация",
+            description="Runtime-owned state, обновляется системой и доступен только для просмотра.",
+            collapsible=True,
+            default_open=False,
+            field_keys=["last_stock_upload", "last_catalog_upload"],
+        )
+    )
+    return sections
+
+
+def _enterprise_values(enterprise: EnterpriseSettings) -> dict:
+    return {
+        "enterprise_code": enterprise.enterprise_code,
+        "enterprise_name": enterprise.enterprise_name,
+        "data_format": enterprise.data_format,
+        "branch_id": enterprise.branch_id,
+        "catalog_upload_frequency": enterprise.catalog_upload_frequency,
+        "stock_upload_frequency": enterprise.stock_upload_frequency,
+        "order_fetcher": bool(enterprise.order_fetcher),
+        "tabletki_login": enterprise.tabletki_login,
+        "tabletki_password": enterprise.tabletki_password,
+        "auto_confirm": bool(enterprise.auto_confirm),
+        "discount_rate": enterprise.discount_rate,
+        "stock_correction": bool(enterprise.stock_correction),
+        "token": enterprise.token,
+        "single_store": bool(enterprise.single_store),
+        "store_serial": enterprise.store_serial,
+        "google_drive_folder_id_ref": enterprise.google_drive_folder_id_ref,
+        "google_drive_folder_id_rest": enterprise.google_drive_folder_id_rest,
+        "last_stock_upload": enterprise.last_stock_upload.isoformat() if enterprise.last_stock_upload else None,
+        "last_catalog_upload": enterprise.last_catalog_upload.isoformat() if enterprise.last_catalog_upload else None,
+    }
+
+
+def _build_enterprise_list_vm(enterprises: list[EnterpriseSettings]) -> list[EnterpriseListItemVM]:
+    items: list[EnterpriseListItemVM] = []
+    for enterprise in enterprises:
+        data_format = (enterprise.data_format or "").strip() or None
+        items.append(
+            EnterpriseListItemVM(
+                enterprise_code=enterprise.enterprise_code,
+                enterprise_name=enterprise.enterprise_name,
+                data_format=data_format,
+                branch_id=enterprise.branch_id,
+                catalog_upload_frequency=enterprise.catalog_upload_frequency,
+                stock_upload_frequency=enterprise.stock_upload_frequency,
+                order_fetcher=bool(enterprise.order_fetcher),
+                last_stock_upload=enterprise.last_stock_upload,
+                last_catalog_upload=enterprise.last_catalog_upload,
+                is_blank_format=(data_format == "Blank"),
+                has_format_specific_fields=(
+                    _enterprise_is_file_related_format(data_format)
+                    or _enterprise_has_format_specific_fields(enterprise)
+                ),
+            )
+        )
+    return items
+
+
+def _build_enterprise_detail_vm(enterprise: EnterpriseSettings) -> EnterpriseDetailVM:
+    data_format = (enterprise.data_format or "").strip() or None
+    show_format_fields_block = (
+        _enterprise_is_file_related_format(data_format)
+        or _enterprise_has_format_specific_fields(enterprise)
+    )
+    return EnterpriseDetailVM(
+        enterprise_code=enterprise.enterprise_code,
+        enterprise_name=enterprise.enterprise_name,
+        data_format=data_format,
+        values=_enterprise_values(enterprise),
+        field_meta=_enterprise_field_meta(),
+        sections=_enterprise_sections(show_format_fields_block),
+        show_format_fields_block=show_format_fields_block,
+        show_runtime_block=True,
+    )
 
 
 def _build_mapping_conflict_flags(rows: list[dict]) -> dict[str, list[str]]:
@@ -360,6 +594,17 @@ async def get_all_enterprises(db: AsyncSession = Depends(get_db)):
     enterprises = result.scalars().all()
     return enterprises if enterprises else []
 
+
+@router.get(
+    "/enterprise/settings/view",
+    response_model=List[EnterpriseListItemVM],
+    dependencies=[Depends(verify_token)],
+)
+async def get_all_enterprises_view(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(EnterpriseSettings).order_by(EnterpriseSettings.enterprise_name))
+    enterprises = result.scalars().all()
+    return _build_enterprise_list_vm(enterprises)
+
 @router.get("/enterprise/settings/{enterprise_code}", dependencies=[Depends(verify_token)])
 async def get_enterprise_by_code(enterprise_code: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(EnterpriseSettings).filter(EnterpriseSettings.enterprise_code == enterprise_code))
@@ -367,6 +612,19 @@ async def get_enterprise_by_code(enterprise_code: str, db: AsyncSession = Depend
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
     return EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True)
+
+
+@router.get(
+    "/enterprise/settings/{enterprise_code}/view",
+    response_model=EnterpriseDetailVM,
+    dependencies=[Depends(verify_token)],
+)
+async def get_enterprise_by_code_view(enterprise_code: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(EnterpriseSettings).filter(EnterpriseSettings.enterprise_code == enterprise_code))
+    enterprise = result.scalars().first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Enterprise not found.")
+    return _build_enterprise_detail_vm(enterprise)
 
 @router.post("/enterprise/settings/", dependencies=[Depends(verify_token)])
 async def create_enterprise(settings: EnterpriseSettingsSchema, db: AsyncSession = Depends(get_db)):

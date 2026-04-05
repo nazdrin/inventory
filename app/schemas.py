@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -75,6 +75,48 @@ class EnterpriseSettingsSchema(BaseModel):
 
     class Config:
         from_attributes = True  # Включено для использования from_orm
+
+
+class EnterpriseFieldMetaVM(BaseModel):
+    key: str
+    label: str
+    field_type: str
+    readonly: bool = False
+    help_text: Optional[str] = None
+
+
+class EnterpriseSectionVM(BaseModel):
+    key: str
+    title: str
+    description: Optional[str] = None
+    collapsible: bool = False
+    default_open: bool = True
+    field_keys: List[str] = Field(default_factory=list)
+
+
+class EnterpriseListItemVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+    branch_id: Optional[str] = None
+    catalog_upload_frequency: Optional[int] = None
+    stock_upload_frequency: Optional[int] = None
+    order_fetcher: bool = False
+    last_stock_upload: Optional[datetime] = None
+    last_catalog_upload: Optional[datetime] = None
+    is_blank_format: bool = False
+    has_format_specific_fields: bool = False
+
+
+class EnterpriseDetailVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+    values: Dict[str, Any] = Field(default_factory=dict)
+    field_meta: List[EnterpriseFieldMetaVM] = Field(default_factory=list)
+    sections: List[EnterpriseSectionVM] = Field(default_factory=list)
+    show_format_fields_block: bool = False
+    show_runtime_block: bool = True
 
 
 # Схема таблицы mapping
