@@ -94,6 +94,7 @@ async def get_enterprises_for_stock():
                 {
                     "enterprise_code": enterprise.enterprise_code,
                     "data_format": enterprise.data_format,
+                    "stock_enabled": enterprise.stock_enabled,
                 }
                 for enterprise in enterprises
                 if enterprise.stock_upload_frequency and enterprise.stock_upload_frequency > 0 and
@@ -104,7 +105,7 @@ async def get_enterprises_for_stock():
         await notify_error(f"Ошибка при получении списка предприятий для обновления остатков: {str(e)}")
         return []
 
-async def process_stock_for_enterprise(enterprise_code: str, data_format: str):
+async def process_stock_for_enterprise(enterprise_code: str, data_format: str, stock_enabled: bool = True):
     """
     Запуск соответствующего обработчика стока в зависимости от data_format.
     """
@@ -115,6 +116,13 @@ async def process_stock_for_enterprise(enterprise_code: str, data_format: str):
         data_format,
     )
     try:
+        if stock_enabled is False:
+            logging.info(
+                "Stock scheduler: skip enterprise_code=%s because stock_enabled=false",
+                enterprise_code,
+            )
+            return
+
         processor = PROCESSORS.get(data_format)
         if processor:
             await processor(enterprise_code, "stock")
@@ -161,6 +169,7 @@ async def schedule_stock_tasks():
                 await process_stock_for_enterprise(
                     enterprise_code=str(enterprise["enterprise_code"]),
                     data_format=str(enterprise.get("data_format") or ""),
+                    stock_enabled=(enterprise.get("stock_enabled") is not False),
                 )
 
             logging.info(

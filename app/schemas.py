@@ -62,6 +62,8 @@ class EnterpriseSettingsSchema(BaseModel):
     single_store: Optional[bool] = False
     order_fetcher: Optional[bool] = False
     auto_confirm: Optional[bool] = False
+    catalog_enabled: Optional[bool] = True
+    stock_enabled: Optional[bool] = True
     store_serial: Optional[str] = None  # Серийный номер магазина
     stock_upload_frequency: Optional[int] = None  # Частота загрузки остатков
     catalog_upload_frequency: Optional[int] = None  # Частота загрузки каталога
@@ -101,6 +103,8 @@ class EnterpriseListItemVM(BaseModel):
     branch_id: Optional[str] = None
     catalog_upload_frequency: Optional[int] = None
     stock_upload_frequency: Optional[int] = None
+    catalog_enabled: bool = True
+    stock_enabled: bool = True
     order_fetcher: bool = False
     last_stock_upload: Optional[datetime] = None
     last_catalog_upload: Optional[datetime] = None
@@ -112,6 +116,8 @@ class EnterpriseDetailVM(BaseModel):
     enterprise_code: str
     enterprise_name: str
     data_format: Optional[str] = None
+    catalog_enabled: bool = True
+    stock_enabled: bool = True
     values: Dict[str, Any] = Field(default_factory=dict)
     field_meta: List[EnterpriseFieldMetaVM] = Field(default_factory=list)
     sections: List[EnterpriseSectionVM] = Field(default_factory=list)
