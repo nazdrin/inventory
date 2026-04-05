@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
     createEnterprise,
+    getEnterpriseByCode,
+    getEnterprises,
     getEnterpriseViewDetail,
     getEnterpriseViewList,
     updateEnterprise,
@@ -102,6 +104,8 @@ const DEFAULT_ENTERPRISE_VALUES = {
     branch_id: "",
     catalog_upload_frequency: "",
     stock_upload_frequency: "",
+    catalog_enabled: true,
+    stock_enabled: true,
     order_fetcher: false,
     tabletki_login: "",
     tabletki_password: "",
@@ -130,6 +134,7 @@ const FALLBACK_FIELD_META = [
     { key: "branch_id", label: "Branch ID", field_type: "text", readonly: false, help_text: null },
     { key: "catalog_upload_frequency", label: "Частота загрузки каталога", field_type: "number", readonly: false },
     { key: "stock_upload_frequency", label: "Частота загрузки остатков", field_type: "number", readonly: false },
+    { key: "catalog_stock_enabled", label: "Выгрузка каталога и остатков", field_type: "checkbox", readonly: false, help_text: null },
     {
         key: "order_fetcher",
         label: "Получение заказов",
@@ -166,7 +171,7 @@ const FALLBACK_FIELD_META = [
 const FALLBACK_SECTIONS = [
     { key: "main", title: "Основное", collapsible: false, default_open: true, field_keys: ["enterprise_code", "enterprise_name", "data_format"] },
     { key: "orders_export", title: "Экспорт и заказы", collapsible: false, default_open: true, field_keys: ["tabletki_login", "tabletki_password", "branch_id", "auto_confirm", "discount_rate", "stock_correction", "order_fetcher"] },
-    { key: "scheduler", title: "Расписание", collapsible: false, default_open: true, field_keys: ["catalog_upload_frequency", "stock_upload_frequency"] },
+    { key: "scheduler", title: "Расписание", collapsible: false, default_open: true, field_keys: ["catalog_upload_frequency", "stock_upload_frequency", "catalog_stock_enabled"] },
     { key: "source", title: "Источник / подключение", collapsible: false, default_open: true, field_keys: ["token"] },
     {
         key: "format_fields",
@@ -199,9 +204,72 @@ const formatDateTime = (value) => {
     return date.toLocaleString("uk-UA");
 };
 
+const isFileRelatedFormat = (dataFormat) => {
+    const normalized = String(dataFormat || "").trim();
+    return [
+        "GoogleDrive",
+        "JetVet",
+        "TorgsoftGoogle",
+        "TorgsoftGoogleMulti",
+        "Ftp",
+        "FtpMulti",
+        "FtpZoomagazin",
+        "FtpTabletki",
+    ].includes(normalized);
+};
+
+const hasFormatSpecificFields = (values = {}) => (
+    Boolean(values.single_store)
+    || Boolean(String(values.store_serial || "").trim())
+    || Boolean(String(values.google_drive_folder_id_ref || "").trim())
+    || Boolean(String(values.google_drive_folder_id_rest || "").trim())
+);
+
+const buildFallbackListFromRawEnterprises = (items = []) => items.map((enterprise) => ({
+    enterprise_code: enterprise.enterprise_code,
+    enterprise_name: enterprise.enterprise_name,
+    data_format: enterprise.data_format || null,
+    branch_id: enterprise.branch_id || null,
+    catalog_upload_frequency: enterprise.catalog_upload_frequency ?? null,
+    stock_upload_frequency: enterprise.stock_upload_frequency ?? null,
+    catalog_enabled: enterprise.catalog_enabled !== false,
+    stock_enabled: enterprise.stock_enabled !== false,
+    order_fetcher: Boolean(enterprise.order_fetcher),
+    last_stock_upload: enterprise.last_stock_upload || null,
+    last_catalog_upload: enterprise.last_catalog_upload || null,
+    is_blank_format: String(enterprise.data_format || "").trim() === "Blank",
+    has_format_specific_fields: (
+        isFileRelatedFormat(enterprise.data_format)
+        || hasFormatSpecificFields(enterprise)
+    ),
+}));
+
+const buildFallbackDetailFromRawEnterprise = (enterprise) => ({
+    enterprise_code: enterprise.enterprise_code,
+    enterprise_name: enterprise.enterprise_name,
+    data_format: enterprise.data_format || null,
+    catalog_enabled: enterprise.catalog_enabled !== false,
+    stock_enabled: enterprise.stock_enabled !== false,
+    values: {
+        ...DEFAULT_ENTERPRISE_VALUES,
+        ...enterprise,
+        catalog_enabled: enterprise.catalog_enabled !== false,
+        stock_enabled: enterprise.stock_enabled !== false,
+    },
+    field_meta: FALLBACK_FIELD_META,
+    sections: FALLBACK_SECTIONS,
+    show_format_fields_block: (
+        isFileRelatedFormat(enterprise.data_format)
+        || hasFormatSpecificFields(enterprise)
+    ),
+    show_runtime_block: true,
+});
+
 const normalizeDraftValues = (values = {}) => ({
     ...DEFAULT_ENTERPRISE_VALUES,
     ...values,
+    catalog_enabled: values.catalog_enabled !== false,
+    stock_enabled: values.stock_enabled !== false,
     order_fetcher: Boolean(values.order_fetcher),
     auto_confirm: Boolean(values.auto_confirm),
     stock_correction: Boolean(values.stock_correction),
@@ -237,6 +305,7 @@ const EnterprisePanel = () => {
     const [detailError, setDetailError] = useState("");
     const [saveError, setSaveError] = useState("");
     const [saveSuccess, setSaveSuccess] = useState("");
+    const [showOnlyActive, setShowOnlyActive] = useState(false);
     const [openSections, setOpenSections] = useState({
         format_fields: false,
         runtime: false,
@@ -246,7 +315,14 @@ const EnterprisePanel = () => {
         setListLoading(true);
         setListError("");
         try {
-            const data = await getEnterpriseViewList();
+            let data;
+            try {
+                data = await getEnterpriseViewList();
+            } catch (viewError) {
+                console.error("Error loading enterprise view list, falling back to raw enterprise list:", viewError);
+                const rawEnterprises = await getEnterprises();
+                data = buildFallbackListFromRawEnterprises(rawEnterprises);
+            }
             setEnterpriseList(data);
             if (!selectedEnterpriseCode && data.length > 0 && !isCreating) {
                 setSelectedEnterpriseCode(data[0].enterprise_code);
@@ -283,7 +359,14 @@ const EnterprisePanel = () => {
             setDetailLoading(true);
             setDetailError("");
             try {
-                const data = await getEnterpriseViewDetail(selectedEnterpriseCode);
+                let data;
+                try {
+                    data = await getEnterpriseViewDetail(selectedEnterpriseCode);
+                } catch (viewError) {
+                    console.error("Error loading enterprise view detail, falling back to raw enterprise detail:", viewError);
+                    const rawEnterprise = await getEnterpriseByCode(selectedEnterpriseCode);
+                    data = buildFallbackDetailFromRawEnterprise(rawEnterprise);
+                }
                 setDetailView(data);
                 setDraftValues(normalizeDraftValues(data.values));
                 setOpenSections((prev) => ({
@@ -303,7 +386,16 @@ const EnterprisePanel = () => {
     }, [selectedEnterpriseCode, isCreating]);
 
     const fieldMetaMap = useMemo(() => {
-        const meta = (detailView?.field_meta || FALLBACK_FIELD_META);
+        const backendMeta = detailView?.field_meta || [];
+        const meta = [...backendMeta];
+        const existingKeys = new Set(backendMeta.map((field) => field.key));
+
+        FALLBACK_FIELD_META.forEach((field) => {
+            if (!existingKeys.has(field.key)) {
+                meta.push(field);
+            }
+        });
+
         return meta.reduce((acc, field) => {
             acc[field.key] = field;
             return acc;
@@ -330,7 +422,7 @@ const EnterprisePanel = () => {
             if (section.key === "scheduler") {
                 return {
                     ...section,
-                    field_keys: ["catalog_upload_frequency", "stock_upload_frequency"],
+                    field_keys: ["catalog_upload_frequency", "stock_upload_frequency", "catalog_stock_enabled"],
                 };
             }
 
@@ -347,6 +439,12 @@ const EnterprisePanel = () => {
         const sectionOrder = ["main", "orders_export", "scheduler", "source", "format_fields", "runtime"];
         return normalizedSections.sort((a, b) => sectionOrder.indexOf(a.key) - sectionOrder.indexOf(b.key));
     }, [detailView]);
+
+    const filteredEnterpriseList = useMemo(() => (
+        showOnlyActive
+            ? enterpriseList.filter((enterprise) => enterprise.catalog_enabled && enterprise.stock_enabled)
+            : enterpriseList
+    ), [enterpriseList, showOnlyActive]);
 
     const resetToCreate = () => {
         setIsCreating(true);
@@ -370,6 +468,15 @@ const EnterprisePanel = () => {
     };
 
     const handleFieldChange = (key, value) => {
+        if (key === "catalog_stock_enabled") {
+            setDraftValues((prev) => ({
+                ...prev,
+                catalog_enabled: Boolean(value),
+                stock_enabled: Boolean(value),
+            }));
+            return;
+        }
+
         setDraftValues((prev) => ({
             ...prev,
             [key]: value,
@@ -390,6 +497,8 @@ const EnterprisePanel = () => {
         branch_id: String(draftValues.branch_id || "").trim(),
         catalog_upload_frequency: draftValues.catalog_upload_frequency === "" ? null : Number(draftValues.catalog_upload_frequency),
         stock_upload_frequency: draftValues.stock_upload_frequency === "" ? null : Number(draftValues.stock_upload_frequency),
+        catalog_enabled: Boolean(draftValues.catalog_enabled),
+        stock_enabled: Boolean(draftValues.stock_enabled),
         order_fetcher: Boolean(draftValues.order_fetcher),
         tabletki_login: String(draftValues.tabletki_login || "").trim() || null,
         tabletki_password: String(draftValues.tabletki_password || "").trim() || null,
@@ -428,7 +537,14 @@ const EnterprisePanel = () => {
 
             await loadEnterpriseList();
             if (payload.enterprise_code) {
-                const viewDetail = await getEnterpriseViewDetail(payload.enterprise_code);
+                let viewDetail;
+                try {
+                    viewDetail = await getEnterpriseViewDetail(payload.enterprise_code);
+                } catch (viewError) {
+                    console.error("Error reloading enterprise view detail after save, falling back to raw enterprise detail:", viewError);
+                    const rawEnterprise = await getEnterpriseByCode(payload.enterprise_code);
+                    viewDetail = buildFallbackDetailFromRawEnterprise(rawEnterprise);
+                }
                 setDetailView(viewDetail);
                 setDraftValues(normalizeDraftValues(viewDetail.values));
                 setSelectedEnterpriseCode(payload.enterprise_code);
@@ -457,7 +573,14 @@ const EnterprisePanel = () => {
         }
 
         try {
-            const data = await getEnterpriseViewDetail(selectedEnterpriseCode);
+            let data;
+            try {
+                data = await getEnterpriseViewDetail(selectedEnterpriseCode);
+            } catch (viewError) {
+                console.error("Error resetting enterprise draft from view detail, falling back to raw enterprise detail:", viewError);
+                const rawEnterprise = await getEnterpriseByCode(selectedEnterpriseCode);
+                data = buildFallbackDetailFromRawEnterprise(rawEnterprise);
+            }
             setDetailView(data);
             setDraftValues(normalizeDraftValues(data.values));
         } catch (error) {
@@ -471,7 +594,9 @@ const EnterprisePanel = () => {
             return null;
         }
 
-        const value = draftValues[fieldKey];
+        const value = fieldKey === "catalog_stock_enabled"
+            ? Boolean(draftValues.catalog_enabled) && Boolean(draftValues.stock_enabled)
+            : draftValues[fieldKey];
         const readonly = Boolean(meta.readonly);
         const isCheckbox = meta.field_type === "checkbox";
         const isReadonlyDisplay = readonly || meta.field_type === "datetime";
@@ -601,11 +726,32 @@ const EnterprisePanel = () => {
                         </button>
                     </div>
 
+                    <label
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            color: "#111827",
+                            fontWeight: 500,
+                        }}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={showOnlyActive}
+                            onChange={(e) => setShowOnlyActive(e.target.checked)}
+                            style={{ width: "18px", height: "18px" }}
+                        />
+                        <span>Только активные</span>
+                    </label>
+
                     {listLoading ? <div style={mutedTextStyle}>Загрузка предприятий…</div> : null}
                     {listError ? <div style={{ color: "#b91c1c", fontWeight: 600 }}>{listError}</div> : null}
+                    {!listLoading && !listError && showOnlyActive && filteredEnterpriseList.length === 0 ? (
+                        <div style={mutedTextStyle}>Нет активных предприятий</div>
+                    ) : null}
 
                     <div style={{ display: "grid", gap: "10px" }}>
-                        {enterpriseList.slice(0, 12).map((enterprise) => (
+                        {filteredEnterpriseList.slice(0, 12).map((enterprise) => (
                             <button
                                 key={enterprise.enterprise_code}
                                 type="button"
