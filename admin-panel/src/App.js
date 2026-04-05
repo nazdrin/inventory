@@ -5,6 +5,7 @@ import DeveloperPanel from "./pages/DeveloperPanel";
 import EnterprisePanel from "./pages/EnterprisePanel";
 import MappingBranchPage from "./pages/MappingBranchPage";
 import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
+import FormatsPage from "./pages/FormatsPage";
 
 import Login from "./pages/Login";
 
@@ -86,6 +87,20 @@ const App = () => {
                         >
                             Mapping Branch
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/formats")}
+                        >
+                            Formats
+                        </button>
                     </>
                 )}
             </div>
@@ -106,6 +121,10 @@ const App = () => {
                 <Route
                     path="/mapping_branch"
                     element={<PrivateRoute element={<MappingBranchPage />} />}
+                />
+                <Route
+                    path="/formats"
+                    element={<PrivateRoute element={<FormatsPage />} />}
                 />
             </Routes>
         </div>
