@@ -107,6 +107,13 @@ async def get_enterprises_for_catalog():
 async def process_catalog_for_enterprise(enterprise: EnterpriseSettings):
     started = perf_counter()
     try:
+        if enterprise.catalog_enabled is False:
+            logging.info(
+                "Catalog scheduler: skip enterprise_code=%s because catalog_enabled=false",
+                enterprise.enterprise_code,
+            )
+            return
+
         if (
             enterprise.data_format == "Business"
             and os.getenv("DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER", "0").strip().lower() in {"1", "true", "yes", "on"}

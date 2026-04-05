@@ -122,6 +122,8 @@ class EnterpriseSettings(Base, TimestampMixin):
     single_store = Column(Boolean, nullable=False, server_default=text("false"))
     order_fetcher = Column(Boolean, nullable=False, server_default=text("false"))
     auto_confirm = Column(Boolean, nullable=False, server_default=text("false"))
+    catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
