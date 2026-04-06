@@ -128,22 +128,6 @@ const SECTIONS = [
     },
 ];
 
-const DeveloperInfoItem = ({ label, value }) => (
-    <div
-        style={{
-            backgroundColor: "#f8fafc",
-            border: "1px solid #dbe4ee",
-            borderRadius: "10px",
-            padding: "12px 14px",
-            display: "grid",
-            gap: "4px",
-        }}
-    >
-        <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>{label}</div>
-        <div style={{ fontSize: "15px", color: "#111827", fontWeight: 600 }}>{value || "—"}</div>
-    </div>
-);
-
 const DeveloperPanel = ({ authUser }) => {
     const navigate = useNavigate();
     const [currentSetting, setCurrentSetting] = useState(DEFAULT_SETTINGS);
@@ -294,9 +278,6 @@ const DeveloperPanel = ({ authUser }) => {
             >
                 <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
-                        <div style={{ display: "grid", gap: "8px" }}>
-                            <h2 style={sectionTitleStyle}>Панель инстанса</h2>
-                        </div>
                         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                             <button type="button" style={primaryButtonStyle} onClick={handleSave}>
                                 Сохранить
@@ -310,17 +291,6 @@ const DeveloperPanel = ({ authUser }) => {
                     {error ? <div style={{ color: "#b91c1c", fontWeight: 600 }}>{error}</div> : null}
                     {saveSuccess ? <div style={{ color: "#166534", fontWeight: 600 }}>{saveSuccess}</div> : null}
                     {loading ? <div style={mutedTextStyle}>Загрузка настроек…</div> : null}
-
-                    <div
-                        style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(2, minmax(220px, 1fr))",
-                            gap: "12px",
-                        }}
-                    >
-                        <DeveloperInfoItem label="Логин" value={currentSetting.developer_login} />
-                        <DeveloperInfoItem label="Уведомления" value={currentSetting.message_orders ? "Включены" : "Выключены"} />
-                    </div>
                 </div>
 
                 {visibleSections.map((section) => {

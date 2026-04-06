@@ -436,7 +436,7 @@ const EnterprisePanel = () => {
             return section;
         });
 
-        const sectionOrder = ["main", "orders_export", "scheduler", "source", "format_fields", "runtime"];
+        const sectionOrder = ["scheduler", "main", "source", "orders_export", "format_fields", "runtime"];
         return normalizedSections.sort((a, b) => sectionOrder.indexOf(a.key) - sectionOrder.indexOf(b.key));
     }, [detailView]);
 

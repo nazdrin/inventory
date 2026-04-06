@@ -64,27 +64,27 @@ const getFormatHint = (formatName) => {
         Vetmanager: "API-интеграция Vetmanager",
         Checkbox: "API-формат Checkbox",
         Rozetka: "XML / feed-поток Rozetka",
-        Prom: "Prom feed / API surface",
-        Bioteca: "AINUR API / multi-store path",
+        Prom: "Prom feed / API",
+        Bioteca: "AINUR API / несколько магазинов",
         DSN: "XML feed DSN",
         HProfit: "XML feed HProfit",
         Biotus: "XML feed Biotus",
-        JetVet: "Google Drive / file-driven flow",
-        ComboKeyCRM: "Feed / public-key / URL source",
-        KeyCRM: "CRM integration surface",
-        Dntrade: "Store-based stock routing",
-        Ftp: "FTP file-driven format",
-        FtpMulti: "Multi-file FTP format",
-        FtpZoomagazin: "FTP Zoomagazin flow",
-        TorgsoftGoogle: "Google folder-driven Torgsoft flow",
-        TorgsoftGoogleMulti: "Multi-store Google folder flow",
-        FTPTabletki: "FTP Tabletki import flow",
-        Business: "Business / dropship runtime contour",
+        JetVet: "Google Drive / файловый обмен",
+        ComboKeyCRM: "Feed / public key / URL",
+        KeyCRM: "Интеграция с KeyCRM",
+        Dntrade: "Маршрутизация по store",
+        Ftp: "Файловый обмен по FTP",
+        FtpMulti: "Несколько файлов по FTP",
+        FtpZoomagazin: "FTP Zoomagazin",
+        TorgsoftGoogle: "Torgsoft через Google Drive",
+        TorgsoftGoogleMulti: "Несколько магазинов через Google Drive",
+        FTPTabletki: "Импорт через FTP Tabletki",
+        Business: "Business / dropship",
         Blank: "Отключённый / пустой формат",
-        Unipro: "Public inbound integration",
+        Unipro: "Входящая интеграция",
     };
 
-    return hints[formatName] || "Формат данных без дополнительной UI-аннотации";
+    return hints[formatName] || "Формат данных";
 };
 
 const FormatsPage = () => {
@@ -139,11 +139,7 @@ const FormatsPage = () => {
 
             <div style={{ ...cardStyle, padding: "18px 20px" }}>
                 <div style={{ display: "grid", gap: "10px" }}>
-                    <h2 style={sectionTitleStyle}>Реестр форматов</h2>
-                    <p style={mutedTextStyle}>
-                        Отдельная control-plane поверхность для реестра форматов. Здесь хранится список
-                        доступных форматов, а настройка конкретного предприятия остаётся в enterprise flow.
-                    </p>
+                    <h2 style={sectionTitleStyle}>Форматы</h2>
                 </div>
             </div>
 
@@ -158,10 +154,6 @@ const FormatsPage = () => {
                 <div style={{ ...cardStyle, padding: "18px 20px" }}>
                     <div style={{ display: "grid", gap: "12px" }}>
                         <h2 style={sectionTitleStyle}>Добавить формат</h2>
-                        <p style={mutedTextStyle}>
-                            Текущий write-flow сохранён, но теперь он живёт в отдельной поверхности, а не внутри
-                            Developer Panel.
-                        </p>
                         <form onSubmit={handleAddFormat} style={{ display: "grid", gap: "12px" }}>
                             <input
                                 type="text"
@@ -191,9 +183,6 @@ const FormatsPage = () => {
                     >
                         <div>
                             <h2 style={sectionTitleStyle}>Список форматов</h2>
-                            <p style={mutedTextStyle}>
-                                Отдельный registry screen без привязки к Developer Panel как owner-экрану.
-                            </p>
                         </div>
                         <button
                             onClick={loadFormats}
@@ -242,7 +231,7 @@ const FormatsPage = () => {
                                         <div style={{ fontSize: "17px", fontWeight: 700, color: "#111827" }}>
                                             {format.format_name}
                                         </div>
-                                        <span style={badgeStyle}>registry</span>
+                                        <span style={badgeStyle}>формат</span>
                                     </div>
                                     <p style={mutedTextStyle}>{getFormatHint(format.format_name)}</p>
                                 </div>
