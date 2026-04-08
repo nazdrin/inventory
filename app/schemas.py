@@ -209,6 +209,7 @@ class DropshipEnterpriseSchema(BaseModel):
     name: str
     feed_url: Optional[str] = None
     gdrive_folder: Optional[str] = None
+    salesdrive_supplier_id: Optional[int] = None
 
     is_rrp: Optional[bool] = False
     is_wholesale: Optional[bool] = True
@@ -249,6 +250,7 @@ class SupplierDetailVM(BaseModel):
     display_name: str
     name: str
     is_active: bool = True
+    salesdrive_supplier_id: Optional[int] = None
     cities_raw: Optional[str] = None
     cities_list: List[str] = Field(default_factory=list)
     feed_url: Optional[str] = None

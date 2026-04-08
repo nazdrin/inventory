@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import select
 
 from app.business.feed_ortomedika import parse_feed_catalog_to_json
-from app.business.order_sender import SUPPLIERLIST_MAP
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.database import get_async_db
 from app.models import RawSupplierFeedProduct
 
@@ -50,15 +50,12 @@ def _normalize_string(value: Any) -> Optional[str]:
     return text_value or None
 
 
-def _extract_supplier_id() -> int:
-    supplier_token = SUPPLIERLIST_MAP.get(D9_CODE)
-    if not supplier_token:
-        raise RuntimeError("Не найден supplier mapping для D9")
-
-    match = re.search(r"(\d+)$", supplier_token)
-    if not match:
-        raise RuntimeError(f"Не удалось извлечь supplier_id из значения {supplier_token!r} для D9")
-    return int(match.group(1))
+async def _extract_supplier_id() -> int:
+    async with get_async_db(commit_on_exit=False) as session:
+        supplier_id = await resolve_supplier_id_by_code(session, D9_CODE)
+    if supplier_id is None:
+        raise RuntimeError("Не найден supplier_id для D9")
+    return supplier_id
 
 
 def _build_source_hash(payload: Dict[str, Any]) -> str:
@@ -99,7 +96,7 @@ def _normalize_item(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 async def sync_d9_master_feed(limit: int = 0) -> Dict[str, Any]:
-    supplier_id = _extract_supplier_id()
+    supplier_id = await _extract_supplier_id()
     stats = LoaderStats(supplier_id=supplier_id)
     logger.info("Запуск D9 master feed loader для supplier_id=%s", supplier_id)
 

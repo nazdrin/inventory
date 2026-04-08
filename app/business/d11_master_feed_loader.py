@@ -19,7 +19,7 @@ from app.business.feed_toros import (
     _get_gdrive_folder_by_code,
     _parse_d11_catalog_excel_xlsx,
 )
-from app.business.order_sender import SUPPLIERLIST_MAP
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.database import get_async_db
 from app.models import RawSupplierFeedProduct
 
@@ -58,15 +58,12 @@ def _normalize_string(value: Any) -> Optional[str]:
     return text_value or None
 
 
-def _extract_supplier_id() -> int:
-    supplier_token = SUPPLIERLIST_MAP.get(D11_CODE_DEFAULT)
-    if not supplier_token:
-        raise RuntimeError("Не найден supplier mapping для D11")
-
-    match = re.search(r"(\d+)$", supplier_token)
-    if not match:
-        raise RuntimeError(f"Не удалось извлечь supplier_id из значения {supplier_token!r} для D11")
-    return int(match.group(1))
+async def _extract_supplier_id() -> int:
+    async with get_async_db(commit_on_exit=False) as session:
+        supplier_id = await resolve_supplier_id_by_code(session, D11_CODE_DEFAULT)
+    if supplier_id is None:
+        raise RuntimeError("Не найден supplier_id для D11")
+    return supplier_id
 
 
 def _build_source_hash(payload: Dict[str, Any]) -> str:
@@ -112,7 +109,7 @@ def _normalize_item(row: Dict[str, Any], stats: LoaderStats) -> Optional[Dict[st
 
 
 async def load_d11_raw_supplier_feed(limit: int = 0) -> Dict[str, Any]:
-    supplier_id = _extract_supplier_id()
+    supplier_id = await _extract_supplier_id()
     stats = LoaderStats(supplier_id=supplier_id)
     logger.info("Запуск D11 master feed loader для supplier_id=%s", supplier_id)
 
