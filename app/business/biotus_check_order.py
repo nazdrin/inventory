@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
-from app.models import EnterpriseSettings
+from app.models import EnterpriseSettings, DropshipEnterprise
 from app.services.order_sender import send_orders_to_tabletki
 
 SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"
@@ -149,6 +149,30 @@ def _resolve_allowed_supplier_ids(suppliers: Optional[str]) -> List[int]:
         "38;41",
     )
     return [38, 41]
+
+
+async def _load_biotus_enabled_supplier_ids(db: AsyncSession) -> List[int]:
+    result = await db.execute(
+        select(DropshipEnterprise.salesdrive_supplier_id)
+        .where(
+            DropshipEnterprise.biotus_orders_enabled.is_(True),
+            DropshipEnterprise.salesdrive_supplier_id.is_not(None),
+        )
+    )
+    values = result.scalars().all()
+    return [int(value) for value in values if value is not None]
+
+
+async def _load_np_fulfillment_supplier_ids(db: AsyncSession) -> List[int]:
+    result = await db.execute(
+        select(DropshipEnterprise.salesdrive_supplier_id)
+        .where(
+            DropshipEnterprise.np_fulfillment_enabled.is_(True),
+            DropshipEnterprise.salesdrive_supplier_id.is_not(None),
+        )
+    )
+    values = result.scalars().all()
+    return [int(value) for value in values if value is not None]
 
 
 def _seat_dimensions_cm(volume_m3: float) -> Tuple[int, int, int]:
@@ -797,6 +821,11 @@ async def process_biotus_orders(
     async with get_async_db() as db:
         assert isinstance(db, AsyncSession)
         api_key = await _get_salesdrive_api_key(db, enterprise_code)
+        if suppliers is not None:
+            allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
+        else:
+            allowed_supplier_ids = await _load_biotus_enabled_supplier_ids(db)
+        fulfillment_supplier_ids = await _load_np_fulfillment_supplier_ids(db)
 
     tz_name = _env_str("BIOTUS_TZ", "Europe/Kyiv")
     kyiv_tz = ZoneInfo(tz_name)
@@ -817,9 +846,7 @@ async def process_biotus_orders(
         DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS,
     )
     tabletki_cancel_reason_default = _env_int("TABLETKI_CANCEL_REASON_DEFAULT", 18)
-    allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
     allowed_supplier_ids_set = set(allowed_supplier_ids)
-    fulfillment_supplier_ids = _env_comma_separated_ints("NP_FULFILLMENT_SUPPLIER_IDS")
     matched: List[Dict[str, Any]] = []
     unhandled_by_main: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []

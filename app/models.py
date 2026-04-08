@@ -232,6 +232,10 @@ class DropshipEnterprise(Base, TimestampMixin):
     gdrive_folder = Column(String, nullable=True, doc="Папка на Google Drive")
     city = Column(String, nullable=True, doc="Город")
     salesdrive_supplier_id = Column(Integer, nullable=True, doc="SalesDrive supplierlist numeric id")
+    biotus_orders_enabled = Column(Boolean, nullable=False, server_default=text("false"),
+                                   doc="Участвует в Biotus order check main flow")
+    np_fulfillment_enabled = Column(Boolean, nullable=False, server_default=text("false"),
+                                    doc="Использовать fulfillment sender address для NP")
 
     # Флаги — NOT NULL + дефолт на уровне БД (устойчиво к «пустым» вставкам)
     is_rrp = Column(Boolean, nullable=False, server_default=text("false"), doc="Флаг — есть ли РРЦ")

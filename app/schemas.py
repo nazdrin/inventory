@@ -210,6 +210,8 @@ class DropshipEnterpriseSchema(BaseModel):
     feed_url: Optional[str] = None
     gdrive_folder: Optional[str] = None
     salesdrive_supplier_id: Optional[int] = None
+    biotus_orders_enabled: Optional[bool] = False
+    np_fulfillment_enabled: Optional[bool] = False
 
     is_rrp: Optional[bool] = False
     is_wholesale: Optional[bool] = True
@@ -251,6 +253,8 @@ class SupplierDetailVM(BaseModel):
     name: str
     is_active: bool = True
     salesdrive_supplier_id: Optional[int] = None
+    biotus_orders_enabled: bool = False
+    np_fulfillment_enabled: bool = False
     cities_raw: Optional[str] = None
     cities_list: List[str] = Field(default_factory=list)
     feed_url: Optional[str] = None
