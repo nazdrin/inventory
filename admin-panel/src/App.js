@@ -6,6 +6,7 @@ import EnterprisePanel from "./pages/EnterprisePanel";
 import MappingBranchPage from "./pages/MappingBranchPage";
 import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
 import FormatsPage from "./pages/FormatsPage";
+import SuppliersPage from "./pages/SuppliersPage";
 
 import Login from "./pages/Login";
 
@@ -70,9 +71,9 @@ const App = () => {
                                 cursor: "pointer",
                                 borderRadius: "5px",
                             }}
-                            onClick={() => navigate("/dropship-enterprises")}
+                            onClick={() => navigate("/suppliers")}
                         >
-                            Dropship Enterprises
+                            Suppliers
                         </button>
                         <button
                             style={{
@@ -113,6 +114,10 @@ const App = () => {
                 <Route
                     path="/enterprise"
                     element={<PrivateRoute element={<EnterprisePanel authUser={authUser} />} />}
+                />
+                <Route
+                    path="/suppliers"
+                    element={<PrivateRoute element={<SuppliersPage authUser={authUser} />} />}
                 />
                 <Route
                     path="/dropship-enterprises"

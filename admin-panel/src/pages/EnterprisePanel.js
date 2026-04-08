@@ -751,7 +751,7 @@ const EnterprisePanel = () => {
                     ) : null}
 
                     <div style={{ display: "grid", gap: "10px" }}>
-                        {filteredEnterpriseList.slice(0, 12).map((enterprise) => (
+                        {filteredEnterpriseList.map((enterprise) => (
                             <button
                                 key={enterprise.enterprise_code}
                                 type="button"

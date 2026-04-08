@@ -225,3 +225,41 @@ class DropshipEnterpriseSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SupplierSectionVM(BaseModel):
+    key: str
+    title: str
+    collapsible: bool = False
+    default_open: bool = True
+
+
+class SupplierListItemVM(BaseModel):
+    code: str
+    display_name: str
+    is_active: bool = True
+    cities_list: List[str] = Field(default_factory=list)
+    source_summary: str
+    pricing_summary: str
+    flags_summary: str
+
+
+class SupplierDetailVM(BaseModel):
+    code: str
+    display_name: str
+    name: str
+    is_active: bool = True
+    cities_raw: Optional[str] = None
+    cities_list: List[str] = Field(default_factory=list)
+    feed_url: Optional[str] = None
+    gdrive_folder: Optional[str] = None
+    is_rrp: bool = False
+    profit_percent: Optional[float] = None
+    retail_markup: Optional[float] = None
+    min_markup_threshold: Optional[float] = None
+    priority: int = 5
+    use_feed_instead_of_gdrive: bool = False
+    source_summary: str
+    pricing_summary: str
+    flags_summary: str
+    sections: List[SupplierSectionVM] = Field(default_factory=list)
