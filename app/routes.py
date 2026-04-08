@@ -15,7 +15,8 @@ from app.schemas import (
     EnterpriseSettingsSchema, DeveloperSettingsSchema, DataFormatSchema, 
     MappingBranchSchema, LoginSchema, BranchMappingListItemVM, BranchMappingDetailVM,
     MappingBranchConstrainedUpdateSchema, EnterpriseListItemVM, EnterpriseDetailVM,
-    EnterpriseFieldMetaVM, EnterpriseSectionVM,
+    EnterpriseFieldMetaVM, EnterpriseSectionVM, SupplierListItemVM, SupplierDetailVM,
+    SupplierSectionVM,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -115,6 +116,107 @@ def _mapping_overloaded_fields(data_format: str | None, has_google_folder: bool)
 def _mapping_semantics_summary(data_format: str | None, semantic_store_label: str) -> str:
     fmt = (data_format or "").strip() or "unknown format"
     return f"Format={fmt}; store_id should be presented as '{semantic_store_label}' rather than a raw generic storage field."
+
+
+def _supplier_split_cities(city_value: str | None) -> list[str]:
+    raw = str(city_value or "").strip()
+    if not raw:
+        return []
+
+    items: list[str] = []
+    for part in raw.replace("|", ",").replace(";", ",").split(","):
+        normalized = part.strip()
+        if normalized:
+            items.append(normalized)
+    return items
+
+
+def _supplier_source_summary(item: DropshipEnterprise) -> str:
+    source_bits: list[str] = []
+    if (item.feed_url or "").strip():
+        source_bits.append("main source set")
+    else:
+        source_bits.append("main source empty")
+
+    if (item.gdrive_folder or "").strip():
+        source_bits.append("aux source set")
+
+    return ", ".join(source_bits)
+
+
+def _supplier_pricing_summary(item: DropshipEnterprise) -> str:
+    bits: list[str] = []
+    if item.is_rrp:
+        bits.append("RRP")
+    if item.profit_percent is not None:
+        bits.append(f"opt calc {item.profit_percent:g}%")
+    if item.retail_markup is not None:
+        bits.append(f"retail markup {item.retail_markup:g}%")
+    if item.min_markup_threshold is not None:
+        bits.append(f"min add {item.min_markup_threshold:g}")
+    return ", ".join(bits) if bits else "pricing defaults not configured"
+
+
+def _supplier_flags_summary(item: DropshipEnterprise) -> str:
+    flags: list[str] = ["active" if item.is_active else "inactive"]
+    if item.use_feed_instead_of_gdrive:
+        flags.append("dumping mode")
+    if item.priority is not None:
+        flags.append(f"priority {item.priority}")
+    return ", ".join(flags)
+
+
+def _supplier_display_name(item: DropshipEnterprise) -> str:
+    code = str(item.code or "").strip()
+    name = str(item.name or "").strip()
+    if code and name:
+        return f"{name} ({code})"
+    return name or code or "Supplier"
+
+
+def _supplier_sections() -> list[SupplierSectionVM]:
+    return [
+        SupplierSectionVM(key="main", title="Основное"),
+        SupplierSectionVM(key="source", title="Источник"),
+        SupplierSectionVM(key="pricing", title="Ценообразование"),
+        SupplierSectionVM(key="orders", title="Заказы"),
+        SupplierSectionVM(key="technical", title="Технические", collapsible=True, default_open=False),
+    ]
+
+
+def _build_supplier_list_item_vm(item: DropshipEnterprise) -> SupplierListItemVM:
+    return SupplierListItemVM(
+        code=item.code,
+        display_name=_supplier_display_name(item),
+        is_active=bool(item.is_active),
+        cities_list=_supplier_split_cities(item.city),
+        source_summary=_supplier_source_summary(item),
+        pricing_summary=_supplier_pricing_summary(item),
+        flags_summary=_supplier_flags_summary(item),
+    )
+
+
+def _build_supplier_detail_vm(item: DropshipEnterprise) -> SupplierDetailVM:
+    return SupplierDetailVM(
+        code=item.code,
+        display_name=_supplier_display_name(item),
+        name=item.name,
+        is_active=bool(item.is_active),
+        cities_raw=item.city,
+        cities_list=_supplier_split_cities(item.city),
+        feed_url=item.feed_url,
+        gdrive_folder=item.gdrive_folder,
+        is_rrp=bool(item.is_rrp),
+        profit_percent=item.profit_percent,
+        retail_markup=item.retail_markup,
+        min_markup_threshold=item.min_markup_threshold,
+        priority=int(item.priority or 5),
+        use_feed_instead_of_gdrive=bool(item.use_feed_instead_of_gdrive),
+        source_summary=_supplier_source_summary(item),
+        pricing_summary=_supplier_pricing_summary(item),
+        flags_summary=_supplier_flags_summary(item),
+        sections=_supplier_sections(),
+    )
 
 
 def _enterprise_is_file_related_format(data_format: str | None) -> bool:
@@ -531,6 +633,22 @@ async def get_all_dropship_enterprises(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DropshipEnterprise))
     items = result.scalars().all()
     return [DropshipEnterpriseSchema.model_validate(i, from_attributes=True) for i in items]
+
+
+@router.get("/suppliers/view/", response_model=List[SupplierListItemVM], dependencies=[Depends(verify_token)])
+async def get_suppliers_view(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DropshipEnterprise))
+    items = result.scalars().all()
+    return [_build_supplier_list_item_vm(item) for item in items]
+
+
+@router.get("/suppliers/view/{code}", response_model=SupplierDetailVM, dependencies=[Depends(verify_token)])
+async def get_supplier_view_detail(code: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DropshipEnterprise).where(DropshipEnterprise.code == code))
+    item = result.scalars().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+    return _build_supplier_detail_vm(item)
 
 # Get by code
 @router.get("/dropship/enterprises/{code}", dependencies=[Depends(verify_token)])
