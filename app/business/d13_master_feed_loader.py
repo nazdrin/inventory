@@ -22,7 +22,7 @@ from app.business.feed_zoocomplex import (
     _get_text,
     _load_feed_root,
 )
-from app.business.supplier_identity import get_supplier_id_by_code
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.database import get_async_db
 from app.models import RawSupplierFeedProduct
 
@@ -72,8 +72,9 @@ def _normalize_barcode(value: Any) -> Optional[str]:
     return barcode or None
 
 
-def _extract_supplier_id() -> int:
-    supplier_id = get_supplier_id_by_code(D13_CODE)
+async def _extract_supplier_id() -> int:
+    async with get_async_db(commit_on_exit=False) as session:
+        supplier_id = await resolve_supplier_id_by_code(session, D13_CODE)
     if supplier_id is None:
         raise RuntimeError(f"Не найден supplier_id для {D13_CODE}")
     return supplier_id
@@ -256,7 +257,7 @@ def _parse_offer(offer: ET.Element, supplier_id: int, stats: LoaderStats) -> Opt
 
 
 async def load_d13_raw_supplier_feed(limit: int = 0) -> Dict[str, Any]:
-    supplier_id = _extract_supplier_id()
+    supplier_id = await _extract_supplier_id()
     stats = LoaderStats(supplier_id=supplier_id)
     logger.info("Запуск D13 master feed loader для supplier_id=%s", supplier_id)
 

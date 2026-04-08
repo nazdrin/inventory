@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import select
 
 from app.business.feed_suziria import _fetch_suziria_catalog_json, _get_token_from_db
-from app.business.order_sender import SUPPLIERLIST_MAP
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.database import get_async_db
 from app.models import RawSupplierFeedProduct
 
@@ -53,15 +53,12 @@ def _normalize_string(value: Any) -> Optional[str]:
     return text_value or None
 
 
-def _extract_supplier_id() -> int:
-    supplier_token = SUPPLIERLIST_MAP.get(D8_CODE)
-    if not supplier_token:
-        raise RuntimeError("Не найден supplier mapping для D8")
-
-    match = re.search(r"(\d+)$", supplier_token)
-    if not match:
-        raise RuntimeError(f"Не удалось извлечь supplier_id из значения {supplier_token!r} для D8")
-    return int(match.group(1))
+async def _extract_supplier_id() -> int:
+    async with get_async_db(commit_on_exit=False) as session:
+        supplier_id = await resolve_supplier_id_by_code(session, D8_CODE)
+    if supplier_id is None:
+        raise RuntimeError("Не найден supplier_id для D8")
+    return supplier_id
 
 
 def _build_source_hash(payload: Dict[str, Any]) -> str:
@@ -119,7 +116,7 @@ def _normalize_item(row: Dict[str, Any], supplier_id: int, stats: LoaderStats) -
 
 
 async def load_d8_raw_supplier_feed(limit: int = 0) -> Dict[str, Any]:
-    supplier_id = _extract_supplier_id()
+    supplier_id = await _extract_supplier_id()
     stats = LoaderStats(supplier_id=supplier_id)
     logger.info("Запуск D8 master feed loader для supplier_id=%s", supplier_id)
 

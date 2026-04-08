@@ -155,7 +155,7 @@ from app.models import (
     Offer,
     OfferBlockRule,
 )  # CompetitorPrice: code, city, competitor_price
-from app.business.supplier_identity import get_supplier_id_by_code
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
@@ -686,7 +686,7 @@ async def _map_supplier_codes_master(
 
     Архивные master_catalog.sku исключаются уже на этапе lookup.
     """
-    supplier_id = get_supplier_id_by_code(supplier_code)
+    supplier_id = await resolve_supplier_id_by_code(session, supplier_code)
     if supplier_id is None:
         logger.warning(
             "Supplier %s: numeric supplier_id not found in unified supplier map, fallback to legacy mapping backend",

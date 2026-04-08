@@ -202,6 +202,7 @@ def _build_supplier_detail_vm(item: DropshipEnterprise) -> SupplierDetailVM:
         display_name=_supplier_display_name(item),
         name=item.name,
         is_active=bool(item.is_active),
+        salesdrive_supplier_id=item.salesdrive_supplier_id,
         cities_raw=item.city,
         cities_list=_supplier_split_cities(item.city),
         feed_url=item.feed_url,

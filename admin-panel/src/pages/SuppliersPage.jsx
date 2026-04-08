@@ -104,7 +104,7 @@ const defaultDraft = {
     code: "",
     name: "",
     city: "",
-    salesdrive_code: "",
+    salesdrive_supplier_id: "",
     feed_url: "",
     gdrive_folder: "",
     is_rrp: false,
@@ -211,7 +211,7 @@ const SuppliersPage = () => {
                     code: data.code || "",
                     name: data.name || "",
                     city: data.cities_raw || "",
-                    salesdrive_code: "",
+                    salesdrive_supplier_id: data.salesdrive_supplier_id ?? "",
                     feed_url: data.feed_url || "",
                     gdrive_folder: data.gdrive_folder || "",
                     is_rrp: Boolean(data.is_rrp),
@@ -287,7 +287,7 @@ const SuppliersPage = () => {
                 code: detail.code || "",
                 name: detail.name || "",
                 city: detail.cities_raw || "",
-                salesdrive_code: draft.salesdrive_code || "",
+                salesdrive_supplier_id: detail.salesdrive_supplier_id ?? "",
                 feed_url: detail.feed_url || "",
                 gdrive_folder: detail.gdrive_folder || "",
                 is_rrp: Boolean(detail.is_rrp),
@@ -304,6 +304,8 @@ const SuppliersPage = () => {
         code: String(draft.code || "").trim(),
         name: String(draft.name || "").trim(),
         city: String(draft.city || "").trim() || null,
+        salesdrive_supplier_id:
+            draft.salesdrive_supplier_id === "" ? null : Number(draft.salesdrive_supplier_id),
         feed_url: String(draft.feed_url || "").trim() || null,
         gdrive_folder: String(draft.gdrive_folder || "").trim() || null,
         is_rrp: Boolean(draft.is_rrp),
@@ -546,9 +548,10 @@ const SuppliersPage = () => {
                                             placeholder="Например: Kyiv, Lviv"
                                         />
                                         <SupplierInput
-                                            label="Код SalesDrive (supplierlist)"
-                                            value={draft.salesdrive_code}
-                                            onChange={(value) => setField("salesdrive_code", value)}
+                                            label="Код SalesDrive / supplierlist"
+                                            type="number"
+                                            value={draft.salesdrive_supplier_id}
+                                            onChange={(value) => setField("salesdrive_supplier_id", value)}
                                         />
                                     </div>
                                 </div>

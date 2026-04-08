@@ -231,6 +231,7 @@ class DropshipEnterprise(Base, TimestampMixin):
     feed_url = Column(String, nullable=True, doc="Ссылка на прайс-фид")
     gdrive_folder = Column(String, nullable=True, doc="Папка на Google Drive")
     city = Column(String, nullable=True, doc="Город")
+    salesdrive_supplier_id = Column(Integer, nullable=True, doc="SalesDrive supplierlist numeric id")
 
     # Флаги — NOT NULL + дефолт на уровне БД (устойчиво к «пустым» вставкам)
     is_rrp = Column(Boolean, nullable=False, server_default=text("false"), doc="Флаг — есть ли РРЦ")
