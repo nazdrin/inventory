@@ -105,6 +105,8 @@ const defaultDraft = {
     name: "",
     city: "",
     salesdrive_supplier_id: "",
+    biotus_orders_enabled: false,
+    np_fulfillment_enabled: false,
     feed_url: "",
     gdrive_folder: "",
     is_rrp: false,
@@ -212,6 +214,8 @@ const SuppliersPage = () => {
                     name: data.name || "",
                     city: data.cities_raw || "",
                     salesdrive_supplier_id: data.salesdrive_supplier_id ?? "",
+                    biotus_orders_enabled: Boolean(data.biotus_orders_enabled),
+                    np_fulfillment_enabled: Boolean(data.np_fulfillment_enabled),
                     feed_url: data.feed_url || "",
                     gdrive_folder: data.gdrive_folder || "",
                     is_rrp: Boolean(data.is_rrp),
@@ -288,6 +292,8 @@ const SuppliersPage = () => {
                 name: detail.name || "",
                 city: detail.cities_raw || "",
                 salesdrive_supplier_id: detail.salesdrive_supplier_id ?? "",
+                biotus_orders_enabled: Boolean(detail.biotus_orders_enabled),
+                np_fulfillment_enabled: Boolean(detail.np_fulfillment_enabled),
                 feed_url: detail.feed_url || "",
                 gdrive_folder: detail.gdrive_folder || "",
                 is_rrp: Boolean(detail.is_rrp),
@@ -306,6 +312,8 @@ const SuppliersPage = () => {
         city: String(draft.city || "").trim() || null,
         salesdrive_supplier_id:
             draft.salesdrive_supplier_id === "" ? null : Number(draft.salesdrive_supplier_id),
+        biotus_orders_enabled: Boolean(draft.biotus_orders_enabled),
+        np_fulfillment_enabled: Boolean(draft.np_fulfillment_enabled),
         feed_url: String(draft.feed_url || "").trim() || null,
         gdrive_folder: String(draft.gdrive_folder || "").trim() || null,
         is_rrp: Boolean(draft.is_rrp),
@@ -607,6 +615,22 @@ const SuppliersPage = () => {
                                             onChange={(value) => setField("priority", value)}
                                         />
                                     </div>
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Заказы</h2>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                    <SupplierCheckbox
+                                        label="Участвует в обработке заказов Biotus"
+                                        checked={Boolean(draft.biotus_orders_enabled)}
+                                        onChange={(value) => setField("biotus_orders_enabled", value)}
+                                    />
+                                    <SupplierCheckbox
+                                        label="Fulfillment-режим Новой Почты"
+                                        checked={Boolean(draft.np_fulfillment_enabled)}
+                                        onChange={(value) => setField("np_fulfillment_enabled", value)}
+                                    />
                                 </div>
                             </div>
 

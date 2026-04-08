@@ -203,6 +203,8 @@ def _build_supplier_detail_vm(item: DropshipEnterprise) -> SupplierDetailVM:
         name=item.name,
         is_active=bool(item.is_active),
         salesdrive_supplier_id=item.salesdrive_supplier_id,
+        biotus_orders_enabled=bool(item.biotus_orders_enabled),
+        np_fulfillment_enabled=bool(item.np_fulfillment_enabled),
         cities_raw=item.city,
         cities_list=_supplier_split_cities(item.city),
         feed_url=item.feed_url,
