@@ -99,6 +99,37 @@ const truncateText = (value, maxLength = 56) => {
     return `${text.slice(0, maxLength - 1)}…`;
 };
 
+const splitSupplierCities = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) {
+        return [];
+    }
+
+    const seen = new Set();
+    const items = [];
+    raw
+        .replace(/\|/g, ",")
+        .replace(/;/g, ",")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((item) => {
+            const key = item.toLowerCase();
+            if (seen.has(key)) {
+                return;
+            }
+            seen.add(key);
+            items.push(item);
+        });
+    return items;
+};
+
+const serializeSupplierCities = (cities) =>
+    cities
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .join("; ");
+
 const defaultDraft = {
     is_active: true,
     code: "",
@@ -212,6 +243,7 @@ const SuppliersPage = () => {
     const [saveSuccess, setSaveSuccess] = useState("");
     const [openTechnical, setOpenTechnical] = useState(false);
     const [showOnlyActive, setShowOnlyActive] = useState(false);
+    const [customCityInput, setCustomCityInput] = useState("");
 
     const loadList = async () => {
         setListLoading(true);
@@ -289,6 +321,41 @@ const SuppliersPage = () => {
         [showOnlyActive, suppliers]
     );
     const showEditor = isCreating || Boolean(detail);
+    const selectedCities = useMemo(() => splitSupplierCities(draft.city), [draft.city]);
+    const knownCityOptions = useMemo(() => {
+        const seen = new Set();
+        const values = [];
+
+        suppliers.forEach((supplier) => {
+            (supplier.cities_list || []).forEach((city) => {
+                const normalized = String(city || "").trim();
+                if (!normalized) {
+                    return;
+                }
+                const key = normalized.toLowerCase();
+                if (seen.has(key)) {
+                    return;
+                }
+                seen.add(key);
+                values.push(normalized);
+            });
+        });
+
+        selectedCities.forEach((city) => {
+            const normalized = String(city || "").trim();
+            if (!normalized) {
+                return;
+            }
+            const key = normalized.toLowerCase();
+            if (seen.has(key)) {
+                return;
+            }
+            seen.add(key);
+            values.push(normalized);
+        });
+
+        return values.sort((left, right) => left.localeCompare(right));
+    }, [selectedCities, suppliers]);
 
     const cardTitle = isCreating ? "Новый поставщик" : "Карточка поставщика";
 
@@ -306,6 +373,7 @@ const SuppliersPage = () => {
         setDetailError("");
         setSaveError("");
         setSaveSuccess("");
+        setCustomCityInput("");
         setDraft(defaultDraft);
         setOpenTechnical(false);
     };
@@ -314,12 +382,14 @@ const SuppliersPage = () => {
         setIsCreating(false);
         setSaveError("");
         setSaveSuccess("");
+        setCustomCityInput("");
         setSelectedCode(code);
     };
 
     const handleCancel = () => {
         setSaveError("");
         setSaveSuccess("");
+        setCustomCityInput("");
         if (isCreating) {
             setIsCreating(false);
             if (suppliers.length > 0) {
@@ -352,6 +422,46 @@ const SuppliersPage = () => {
                 use_feed_instead_of_gdrive: Boolean(detail.use_feed_instead_of_gdrive),
             });
         }
+    };
+
+    const applyCities = (cities) => {
+        setField("city", serializeSupplierCities(cities));
+    };
+
+    const toggleCity = (cityName) => {
+        const normalized = String(cityName || "").trim();
+        if (!normalized) {
+            return;
+        }
+
+        const existing = splitSupplierCities(draft.city);
+        const exists = existing.some((item) => item.toLowerCase() === normalized.toLowerCase());
+        if (exists) {
+            applyCities(existing.filter((item) => item.toLowerCase() !== normalized.toLowerCase()));
+            return;
+        }
+        applyCities([...existing, normalized]);
+    };
+
+    const addCustomCity = () => {
+        const normalized = String(customCityInput || "").trim();
+        if (!normalized) {
+            return;
+        }
+        const existing = splitSupplierCities(draft.city);
+        const exists = existing.some((item) => item.toLowerCase() === normalized.toLowerCase());
+        if (!exists) {
+            applyCities([...existing, normalized]);
+        }
+        setCustomCityInput("");
+    };
+
+    const removeCity = (cityName) => {
+        const normalized = String(cityName || "").trim().toLowerCase();
+        if (!normalized) {
+            return;
+        }
+        applyCities(splitSupplierCities(draft.city).filter((item) => item.toLowerCase() !== normalized));
     };
 
     const buildPayload = () => ({
@@ -603,17 +713,97 @@ const SuppliersPage = () => {
                                             onChange={(value) => setField("name", value)}
                                         />
                                         <SupplierInput
-                                            label="Города (через ; )"
-                                            value={draft.city}
-                                            onChange={(value) => setField("city", value)}
-                                            placeholder="Например: Kyiv, Lviv"
-                                        />
-                                        <SupplierInput
                                             label="Код SalesDrive / supplierlist"
                                             type="number"
                                             value={draft.salesdrive_supplier_id}
                                             onChange={(value) => setField("salesdrive_supplier_id", value)}
                                         />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Города</h2>
+                                <p style={mutedTextStyle}>
+                                    Выберите города поставщика. Пустое значение не означает “все города”: в текущем runtime
+                                    такой поставщик пропускается при генерации offers.
+                                </p>
+                                <div style={{ display: "grid", gap: "12px" }}>
+                                    <div style={{ display: "grid", gap: "8px" }}>
+                                        <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>
+                                            Выбрано
+                                        </div>
+                                        {selectedCities.length > 0 ? (
+                                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                                {selectedCities.map((city) => (
+                                                    <button
+                                                        key={city}
+                                                        type="button"
+                                                        onClick={() => removeCity(city)}
+                                                        style={{
+                                                            padding: "6px 10px",
+                                                            borderRadius: "999px",
+                                                            border: "1px solid #bfdbfe",
+                                                            backgroundColor: "#eff6ff",
+                                                            color: "#1d4ed8",
+                                                            cursor: "pointer",
+                                                            fontWeight: 600,
+                                                        }}
+                                                    >
+                                                        {city} ×
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div style={mutedTextStyle}>Города пока не выбраны.</div>
+                                        )}
+                                    </div>
+
+                                    <div style={{ display: "grid", gap: "8px" }}>
+                                        <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>
+                                            Известные города
+                                        </div>
+                                        {knownCityOptions.length > 0 ? (
+                                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                                {knownCityOptions.map((city) => {
+                                                    const selected = selectedCities.some(
+                                                        (item) => item.toLowerCase() === city.toLowerCase()
+                                                    );
+                                                    return (
+                                                        <button
+                                                            key={city}
+                                                            type="button"
+                                                            onClick={() => toggleCity(city)}
+                                                            style={{
+                                                                padding: "8px 12px",
+                                                                borderRadius: "999px",
+                                                                border: selected ? "1px solid #2563eb" : "1px solid #cbd5e1",
+                                                                backgroundColor: selected ? "#2563eb" : "#ffffff",
+                                                                color: selected ? "#ffffff" : "#111827",
+                                                                cursor: "pointer",
+                                                                fontWeight: 600,
+                                                            }}
+                                                        >
+                                                            {city}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div style={mutedTextStyle}>Список будет собираться из уже настроенных поставщиков.</div>
+                                        )}
+                                    </div>
+
+                                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "12px", alignItems: "end" }}>
+                                        <SupplierInput
+                                            label="Добавить город вручную"
+                                            value={customCityInput}
+                                            onChange={setCustomCityInput}
+                                            placeholder="Например: Kyiv"
+                                        />
+                                        <button type="button" onClick={addCustomCity} style={buttonSecondaryStyle}>
+                                            Добавить
+                                        </button>
                                     </div>
                                 </div>
                             </div>
