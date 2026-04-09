@@ -107,6 +107,11 @@ const defaultDraft = {
     salesdrive_supplier_id: "",
     biotus_orders_enabled: false,
     np_fulfillment_enabled: false,
+    schedule_enabled: false,
+    block_start_day: "",
+    block_start_time: "",
+    block_end_day: "",
+    block_end_time: "",
     feed_url: "",
     gdrive_folder: "",
     is_rrp: false,
@@ -158,6 +163,39 @@ const SupplierCheckbox = ({ label, checked, onChange }) => (
             <span>{checked ? "Включено" : "Выключено"}</span>
         </label>
     </div>
+);
+
+const DAY_OPTIONS = [
+    { value: "1", label: "Понедельник (Mon)" },
+    { value: "2", label: "Вторник (Tue)" },
+    { value: "3", label: "Среда (Wed)" },
+    { value: "4", label: "Четверг (Thu)" },
+    { value: "5", label: "Пятница (Fri)" },
+    { value: "6", label: "Суббота (Sat)" },
+    { value: "7", label: "Воскресенье (Sun)" },
+];
+
+const SupplierSelect = ({ label, value, onChange, options, disabled = false }) => (
+    <label style={{ display: "grid", gap: "6px" }}>
+        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>{label}</span>
+        <select
+            value={value}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+            style={{
+                ...inputStyle,
+                backgroundColor: disabled ? "#f8fafc" : "#ffffff",
+                color: disabled ? "#64748b" : "#111827",
+            }}
+        >
+            <option value="">Не выбрано</option>
+            {options.map((option) => (
+                <option key={option.value} value={option.value}>
+                    {option.label}
+                </option>
+            ))}
+        </select>
+    </label>
 );
 
 const SuppliersPage = () => {
@@ -216,6 +254,11 @@ const SuppliersPage = () => {
                     salesdrive_supplier_id: data.salesdrive_supplier_id ?? "",
                     biotus_orders_enabled: Boolean(data.biotus_orders_enabled),
                     np_fulfillment_enabled: Boolean(data.np_fulfillment_enabled),
+                    schedule_enabled: Boolean(data.schedule_enabled),
+                    block_start_day: data.block_start_day != null ? String(data.block_start_day) : "",
+                    block_start_time: data.block_start_time || "",
+                    block_end_day: data.block_end_day != null ? String(data.block_end_day) : "",
+                    block_end_time: data.block_end_time || "",
                     feed_url: data.feed_url || "",
                     gdrive_folder: data.gdrive_folder || "",
                     is_rrp: Boolean(data.is_rrp),
@@ -294,6 +337,11 @@ const SuppliersPage = () => {
                 salesdrive_supplier_id: detail.salesdrive_supplier_id ?? "",
                 biotus_orders_enabled: Boolean(detail.biotus_orders_enabled),
                 np_fulfillment_enabled: Boolean(detail.np_fulfillment_enabled),
+                schedule_enabled: Boolean(detail.schedule_enabled),
+                block_start_day: detail.block_start_day != null ? String(detail.block_start_day) : "",
+                block_start_time: detail.block_start_time || "",
+                block_end_day: detail.block_end_day != null ? String(detail.block_end_day) : "",
+                block_end_time: detail.block_end_time || "",
                 feed_url: detail.feed_url || "",
                 gdrive_folder: detail.gdrive_folder || "",
                 is_rrp: Boolean(detail.is_rrp),
@@ -314,6 +362,11 @@ const SuppliersPage = () => {
             draft.salesdrive_supplier_id === "" ? null : Number(draft.salesdrive_supplier_id),
         biotus_orders_enabled: Boolean(draft.biotus_orders_enabled),
         np_fulfillment_enabled: Boolean(draft.np_fulfillment_enabled),
+        schedule_enabled: Boolean(draft.schedule_enabled),
+        block_start_day: draft.block_start_day === "" ? null : Number(draft.block_start_day),
+        block_start_time: String(draft.block_start_time || "").trim() || null,
+        block_end_day: draft.block_end_day === "" ? null : Number(draft.block_end_day),
+        block_end_time: String(draft.block_end_time || "").trim() || null,
         feed_url: String(draft.feed_url || "").trim() || null,
         gdrive_folder: String(draft.gdrive_folder || "").trim() || null,
         is_rrp: Boolean(draft.is_rrp),
@@ -631,6 +684,51 @@ const SuppliersPage = () => {
                                         checked={Boolean(draft.np_fulfillment_enabled)}
                                         onChange={(value) => setField("np_fulfillment_enabled", value)}
                                     />
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>График недоступности</h2>
+                                <p style={mutedTextStyle}>
+                                    Здесь задаётся окно, в котором поставщик считается временно недоступным и его offers
+                                    не обновляются в dropship pipeline.
+                                </p>
+                                <div style={{ display: "grid", gap: "12px" }}>
+                                    <SupplierCheckbox
+                                        label="Включить окно недоступности (Schedule enabled)"
+                                        checked={Boolean(draft.schedule_enabled)}
+                                        onChange={(value) => setField("schedule_enabled", value)}
+                                    />
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                        <SupplierSelect
+                                            label="Начало: день"
+                                            value={draft.block_start_day}
+                                            disabled={!draft.schedule_enabled}
+                                            options={DAY_OPTIONS}
+                                            onChange={(value) => setField("block_start_day", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Начало: время"
+                                            type="time"
+                                            value={draft.block_start_time}
+                                            disabled={!draft.schedule_enabled}
+                                            onChange={(value) => setField("block_start_time", value)}
+                                        />
+                                        <SupplierSelect
+                                            label="Конец: день"
+                                            value={draft.block_end_day}
+                                            disabled={!draft.schedule_enabled}
+                                            options={DAY_OPTIONS}
+                                            onChange={(value) => setField("block_end_day", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Конец: время"
+                                            type="time"
+                                            value={draft.block_end_time}
+                                            disabled={!draft.schedule_enabled}
+                                            onChange={(value) => setField("block_end_time", value)}
+                                        />
+                                    </div>
                                 </div>
                             </div>
 

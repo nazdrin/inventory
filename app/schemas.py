@@ -212,6 +212,11 @@ class DropshipEnterpriseSchema(BaseModel):
     salesdrive_supplier_id: Optional[int] = None
     biotus_orders_enabled: Optional[bool] = False
     np_fulfillment_enabled: Optional[bool] = False
+    schedule_enabled: Optional[bool] = False
+    block_start_day: Optional[int] = None
+    block_start_time: Optional[str] = None
+    block_end_day: Optional[int] = None
+    block_end_time: Optional[str] = None
 
     is_rrp: Optional[bool] = False
     is_wholesale: Optional[bool] = True
@@ -255,6 +260,11 @@ class SupplierDetailVM(BaseModel):
     salesdrive_supplier_id: Optional[int] = None
     biotus_orders_enabled: bool = False
     np_fulfillment_enabled: bool = False
+    schedule_enabled: bool = False
+    block_start_day: Optional[int] = None
+    block_start_time: Optional[str] = None
+    block_end_day: Optional[int] = None
+    block_end_time: Optional[str] = None
     cities_raw: Optional[str] = None
     cities_list: List[str] = Field(default_factory=list)
     feed_url: Optional[str] = None

@@ -380,26 +380,39 @@ def _split_cities(city_field: str) -> List[str]:
     parts = re.split(r"[;,|]", city_field)
     return [p.strip() for p in parts if p.strip()]
 
-def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool:
-    # .env:
-    # SUPPLIER_SCHEDULE_ENABLED=true|false
-    # SUPPLIER_{CODE}_BLOCK_START_DAY=1..7, SUPPLIER_{CODE}_BLOCK_START_TIME=HH:MM
-    # SUPPLIER_{CODE}_BLOCK_END_DAY=1..7,   SUPPLIER_{CODE}_BLOCK_END_TIME=HH:MM
-    if os.getenv("SUPPLIER_SCHEDULE_ENABLED", "").strip().lower() != "true":
+def _supplier_schedule_has_value(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
+def _supplier_has_db_schedule_config(ent: DropshipEnterprise | None) -> bool:
+    if ent is None:
         return False
+    return bool(getattr(ent, "schedule_enabled", False)) or any(
+        _supplier_schedule_has_value(getattr(ent, field_name, None))
+        for field_name in ("block_start_day", "block_start_time", "block_end_day", "block_end_time")
+    )
 
-    code = (supplier_code or "").strip().upper()
-    prefix = f"SUPPLIER_{code}_BLOCK_"
-    start_day_raw = os.getenv(f"{prefix}START_DAY")
-    start_time_raw = os.getenv(f"{prefix}START_TIME")
-    end_day_raw = os.getenv(f"{prefix}END_DAY")
-    end_time_raw = os.getenv(f"{prefix}END_TIME")
 
-    # Неполный набор переменных для поставщика => блокировка не применяется.
-    if not all([start_day_raw, start_time_raw, end_day_raw, end_time_raw]):
-        return False
-
+def _parse_supplier_schedule_window(
+    *,
+    supplier_code: str,
+    source_label: str,
+    start_day_raw: Any,
+    start_time_raw: Any,
+    end_day_raw: Any,
+    end_time_raw: Any,
+) -> tuple[int, int, int, int] | None:
     warned = False
+    code = (supplier_code or "").strip().upper()
+
+    # Неполный набор значений => окно блокировки не применяется.
+    if not all([
+        _supplier_schedule_has_value(start_day_raw),
+        _supplier_schedule_has_value(start_time_raw),
+        _supplier_schedule_has_value(end_day_raw),
+        _supplier_schedule_has_value(end_time_raw),
+    ]):
+        return None
 
     def _warn_once(msg: str, *args: Any) -> None:
         nonlocal warned
@@ -413,14 +426,14 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
             day = int(raw)
         except Exception:
             _warn_once(
-                "Некорректный %s для поставщика %s: %r. Блокировка отключена для этого вызова.",
-                label, code, raw
+                "Некорректный %s для поставщика %s из %s: %r. Блокировка отключена для этого вызова.",
+                label, code, source_label, raw
             )
             return None
         if day < 1 or day > 7:
             _warn_once(
-                "Некорректный %s для поставщика %s: %r (ожидается 1..7). Блокировка отключена для этого вызова.",
-                label, code, raw
+                "Некорректный %s для поставщика %s из %s: %r (ожидается 1..7). Блокировка отключена для этого вызова.",
+                label, code, source_label, raw
             )
             return None
         return day
@@ -437,8 +450,8 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
             return hour * 60 + minute
         except Exception:
             _warn_once(
-                "Некорректный %s для поставщика %s: %r (ожидается HH:MM). Блокировка отключена для этого вызова.",
-                label, code, raw
+                "Некорректный %s для поставщика %s из %s: %r (ожидается HH:MM). Блокировка отключена для этого вызова.",
+                label, code, source_label, raw
             )
             return None
 
@@ -447,8 +460,49 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
     start_time = _parse_time_minutes(start_time_raw, "BLOCK_START_TIME")
     end_time = _parse_time_minutes(end_time_raw, "BLOCK_END_TIME")
     if None in (start_day, end_day, start_time, end_time):
-        return False
+        return None
+    return start_day, start_time, end_day, end_time
 
+
+def _resolve_schedule_window_from_model(
+    ent: DropshipEnterprise,
+    supplier_code: str,
+) -> tuple[int, int, int, int] | bool | None:
+    if not _supplier_has_db_schedule_config(ent):
+        return None
+    if not bool(getattr(ent, "schedule_enabled", False)):
+        return False
+    return _parse_supplier_schedule_window(
+        supplier_code=supplier_code,
+        source_label="DB",
+        start_day_raw=getattr(ent, "block_start_day", None),
+        start_time_raw=getattr(ent, "block_start_time", None),
+        end_day_raw=getattr(ent, "block_end_day", None),
+        end_time_raw=getattr(ent, "block_end_time", None),
+    )
+
+
+def _resolve_schedule_window_from_env(supplier_code: str) -> tuple[int, int, int, int] | None:
+    # Legacy .env:
+    # SUPPLIER_SCHEDULE_ENABLED=true|false
+    # SUPPLIER_{CODE}_BLOCK_START_DAY=1..7, SUPPLIER_{CODE}_BLOCK_START_TIME=HH:MM
+    # SUPPLIER_{CODE}_BLOCK_END_DAY=1..7,   SUPPLIER_{CODE}_BLOCK_END_TIME=HH:MM
+    if os.getenv("SUPPLIER_SCHEDULE_ENABLED", "").strip().lower() != "true":
+        return None
+
+    code = (supplier_code or "").strip().upper()
+    prefix = f"SUPPLIER_{code}_BLOCK_"
+    return _parse_supplier_schedule_window(
+        supplier_code=code,
+        source_label="env",
+        start_day_raw=os.getenv(f"{prefix}START_DAY"),
+        start_time_raw=os.getenv(f"{prefix}START_TIME"),
+        end_day_raw=os.getenv(f"{prefix}END_DAY"),
+        end_time_raw=os.getenv(f"{prefix}END_TIME"),
+    )
+
+
+def _schedule_now_in_minutes(now: datetime | None = None) -> int:
     schedule_tz: Optional[ZoneInfo] = None
     try:
         schedule_tz = ZoneInfo("Europe/Kiev")
@@ -469,14 +523,52 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
                 current = current.astimezone(schedule_tz)
         elif current.tzinfo is not None and current.utcoffset() is not None:
             current = current.astimezone()
-    now_minutes = current.weekday() * 1440 + current.hour * 60 + current.minute
+    return current.weekday() * 1440 + current.hour * 60 + current.minute
 
+
+def _is_now_within_schedule_window(
+    schedule_window: tuple[int, int, int, int] | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not schedule_window:
+        return False
+    start_day, start_time, end_day, end_time = schedule_window
+    now_minutes = _schedule_now_in_minutes(now)
     start_minutes = (start_day - 1) * 1440 + start_time
     end_minutes = (end_day - 1) * 1440 + end_time
 
     if start_minutes <= end_minutes:
         return start_minutes <= now_minutes <= end_minutes
     return now_minutes >= start_minutes or now_minutes <= end_minutes
+
+
+async def is_supplier_blocked(
+    session: AsyncSession,
+    supplier_code: str,
+    *,
+    supplier: DropshipEnterprise | None = None,
+    now: datetime | None = None,
+) -> bool:
+    code = (supplier_code or "").strip().upper()
+    ent = supplier
+
+    if ent is None and code:
+        result = await session.execute(
+            select(DropshipEnterprise).where(DropshipEnterprise.code == code).limit(1)
+        )
+        ent = result.scalars().first()
+
+    db_window = _resolve_schedule_window_from_model(ent, code) if ent is not None else None
+    if db_window is False:
+        return False
+    if db_window is not None:
+        return _is_now_within_schedule_window(db_window, now=now)
+
+    env_window = _resolve_schedule_window_from_env(code)
+    if env_window is not None:
+        logger.debug("Supplier %s uses legacy env schedule fallback.", code)
+    return _is_now_within_schedule_window(env_window, now=now)
 
 # --------------------------------------------------------------------------------------
 # Реестр парсеров (подставьте свои реализации)
@@ -1858,7 +1950,7 @@ async def run_pipeline(
             for ent in suppliers:
                 supplier_code = str(getattr(ent, "code", "") or "")
                 try:
-                    if is_supplier_blocked(supplier_code):
+                    if await is_supplier_blocked(session, supplier_code, supplier=ent):
                         logger.info(
                             "Поставщик %s заблокирован по расписанию. Удаляем старые offers.",
                             supplier_code,

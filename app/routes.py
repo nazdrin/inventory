@@ -180,6 +180,7 @@ def _supplier_sections() -> list[SupplierSectionVM]:
         SupplierSectionVM(key="source", title="Источник"),
         SupplierSectionVM(key="pricing", title="Ценообразование"),
         SupplierSectionVM(key="orders", title="Заказы"),
+        SupplierSectionVM(key="schedule", title="График недоступности"),
         SupplierSectionVM(key="technical", title="Технические", collapsible=True, default_open=False),
     ]
 
@@ -205,6 +206,11 @@ def _build_supplier_detail_vm(item: DropshipEnterprise) -> SupplierDetailVM:
         salesdrive_supplier_id=item.salesdrive_supplier_id,
         biotus_orders_enabled=bool(item.biotus_orders_enabled),
         np_fulfillment_enabled=bool(item.np_fulfillment_enabled),
+        schedule_enabled=bool(item.schedule_enabled),
+        block_start_day=item.block_start_day,
+        block_start_time=item.block_start_time,
+        block_end_day=item.block_end_day,
+        block_end_time=item.block_end_time,
         cities_raw=item.city,
         cities_list=_supplier_split_cities(item.city),
         feed_url=item.feed_url,
