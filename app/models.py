@@ -236,6 +236,12 @@ class DropshipEnterprise(Base, TimestampMixin):
                                    doc="Участвует в Biotus order check main flow")
     np_fulfillment_enabled = Column(Boolean, nullable=False, server_default=text("false"),
                                     doc="Использовать fulfillment sender address для NP")
+    schedule_enabled = Column(Boolean, nullable=False, server_default=text("false"),
+                              doc="Включить окно недоступности поставщика")
+    block_start_day = Column(SmallInteger, nullable=True, doc="День начала окна блокировки (1=Mon ... 7=Sun)")
+    block_start_time = Column(String(5), nullable=True, doc="Время начала окна блокировки (HH:MM)")
+    block_end_day = Column(SmallInteger, nullable=True, doc="День конца окна блокировки (1=Mon ... 7=Sun)")
+    block_end_time = Column(String(5), nullable=True, doc="Время конца окна блокировки (HH:MM)")
 
     # Флаги — NOT NULL + дефолт на уровне БД (устойчиво к «пустым» вставкам)
     is_rrp = Column(Boolean, nullable=False, server_default=text("false"), doc="Флаг — есть ли РРЦ")
