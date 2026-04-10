@@ -134,6 +134,72 @@ class EnterpriseSettings(Base, TimestampMixin):
         Index("ix_enterprise_settings_single_store", "single_store"),
     )
 
+
+class BusinessSettings(Base, TimestampMixin):
+    __tablename__ = "business_settings"
+
+    id = Column(SmallInteger, primary_key=True, server_default=text("1"))
+
+    business_enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    daily_publish_enterprise_code_override = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=True,
+    )
+    weekly_salesdrive_enterprise_code_override = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=True,
+    )
+    biotus_enterprise_code_override = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=True,
+    )
+
+    master_weekly_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    master_weekly_day = Column(String(3), nullable=False, server_default=text("'SUN'"))
+    master_weekly_hour = Column(SmallInteger, nullable=False, server_default=text("3"))
+    master_weekly_minute = Column(SmallInteger, nullable=False, server_default=text("0"))
+
+    master_daily_publish_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    master_daily_publish_hour = Column(SmallInteger, nullable=False, server_default=text("9"))
+    master_daily_publish_minute = Column(SmallInteger, nullable=False, server_default=text("0"))
+    master_daily_publish_limit = Column(Integer, nullable=False, server_default=text("0"))
+
+    master_archive_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    master_archive_every_minutes = Column(Integer, nullable=False, server_default=text("60"))
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_business_settings_singleton_id"),
+        CheckConstraint(
+            "master_weekly_day IN ('MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN')",
+            name="ck_business_settings_weekly_day",
+        ),
+        CheckConstraint("master_weekly_hour BETWEEN 0 AND 23", name="ck_business_settings_weekly_hour"),
+        CheckConstraint("master_weekly_minute BETWEEN 0 AND 59", name="ck_business_settings_weekly_minute"),
+        CheckConstraint(
+            "master_daily_publish_hour BETWEEN 0 AND 23",
+            name="ck_business_settings_daily_publish_hour",
+        ),
+        CheckConstraint(
+            "master_daily_publish_minute BETWEEN 0 AND 59",
+            name="ck_business_settings_daily_publish_minute",
+        ),
+        CheckConstraint(
+            "master_daily_publish_limit >= 0",
+            name="ck_business_settings_daily_publish_limit_non_negative",
+        ),
+        CheckConstraint(
+            "master_archive_every_minutes >= 1",
+            name="ck_business_settings_archive_every_minutes_positive",
+        ),
+    )
+
 # Сопоставление аптек 
 class MappingBranch(Base):
     __tablename__ = "mapping_branch"
