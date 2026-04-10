@@ -7,6 +7,7 @@ import MappingBranchPage from "./pages/MappingBranchPage";
 import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
 import FormatsPage from "./pages/FormatsPage";
 import SuppliersPage from "./pages/SuppliersPage";
+import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 
 import Login from "./pages/Login";
 
@@ -102,6 +103,20 @@ const App = () => {
                         >
                             Formats
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/business")}
+                        >
+                            Business Settings
+                        </button>
                     </>
                 )}
             </div>
@@ -130,6 +145,10 @@ const App = () => {
                 <Route
                     path="/formats"
                     element={<PrivateRoute element={<FormatsPage />} />}
+                />
+                <Route
+                    path="/business"
+                    element={<PrivateRoute element={<BusinessSettingsPage authUser={authUser} />} />}
                 />
             </Routes>
         </div>

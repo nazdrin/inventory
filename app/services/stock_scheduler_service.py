@@ -32,7 +32,6 @@ from app.ftp_multi_data_service.ftp_multi_conv import run_service as run_ftp_mul
 from app.biotus_data_service.biotus_conv import run_service as run_biotus
 from app.bioteca_data_service.bioteca_conv import run_service as run_bioteca
 
-from app.business.dropship_pipeline import run_pipeline as run_business
 from app.database import get_async_db, EnterpriseSettings
 from app.services.notification_service import send_notification
 
@@ -60,7 +59,6 @@ PROCESSORS = {
     "FtpMulti": run_ftp_multi,
     "Biotus": run_biotus,
     "Bioteca": run_bioteca,
-    "Business": run_business,
 }
 
 async def notify_error(message: str, enterprise_code: str = "unknown"):
@@ -120,6 +118,14 @@ async def process_stock_for_enterprise(enterprise_code: str, data_format: str, s
             logging.info(
                 "Stock scheduler: skip enterprise_code=%s because stock_enabled=false",
                 enterprise_code,
+            )
+            return
+
+        if str(data_format or "").strip().lower() == "business":
+            logging.info(
+                "Stock scheduler: skip enterprise_code=%s data_format=%s because Business stock is handled by separate scheduler",
+                enterprise_code,
+                data_format,
             )
             return
 

@@ -125,6 +125,42 @@ class EnterpriseDetailVM(BaseModel):
     show_runtime_block: bool = True
 
 
+class BusinessEnterpriseCandidateVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+
+
+class BusinessSettingItemVM(BaseModel):
+    key: str
+    label: str
+    value: Any = None
+    source: str
+    group: Optional[str] = None
+    readonly: bool = True
+    help_text: Optional[str] = None
+
+
+class BusinessSectionVM(BaseModel):
+    key: str
+    title: str
+    description: Optional[str] = None
+    readonly: bool = True
+    items: List[BusinessSettingItemVM] = Field(default_factory=list)
+
+
+class BusinessSettingsVM(BaseModel):
+    resolution_status: str
+    resolution_message: str
+    resolved_enterprise_code: Optional[str] = None
+    resolved_enterprise_name: Optional[str] = None
+    business_candidates: List[BusinessEnterpriseCandidateVM] = Field(default_factory=list)
+    writable_supported: bool = False
+    deferred_write_reason: Optional[str] = None
+    planned_writable_keys: List[str] = Field(default_factory=list)
+    sections: List[BusinessSectionVM] = Field(default_factory=list)
+
+
 # Схема таблицы mapping
 class MappingBranchSchema(BaseModel):
     enterprise_code: str
