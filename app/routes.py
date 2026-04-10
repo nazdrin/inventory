@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, Request, Secu
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from fastapi.security import HTTPBearer
-from typing import List
+from typing import List, Any
 import os
 import json
 import tempfile
@@ -16,7 +16,8 @@ from app.schemas import (
     MappingBranchSchema, LoginSchema, BranchMappingListItemVM, BranchMappingDetailVM,
     MappingBranchConstrainedUpdateSchema, EnterpriseListItemVM, EnterpriseDetailVM,
     EnterpriseFieldMetaVM, EnterpriseSectionVM, SupplierListItemVM, SupplierDetailVM,
-    SupplierSectionVM,
+    SupplierSectionVM, BusinessSettingsVM, BusinessSectionVM, BusinessSettingItemVM,
+    BusinessEnterpriseCandidateVM,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -477,6 +478,612 @@ def _build_enterprise_detail_vm(enterprise: EnterpriseSettings) -> EnterpriseDet
     )
 
 
+def _env_bool_value(name: str, default: str = "0") -> bool:
+    return (os.getenv(name, default) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int_value(name: str, default: int) -> int:
+    raw = (os.getenv(name) or str(default)).strip()
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_optional_value(name: str) -> str | None:
+    value = (os.getenv(name) or "").strip()
+    return value or None
+
+
+def _business_planned_writable_keys() -> list[str]:
+    return [
+        "MASTER_CATALOG_ENTERPRISE_CODE",
+        "MASTER_DAILY_PUBLISH_ENTERPRISE",
+        "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE",
+        "MASTER_WEEKLY_ENABLED",
+        "MASTER_WEEKLY_DAY",
+        "MASTER_WEEKLY_HOUR",
+        "MASTER_WEEKLY_MINUTE",
+        "MASTER_DAILY_PUBLISH_ENABLED",
+        "MASTER_DAILY_PUBLISH_HOUR",
+        "MASTER_DAILY_PUBLISH_MINUTE",
+        "MASTER_DAILY_PUBLISH_LIMIT",
+        "MASTER_ARCHIVE_ENABLED",
+        "MASTER_ARCHIVE_EVERY_MINUTES",
+    ]
+
+
+async def _load_all_enterprises(db: AsyncSession) -> list[EnterpriseSettings]:
+    result = await db.execute(select(EnterpriseSettings).order_by(EnterpriseSettings.enterprise_name))
+    return list(result.scalars().all())
+
+
+def _filter_business_candidates(enterprises: list[EnterpriseSettings]) -> list[EnterpriseSettings]:
+    return [
+        enterprise
+        for enterprise in enterprises
+        if str(enterprise.data_format or "").strip().lower() == "business"
+    ]
+
+
+def _enterprise_lookup_by_code(enterprises: list[EnterpriseSettings]) -> dict[str, EnterpriseSettings]:
+    return {
+        str(enterprise.enterprise_code): enterprise
+        for enterprise in enterprises
+        if str(enterprise.enterprise_code or "").strip()
+    }
+
+
+def _build_business_candidates_vm(items: list[EnterpriseSettings]) -> list[BusinessEnterpriseCandidateVM]:
+    return [
+        BusinessEnterpriseCandidateVM(
+            enterprise_code=item.enterprise_code,
+            enterprise_name=item.enterprise_name,
+            data_format=item.data_format,
+        )
+        for item in items
+    ]
+
+
+def _business_resolution_state(candidates: list[EnterpriseSettings]) -> tuple[str, str, EnterpriseSettings | None]:
+    if not candidates:
+        return (
+            "none",
+            "Enterprise с data_format=Business не найден. Страница показывает только env-backed Business orchestration state.",
+            None,
+        )
+    if len(candidates) > 1:
+        return (
+            "ambiguous",
+            "Найдено несколько enterprise с data_format=Business. Страница показывает общий Business control-plane snapshot без выбора одного enterprise.",
+            None,
+        )
+    return (
+        "resolved",
+        "Найден один Business enterprise. Он используется для read-side snapshot страницы.",
+        candidates[0],
+    )
+
+
+def _business_item(
+    key: str,
+    label: str,
+    value,
+    source: str,
+    *,
+    group: str | None = None,
+    help_text: str | None = None,
+    readonly: bool = True,
+) -> BusinessSettingItemVM:
+    return BusinessSettingItemVM(
+        key=key,
+        label=label,
+        value=value,
+        source=source,
+        group=group,
+        readonly=readonly,
+        help_text=help_text,
+    )
+
+
+def _business_presence_label(value: Any) -> str:
+    return "configured" if str(value or "").strip() else "missing"
+
+
+def _business_bool_status(value: bool) -> str:
+    return "enabled" if value else "disabled"
+
+
+def _business_joined_env_list(name: str, default: str = "") -> str:
+    raw = (os.getenv(name) or default).strip()
+    if not raw:
+        return "—"
+    parts = [item.strip() for item in raw.replace(";", ",").split(",") if item.strip()]
+    return ", ".join(parts) if parts else "—"
+
+
+def _resolve_effective_target(explicit_name: str, fallback_name: str) -> tuple[str | None, str]:
+    explicit_value = _env_optional_value(explicit_name)
+    fallback_value = _env_optional_value(fallback_name)
+    if explicit_value:
+        return explicit_value, f"{explicit_name} (explicit)"
+    if fallback_value:
+        return fallback_value, f"{fallback_name} (fallback)"
+    return None, "missing"
+
+
+def _target_consistency_status(
+    resolution_status: str,
+    resolved_enterprise_code: str | None,
+    master_target: str | None,
+    biotus_target: str | None,
+) -> tuple[str, str]:
+    if resolution_status == "ambiguous":
+        return (
+            "ambiguous",
+            "Найдено несколько enterprise с data_format=Business; связность target enterprise нельзя считать однозначной.",
+        )
+    if resolution_status == "none":
+        return (
+            "no-business-enterprise",
+            "Business enterprise по data_format не найден; env target selectors остаются отдельными runtime-источниками.",
+        )
+    if resolved_enterprise_code and master_target and resolved_enterprise_code != master_target:
+        return (
+            "master-target-differs",
+            "Resolved Business enterprise и master target не совпадают. Это допустимо, но требует явной операторской проверки.",
+        )
+    if resolved_enterprise_code and biotus_target and resolved_enterprise_code != biotus_target:
+        return (
+            "biotus-target-separate",
+            "Biotus target остаётся отдельным selector и сейчас не должен считаться unified runtime target.",
+        )
+    return (
+        "linked-but-separate",
+        "MASTER targets можно показывать как связанную семью selector-ов, а Biotus target остаётся отдельным contour selector.",
+    )
+
+
+def _build_business_sections(
+    enterprise: EnterpriseSettings | None,
+    *,
+    resolution_status: str,
+    all_enterprises: list[EnterpriseSettings],
+) -> list[BusinessSectionVM]:
+    business_exists = enterprise is not None or resolution_status == "ambiguous"
+    old_catalog_disabled = _env_bool_value("DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER", "0")
+    use_master_mapping = _env_bool_value("USE_MASTER_MAPPING_FOR_STOCK", "0")
+    planned_write_supported = False
+    master_catalog_target = _env_optional_value("MASTER_CATALOG_ENTERPRISE_CODE")
+    explicit_daily_target = _env_optional_value("MASTER_DAILY_PUBLISH_ENTERPRISE")
+    explicit_weekly_target = _env_optional_value("MASTER_WEEKLY_SALESDRIVE_ENTERPRISE")
+    effective_daily_target, daily_target_source = _resolve_effective_target(
+        "MASTER_DAILY_PUBLISH_ENTERPRISE",
+        "MASTER_CATALOG_ENTERPRISE_CODE",
+    )
+    effective_weekly_target, weekly_target_source = _resolve_effective_target(
+        "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE",
+        "MASTER_CATALOG_ENTERPRISE_CODE",
+    )
+    biotus_target = _env_optional_value("BIOTUS_ENTERPRISE_CODE")
+    consistency_status, consistency_note = _target_consistency_status(
+        resolution_status,
+        enterprise.enterprise_code if enterprise is not None else None,
+        master_catalog_target,
+        biotus_target,
+    )
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    token_hint_target_code = master_catalog_target or (enterprise.enterprise_code if enterprise else None)
+    token_hint_target = enterprise_lookup.get(str(token_hint_target_code or ""))
+    token_presence = bool((getattr(token_hint_target, "token", None) or "").strip()) if token_hint_target else False
+
+    if resolution_status == "resolved" and enterprise is not None:
+        target_items = [
+            _business_item("enterprise_name", "Название предприятия", enterprise.enterprise_name, "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item("enterprise_code", "Код предприятия", enterprise.enterprise_code, "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item("data_format", "Текущий data_format", enterprise.data_format, "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item("branch_id", "Branch ID", enterprise.branch_id, "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item("catalog_enabled", "Каталог включён", bool(enterprise.catalog_enabled), "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item("stock_enabled", "Сток включён", bool(enterprise.stock_enabled), "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item("order_fetcher", "Получение заказов", bool(enterprise.order_fetcher), "EnterpriseSettings", group="Resolved Business enterprise"),
+        ]
+    else:
+        target_items = [
+            _business_item(
+                "resolution_status",
+                "Статус определения Business enterprise",
+                resolution_status,
+                "computed",
+                group="Resolved Business enterprise",
+            ),
+        ]
+
+    target_items.extend(
+        [
+            _business_item(
+                "master_catalog_enterprise_code",
+                "MASTER_CATALOG_ENTERPRISE_CODE",
+                master_catalog_target,
+                "env",
+                group="Linked runtime targets",
+            ),
+            _business_item(
+                "master_daily_publish_enterprise_explicit",
+                "Daily publish explicit target",
+                explicit_daily_target,
+                "env",
+                group="Linked runtime targets",
+            ),
+            _business_item(
+                "master_daily_publish_enterprise_effective",
+                "Daily publish effective target",
+                effective_daily_target,
+                daily_target_source,
+                group="Linked runtime targets",
+            ),
+            _business_item(
+                "master_weekly_salesdrive_enterprise_explicit",
+                "Weekly SalesDrive explicit target",
+                explicit_weekly_target,
+                "env",
+                group="Linked runtime targets",
+            ),
+            _business_item(
+                "master_weekly_salesdrive_enterprise_effective",
+                "Weekly SalesDrive effective target",
+                effective_weekly_target,
+                weekly_target_source,
+                group="Linked runtime targets",
+            ),
+            _business_item(
+                "biotus_enterprise_code_target",
+                "BIOTUS_ENTERPRISE_CODE",
+                biotus_target,
+                "env",
+                group="Separate runtime target",
+                help_text="Biotus target показывается отдельно и не объединяется в единый runtime selector.",
+            ),
+            _business_item(
+                "target_consistency_status",
+                "Target consistency status",
+                consistency_status,
+                "computed",
+                group="Consistency",
+            ),
+            _business_item(
+                "target_consistency_note",
+                "Consistency note",
+                consistency_note,
+                "computed",
+                group="Consistency",
+            ),
+        ]
+    )
+
+    legacy_items = [
+        _business_item(
+            "old_business_contour_status",
+            "Статус старого Business catalog contour",
+            "scheduler-disabled" if old_catalog_disabled else "scheduler-reachable",
+            "computed",
+        ),
+        _business_item(
+            "disable_old_business_catalog_scheduler",
+            "DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER",
+            old_catalog_disabled,
+            "env",
+        ),
+        _business_item(
+            "scheduler_disabled",
+            "Scheduler disabled",
+            old_catalog_disabled,
+            "computed",
+        ),
+        _business_item(
+            "business_enterprise_exists",
+            "Business enterprise найден",
+            business_exists,
+            "computed",
+        ),
+        _business_item(
+            "manual_reachability",
+            "Manual reachability",
+            "CLI/direct call still possible",
+            "computed",
+            help_text="Old Business contour остаётся manually reachable через import_catalog.py и не считается удалённым.",
+        ),
+    ]
+
+    stock_items = [
+        _business_item(
+            "use_master_mapping_for_stock",
+            "USE_MASTER_MAPPING_FOR_STOCK",
+            use_master_mapping,
+            "env",
+        ),
+        _business_item(
+            "mapping_mode_status",
+            "Текущий mapping mode",
+            "master-first with legacy fallback" if use_master_mapping else "legacy mapping primary",
+            "computed",
+        ),
+        _business_item(
+            "catalog_mapping_dependency",
+            "catalog_mapping runtime dependency",
+            "order_sender + dropship fallback still read catalog_mapping",
+            "computed",
+            help_text="Это snapshot статуса по текущему коду, без deep runtime probe.",
+        ),
+    ]
+
+    orders_items = [
+        _business_item("biotus_enterprise_code", "BIOTUS_ENTERPRISE_CODE", biotus_target, "env", group="Target"),
+        _business_item(
+            "biotus_enable_unhandled_fallback",
+            "BIOTUS_ENABLE_UNHANDLED_FALLBACK",
+            _env_bool_value("BIOTUS_ENABLE_UNHANDLED_FALLBACK", "1"),
+            "env",
+            group="Fallback policy",
+        ),
+        _business_item(
+            "biotus_unhandled_order_timeout_minutes",
+            "BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES",
+            _env_int_value("BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES", 60),
+            "env",
+            group="Fallback policy",
+        ),
+        _business_item(
+            "biotus_fallback_additional_status_ids",
+            "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
+            _business_joined_env_list("BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS", "9,19,18,20"),
+            "env",
+            group="Fallback policy",
+        ),
+        _business_item(
+            "biotus_duplicate_status_id",
+            "BIOTUS_DUPLICATE_STATUS_ID",
+            _env_int_value("BIOTUS_DUPLICATE_STATUS_ID", 20),
+            "env",
+            group="Fallback policy",
+        ),
+        _business_item(
+            "biotus_time_default_minutes",
+            "BIOTUS_TIME_DEFAULT_MINUTES",
+            _env_int_value("BIOTUS_TIME_DEFAULT_MINUTES", 30),
+            "env",
+            group="Timing window",
+        ),
+        _business_item(
+            "biotus_time_switch_hour",
+            "BIOTUS_TIME_SWITCH_HOUR",
+            _env_int_value("BIOTUS_TIME_SWITCH_HOUR", 12),
+            "env",
+            group="Timing window",
+        ),
+        _business_item(
+            "biotus_time_switch_end_hour",
+            "BIOTUS_TIME_SWITCH_END_HOUR",
+            _env_int_value("BIOTUS_TIME_SWITCH_END_HOUR", 13),
+            "env",
+            group="Timing window",
+        ),
+        _business_item(
+            "biotus_time_after_switch_minutes",
+            "BIOTUS_TIME_AFTER_SWITCH_MINUTES",
+            _env_int_value("BIOTUS_TIME_AFTER_SWITCH_MINUTES", 15),
+            "env",
+            group="Timing window",
+        ),
+        _business_item(
+            "biotus_tz",
+            "BIOTUS_TZ",
+            _env_optional_value("BIOTUS_TZ") or "Europe/Kyiv",
+            "env",
+            group="Timing window",
+        ),
+        _business_item(
+            "tabletki_cancel_reason_default",
+            "TABLETKI_CANCEL_REASON_DEFAULT",
+            _env_int_value("TABLETKI_CANCEL_REASON_DEFAULT", 18),
+            "env",
+            group="Fallback policy",
+        ),
+        _business_item(
+            "allowed_suppliers",
+            "ALLOWED_SUPPLIERS",
+            _business_joined_env_list("ALLOWED_SUPPLIERS", "38;41"),
+            "env",
+            group="Transitional fallback",
+            help_text="Fallback allowlist. Основной контур выбора поставщиков уже смещается в supplier-model driven flags.",
+        ),
+    ]
+
+    master_items = [
+        _business_item("master_scheduler_enabled", "MASTER_SCHEDULER_ENABLED", _env_bool_value("MASTER_SCHEDULER_ENABLED", "1"), "env", group="Scheduler gates"),
+        _business_item("master_catalog_enterprise_code_vm", "MASTER_CATALOG_ENTERPRISE_CODE", master_catalog_target, "env", group="Target selectors"),
+        _business_item("master_daily_publish_enterprise", "MASTER_DAILY_PUBLISH_ENTERPRISE", explicit_daily_target, "env", group="Target selectors"),
+        _business_item("master_daily_publish_effective_target", "Daily publish effective target", effective_daily_target, daily_target_source, group="Target selectors"),
+        _business_item("master_weekly_salesdrive_enterprise", "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE", explicit_weekly_target, "env", group="Target selectors"),
+        _business_item("master_weekly_salesdrive_effective_target", "Weekly SalesDrive effective target", effective_weekly_target, weekly_target_source, group="Target selectors"),
+        _business_item("master_weekly_enabled", "MASTER_WEEKLY_ENABLED", _env_bool_value("MASTER_WEEKLY_ENABLED", "1"), "env", group="Weekly orchestration"),
+        _business_item("master_weekly_day", "MASTER_WEEKLY_DAY", _env_optional_value("MASTER_WEEKLY_DAY") or "SUN", "env", group="Weekly orchestration"),
+        _business_item("master_weekly_hour", "MASTER_WEEKLY_HOUR", _env_int_value("MASTER_WEEKLY_HOUR", 3), "env", group="Weekly orchestration"),
+        _business_item("master_weekly_minute", "MASTER_WEEKLY_MINUTE", _env_int_value("MASTER_WEEKLY_MINUTE", 0), "env", group="Weekly orchestration"),
+        _business_item("master_weekly_salesdrive_batch_size", "MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", _env_int_value("MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", 100), "env", group="Weekly orchestration"),
+        _business_item("master_daily_publish_enabled", "MASTER_DAILY_PUBLISH_ENABLED", _env_bool_value("MASTER_DAILY_PUBLISH_ENABLED", "0"), "env", group="Daily publish"),
+        _business_item("master_daily_publish_hour", "MASTER_DAILY_PUBLISH_HOUR", _env_int_value("MASTER_DAILY_PUBLISH_HOUR", 8), "env", group="Daily publish"),
+        _business_item("master_daily_publish_minute", "MASTER_DAILY_PUBLISH_MINUTE", _env_int_value("MASTER_DAILY_PUBLISH_MINUTE", 0), "env", group="Daily publish"),
+        _business_item("master_daily_publish_limit", "MASTER_DAILY_PUBLISH_LIMIT", _env_int_value("MASTER_DAILY_PUBLISH_LIMIT", 0), "env", group="Daily publish"),
+        _business_item("master_archive_enabled", "MASTER_ARCHIVE_ENABLED", _env_bool_value("MASTER_ARCHIVE_ENABLED", "0"), "env", group="Archive"),
+        _business_item("master_archive_every_minutes", "MASTER_ARCHIVE_EVERY_MINUTES", _env_int_value("MASTER_ARCHIVE_EVERY_MINUTES", 60), "env", group="Archive"),
+        _business_item(
+            "master_target_fallback_note",
+            "Target fallback note",
+            "Daily/weekly explicit targets fallback to MASTER_CATALOG_ENTERPRISE_CODE when empty.",
+            "computed",
+            group="Target selectors",
+        ),
+        _business_item(
+            "writable_scope_status",
+            "Writable first scope",
+            "deferred",
+            "computed",
+            help_text="Persistent write для env-backed orchestration settings намеренно не включён на этом шаге: в проекте нет готового безопасного env-settings backend.",
+        ),
+    ]
+
+    pricing_items = [
+        _business_item("base_thr", "BASE_THR", _env_optional_value("BASE_THR") or "0.08", "env", group="Базовая модель"),
+        _business_item(
+            "use_master_mapping_for_stock_pricing",
+            "USE_MASTER_MAPPING_FOR_STOCK",
+            use_master_mapping,
+            "env",
+            group="Базовая модель",
+            help_text="Не pricing-only флаг, но напрямую влияет на Business stock/order mapping contour.",
+        ),
+        _business_item("price_band_low_max", "PRICE_BAND_LOW_MAX", _env_optional_value("PRICE_BAND_LOW_MAX") or "100", "env", group="Диапазоны цен"),
+        _business_item("price_band_mid_max", "PRICE_BAND_MID_MAX", _env_optional_value("PRICE_BAND_MID_MAX") or "400", "env", group="Диапазоны цен"),
+        _business_item("thr_mult_low", "THR_MULT_LOW", _env_optional_value("THR_MULT_LOW") or "1.0", "env", group="Мультипликаторы"),
+        _business_item("thr_mult_mid", "THR_MULT_MID", _env_optional_value("THR_MULT_MID") or "1.0", "env", group="Мультипликаторы"),
+        _business_item("thr_mult_high", "THR_MULT_HIGH", _env_optional_value("THR_MULT_HIGH") or "1.0", "env", group="Мультипликаторы"),
+        _business_item("no_comp_mult_low", "NO_COMP_MULT_LOW", _env_optional_value("NO_COMP_MULT_LOW") or "1.0", "env", group="Мультипликаторы"),
+        _business_item("no_comp_mult_mid", "NO_COMP_MULT_MID", _env_optional_value("NO_COMP_MULT_MID") or "1.0", "env", group="Мультипликаторы"),
+        _business_item("no_comp_mult_high", "NO_COMP_MULT_HIGH", _env_optional_value("NO_COMP_MULT_HIGH") or "1.0", "env", group="Мультипликаторы"),
+        _business_item("comp_delta_min_uah", "COMP_DELTA_MIN_UAH", _env_optional_value("COMP_DELTA_MIN_UAH") or "2", "env", group="Конкурентное поведение"),
+        _business_item("comp_delta_max_uah", "COMP_DELTA_MAX_UAH", _env_optional_value("COMP_DELTA_MAX_UAH") or "15", "env", group="Конкурентное поведение"),
+        _business_item("comp_discount_share", "COMP_DISCOUNT_SHARE", _env_optional_value("COMP_DISCOUNT_SHARE") or "0.01", "env", group="Конкурентное поведение"),
+        _business_item("price_jitter_enabled", "PRICE_JITTER_ENABLED", _env_bool_value("PRICE_JITTER_ENABLED", "0"), "env", group="Jitter"),
+        _business_item("price_jitter_step_uah", "PRICE_JITTER_STEP_UAH", _env_optional_value("PRICE_JITTER_STEP_UAH") or "0.5", "env", group="Jitter"),
+        _business_item("price_jitter_min_uah", "PRICE_JITTER_MIN_UAH", _env_optional_value("PRICE_JITTER_MIN_UAH"), "env", group="Jitter"),
+        _business_item("price_jitter_max_uah", "PRICE_JITTER_MAX_UAH", _env_optional_value("PRICE_JITTER_MAX_UAH"), "env", group="Jitter"),
+    ]
+
+    salesdrive_items = [
+        _business_item(
+            "salesdrive_product_handler_url_status",
+            "SALESDRIVE_PRODUCT_HANDLER_URL",
+            _business_presence_label(_env_optional_value("SALESDRIVE_PRODUCT_HANDLER_URL")),
+            "env",
+            group="Handler endpoints",
+            help_text="Показывается только presence/status, без вывода raw endpoint в UI.",
+        ),
+        _business_item(
+            "salesdrive_category_handler_url_status",
+            "SALESDRIVE_CATEGORY_HANDLER_URL",
+            _business_presence_label(_env_optional_value("SALESDRIVE_CATEGORY_HANDLER_URL")),
+            "env",
+            group="Handler endpoints",
+            help_text="Показывается только presence/status, без вывода raw endpoint в UI.",
+        ),
+        _business_item(
+            "salesdrive_token_presence",
+            "Enterprise token presence",
+            "present" if token_presence else "missing",
+            "secret-hidden",
+            group="Auth source",
+            help_text=(
+                f"Проверка token presence для enterprise={token_hint_target_code}."
+                if token_hint_target_code
+                else "Resolved Business/master target enterprise для token hint не найден."
+            ),
+        ),
+        _business_item(
+            "salesdrive_base_url_note",
+            "SALESDRIVE_BASE_URL note",
+            "Current order/Biotus contour still uses hardcoded SalesDrive base URL constant instead of env source-of-truth.",
+            "transitional",
+            group="Runtime note",
+        ),
+    ]
+
+    technical_items = [
+        _business_item("enterprise_settings_owner", "EnterpriseSettings owner", "enterprise runtime fields still owned by EnterpriseSettings", "EnterpriseSettings", group="Source of truth"),
+        _business_item("env_owner", "Env-backed settings", "master orchestration, pricing and Biotus policy still come from env", "env", group="Source of truth"),
+        _business_item("transitional_state", "Transitional settings", "old Business catalog contour, ALLOWED_SUPPLIERS and mapping fallback remain transitional", "transitional", group="Source of truth"),
+        _business_item("secret_hidden", "Secret-hidden values", "token/API-key values are represented only as presence/status hints", "secret-hidden", group="Visibility rules"),
+        _business_item("write_support", "Запись orchestration settings", planned_write_supported, "computed", group="Visibility rules"),
+    ]
+
+    return [
+        BusinessSectionVM(
+            key="target_enterprise",
+            title="Целевое предприятие",
+            description="Read-only snapshot resolved Business enterprise и связанных runtime selector-ов без попытки объединить их в один ownership-layer.",
+            readonly=True,
+            items=target_items,
+        ),
+        BusinessSectionVM(
+            key="master_catalog",
+            title="Master Catalog",
+            description="Текущие master orchestration settings читаются из env. Writable scope намеренно отложен до отдельного шага.",
+            readonly=True,
+            items=master_items,
+        ),
+        BusinessSectionVM(
+            key="legacy_catalog",
+            title="Старый каталог",
+            description="Статус old Business catalog contour без изменения runtime ownership.",
+            readonly=True,
+            items=legacy_items,
+        ),
+        BusinessSectionVM(
+            key="stock_mapping_mode",
+            title="Сток / Mapping Mode",
+            description="Read-only snapshot текущего режима сопоставления и fallback semantics.",
+            readonly=True,
+            items=stock_items,
+        ),
+        BusinessSectionVM(
+            key="pricing",
+            title="Ценообразование",
+            description="Read-only snapshot pricing control-plane из dropship pipeline. Секция intentionally не включает write logic.",
+            readonly=True,
+            items=pricing_items,
+        ),
+        BusinessSectionVM(
+            key="orders_biotus",
+            title="Заказы / Biotus",
+            description="Read-only snapshot Business order policy, без write support на этом шаге.",
+            readonly=True,
+            items=orders_items,
+        ),
+        BusinessSectionVM(
+            key="salesdrive_integrations",
+            title="SalesDrive / Интеграции",
+            description="Read-only visibility по handler endpoints и auth/provenance hints без показа секретов.",
+            readonly=True,
+            items=salesdrive_items,
+        ),
+        BusinessSectionVM(
+            key="technical_status",
+            title="Технический статус",
+            description="Короткие ownership/provenance hints для текущей Business control-plane surface.",
+            readonly=True,
+            items=technical_items,
+        ),
+    ]
+
+
+async def _build_business_settings_vm(db: AsyncSession) -> BusinessSettingsVM:
+    all_enterprises = await _load_all_enterprises(db)
+    candidates = _filter_business_candidates(all_enterprises)
+    resolution_status, resolution_message, resolved = _business_resolution_state(candidates)
+    return BusinessSettingsVM(
+        resolution_status=resolution_status,
+        resolution_message=resolution_message,
+        resolved_enterprise_code=resolved.enterprise_code if resolved else None,
+        resolved_enterprise_name=resolved.enterprise_name if resolved else None,
+        business_candidates=_build_business_candidates_vm(candidates),
+        writable_supported=False,
+        deferred_write_reason=(
+            "Persistent write для env-backed Business orchestration settings не включён на этом шаге: в проекте нет существующего безопасного app-level settings backend без runtime ownership drift."
+        ),
+        planned_writable_keys=_business_planned_writable_keys(),
+        sections=_build_business_sections(resolved, resolution_status=resolution_status, all_enterprises=all_enterprises),
+    )
+
+
 def _build_mapping_conflict_flags(rows: list[dict]) -> dict[str, list[str]]:
     duplicate_store_keys: set[tuple[str, str]] = set()
     duplicate_folder_keys: set[tuple[str, str]] = set()
@@ -747,6 +1354,16 @@ async def get_all_enterprises_view(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(EnterpriseSettings).order_by(EnterpriseSettings.enterprise_name))
     enterprises = result.scalars().all()
     return _build_enterprise_list_vm(enterprises)
+
+
+@router.get(
+    "/business/settings/view",
+    response_model=BusinessSettingsVM,
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_settings_view(db: AsyncSession = Depends(get_db)):
+    return await _build_business_settings_vm(db)
+
 
 @router.get("/enterprise/settings/{enterprise_code}", dependencies=[Depends(verify_token)])
 async def get_enterprise_by_code(enterprise_code: str, db: AsyncSession = Depends(get_db)):
