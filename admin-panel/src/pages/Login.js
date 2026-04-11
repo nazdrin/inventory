@@ -97,7 +97,7 @@ const Login = ({ setAuthUser }) => {
 
                     {/* Поле пароля */}
                     <label htmlFor="password" style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Пароль:</label>
-                    <div style={{ position: "relative", marginBottom: "15px" }}>
+                    <div style={{ position: "relative", marginBottom: "15px", width: "100%" }}>
                         <input
                             id="password"
                             name="password"
@@ -111,6 +111,7 @@ const Login = ({ setAuthUser }) => {
                                 width: '100%',
                                 padding: '10px',
                                 paddingRight: '88px',
+                                boxSizing: 'border-box',
                                 borderRadius: '5px',
                                 border: '1px solid #ccc'
                             }}

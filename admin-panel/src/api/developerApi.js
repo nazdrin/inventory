@@ -4,12 +4,58 @@ import { API_BASE_URL } from "../config"; // Импортируем базовы
 const API_URL = `${API_BASE_URL}/developer/settings`;
 const DATA_FORMATS_URL = `${API_BASE_URL}/data_formats`;
 
+const clearStoredAuth = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user_login");
+};
+
+const redirectToLogin = () => {
+    clearStoredAuth();
+    window.location.href = "/";
+};
+
+const decodeJwtPayload = (token) => {
+    try {
+        const [, payload] = token.split(".");
+        if (!payload) {
+            return null;
+        }
+
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
+        return JSON.parse(atob(padded));
+    } catch (error) {
+        return null;
+    }
+};
+
+const getStoredLogin = () => {
+    const token = localStorage.getItem("token");
+    const payload = token ? decodeJwtPayload(token) : null;
+    const loginFromToken = payload?.sub;
+    const loginFromStorage = localStorage.getItem("user_login");
+    const login = loginFromToken || loginFromStorage;
+
+    if (loginFromToken && loginFromStorage !== loginFromToken) {
+        localStorage.setItem("user_login", loginFromToken);
+    }
+
+    return login;
+};
+
+const handleAuthError = (error) => {
+    const status = error?.response?.status;
+    if (status === 401 || status === 403) {
+        redirectToLogin();
+    }
+};
+
 // 🔹 Функция для получения токена
 const getAuthToken = () => {
     const token = localStorage.getItem("token");
     if (!token) {
         console.error("Ошибка: Токен отсутствует");
-        window.location.href = "/";
+        redirectToLogin();
         return null;
     }
     return token;
@@ -30,10 +76,10 @@ const getAuthHeaders = () => {
 
 // 🔹 Получение настроек разработчика по логину
 const getSetting = async () => {
-    const login = localStorage.getItem("user_login"); // Берем логин из localStorage
+    const login = getStoredLogin();
     if (!login) {
         console.error("Ошибка: Логин пользователя не найден в localStorage");
-        window.location.href = "/";
+        redirectToLogin();
         return null;
     }
 
@@ -43,6 +89,7 @@ const getSetting = async () => {
         console.log("✅ Полученные настройки:", response.data);
         return response.data;
     } catch (error) {
+        handleAuthError(error);
         console.error("❌ Ошибка получения настроек:", error);
         throw error;
     }
@@ -50,10 +97,10 @@ const getSetting = async () => {
 
 // 🔹 Обновление настроек разработчика
 const updateSetting = async (data) => {
-    const login = localStorage.getItem("user_login");
+    const login = getStoredLogin();
     if (!login) {
         console.error("Ошибка: Логин отсутствует");
-        window.location.href = "/";
+        redirectToLogin();
         return;
     }
 
@@ -69,6 +116,7 @@ const updateSetting = async (data) => {
         console.log("✅ Ответ сервера:", response.data);
         return response.data;
     } catch (error) {
+        handleAuthError(error);
         console.error(`❌ Ошибка при обновлении настроек для ${login}:`, error);
         throw error;
     }
@@ -82,6 +130,7 @@ const getDataFormats = async () => {
         console.log("✅ Получены форматы данных:", response.data);
         return response.data;
     } catch (error) {
+        handleAuthError(error);
         console.error("❌ Ошибка загрузки форматов данных:", error);
         throw error;
     }
@@ -96,6 +145,7 @@ const addDataFormat = async (newFormat) => {
         console.log("✅ Формат добавлен:", response.data);
         return response.data;
     } catch (error) {
+        handleAuthError(error);
         console.error("❌ Ошибка добавления формата данных:", error);
         throw error;
     }
@@ -104,9 +154,7 @@ const addDataFormat = async (newFormat) => {
 // 🔹 Выход из системы (удаление токена и логина)
 const logout = () => {
     console.warn("🚪 Выход из системы...");
-    localStorage.removeItem("token");
-    localStorage.removeItem("user_login");
-    window.location.href = "/"; // Перенаправляем на страницу логина
+    redirectToLogin();
 };
 
 // 🔹 Экспортируем API-функции

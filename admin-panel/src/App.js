@@ -11,14 +11,44 @@ import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 
 import Login from "./pages/Login";
 
+const clearStoredAuth = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user_login");
+};
+
+const decodeJwtPayload = (token) => {
+    try {
+        const [, payload] = token.split(".");
+        if (!payload) {
+            return null;
+        }
+
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
+        const decoded = atob(padded);
+        return JSON.parse(decoded);
+    } catch (error) {
+        return null;
+    }
+};
+
 const getStoredAuthUser = () => {
     const token = localStorage.getItem("token");
-    const developerLogin = localStorage.getItem("user_login");
+    const payload = token ? decodeJwtPayload(token) : null;
+    const developerLogin = payload?.sub || localStorage.getItem("user_login");
 
-    if (!token || !developerLogin) {
+    if (!token || !developerLogin || !payload?.exp) {
+        clearStoredAuth();
         return null;
     }
 
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    if (payload.exp <= nowInSeconds) {
+        clearStoredAuth();
+        return null;
+    }
+
+    localStorage.setItem("user_login", developerLogin);
     return { developer_login: developerLogin };
 };
 
