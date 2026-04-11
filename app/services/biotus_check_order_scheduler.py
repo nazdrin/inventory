@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.business.biotus_check_order import process_biotus_orders
+from app.services.master_business_settings_resolver import load_master_business_settings_snapshot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +56,6 @@ def _seconds_until_night_end(now_kyiv: datetime, end_hour: int) -> int:
 
 async def schedule_biotus_check_order() -> None:
     interval_seconds = _env_int("BIOTUS_SCHEDULER_INTERVAL_SECONDS", 60)
-    enterprise_code = os.getenv("BIOTUS_ENTERPRISE_CODE", "223")
     verify_ssl = not _env_bool("BIOTUS_NO_SSL_VERIFY", False)
     dry_run = _env_bool("BIOTUS_DRY_RUN", False)
     tz_name = _env_str("BIOTUS_TZ", "Europe/Kyiv")
@@ -76,9 +76,12 @@ async def schedule_biotus_check_order() -> None:
         logger.warning("Не удалось загрузить TZ=%r, используется Europe/Kyiv", tz_name)
         tz = ZoneInfo("Europe/Kyiv")
 
+    settings = await load_master_business_settings_snapshot()
+    startup_enterprise = settings.biotus_enterprise_code_effective
     logger.info(
-        "Biotus scheduler started: enterprise=%s interval=%ss dry_run=%s verify_ssl=%s tz=%s night=%s-%s mode=%s",
-        enterprise_code,
+        "Biotus scheduler started: enterprise=%s source=%s interval=%ss dry_run=%s verify_ssl=%s tz=%s night=%s-%s mode=%s",
+        startup_enterprise,
+        settings.source,
         interval_seconds,
         dry_run,
         verify_ssl,
@@ -112,12 +115,15 @@ async def schedule_biotus_check_order() -> None:
         try:
             if run_orders:
                 result = await process_biotus_orders(
-                    enterprise_code=enterprise_code,
+                    enterprise_code=None,
                     min_age_minutes=None,
                     verify_ssl=verify_ssl,
                     dry_run=dry_run,
                 )
-                logger.info("Biotus run result: %s", result)
+                if result.get("status") == "skipped":
+                    logger.warning("Biotus run skipped: %s", result)
+                else:
+                    logger.info("Biotus run result: %s", result)
             else:
                 logger.info(
                     "Biotus run skipped due to night mode; sleep until %s:00",
