@@ -6,7 +6,7 @@ const getAuthHeaders = () => {
     const token = localStorage.getItem("token");
 
     if (!token) {
-        window.location.href = "/login"; // Перенаправляем на страницу логина, если токена нет
+        window.location.href = "/"; // Перенаправляем на страницу логина, если токена нет
     }
 
     return {

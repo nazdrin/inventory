@@ -9,7 +9,7 @@ const getAuthToken = () => {
     const token = localStorage.getItem("token");
     if (!token) {
         console.error("Ошибка: Токен отсутствует");
-        window.location.href = "/login";
+        window.location.href = "/";
         return null;
     }
     return token;
@@ -33,7 +33,7 @@ const getSetting = async () => {
     const login = localStorage.getItem("user_login"); // Берем логин из localStorage
     if (!login) {
         console.error("Ошибка: Логин пользователя не найден в localStorage");
-        window.location.href = "/login";
+        window.location.href = "/";
         return null;
     }
 
@@ -53,7 +53,7 @@ const updateSetting = async (data) => {
     const login = localStorage.getItem("user_login");
     if (!login) {
         console.error("Ошибка: Логин отсутствует");
-        window.location.href = "/login";
+        window.location.href = "/";
         return;
     }
 
@@ -106,7 +106,7 @@ const logout = () => {
     console.warn("🚪 Выход из системы...");
     localStorage.removeItem("token");
     localStorage.removeItem("user_login");
-    window.location.href = "/login"; // Перенаправляем на страницу логина
+    window.location.href = "/"; // Перенаправляем на страницу логина
 };
 
 // 🔹 Экспортируем API-функции

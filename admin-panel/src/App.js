@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 // import Navbar from "./components/Navbar";
 import DeveloperPanel from "./pages/DeveloperPanel";
@@ -11,9 +11,23 @@ import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 
 import Login from "./pages/Login";
 
+const getStoredAuthUser = () => {
+    const token = localStorage.getItem("token");
+    const developerLogin = localStorage.getItem("user_login");
+
+    if (!token || !developerLogin) {
+        return null;
+    }
+
+    return { developer_login: developerLogin };
+};
+
 const App = () => {
-    const [authUser, setAuthUser] = useState(null);
+    const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
     const navigate = useNavigate();
+    const loginElement = useMemo(() => {
+        return authUser ? <Navigate to="/developer" replace /> : <Login setAuthUser={setAuthUser} />;
+    }, [authUser]);
 
     const PrivateRoute = ({ element }) => {
         return authUser ? element : <Navigate to="/" />;
@@ -121,7 +135,8 @@ const App = () => {
                 )}
             </div>
             <Routes>
-                <Route path="/" element={<Login setAuthUser={setAuthUser} />} />
+                <Route path="/" element={loginElement} />
+                <Route path="/login" element={loginElement} />
                 <Route
                     path="/developer"
                     element={<PrivateRoute element={<DeveloperPanel authUser={authUser} />} />}
