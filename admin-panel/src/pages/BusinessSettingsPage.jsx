@@ -400,7 +400,7 @@ const buildDraftFromViewModel = (viewModel) => {
         ).join(", "),
         biotus_duplicate_status_id: String(items.get("biotus_duplicate_status_id")?.value ?? "20"),
         business_stock_enabled: Boolean(items.get("business_stock_enabled")?.value ?? true),
-        business_stock_interval_seconds: String(items.get("business_stock_interval_seconds")?.value ?? "60"),
+        business_stock_interval_seconds: String(items.get("business_stock_interval_seconds")?.value ?? "1"),
         branch_id: String(items.get("branch_id")?.value ?? ""),
         tabletki_login: String(items.get("tabletki_login")?.value ?? ""),
         tabletki_password: String(items.get("tabletki_password")?.value ?? ""),
@@ -434,7 +434,7 @@ const buildUpdatePayload = (draft) => ({
     business_stock_enabled: Boolean(draft.business_stock_enabled),
     business_stock_interval_seconds: parsePositiveInteger(
         draft.business_stock_interval_seconds,
-        "BUSINESS_STOCK_INTERVAL_SECONDS",
+        "BUSINESS_STOCK_INTERVAL_MINUTES",
     ),
     biotus_enable_unhandled_fallback: Boolean(draft.biotus_enable_unhandled_fallback),
     biotus_unhandled_order_timeout_minutes: parseNonNegativeInteger(
@@ -828,10 +828,10 @@ const StockOperationalEditor = ({ draft, onChange }) => (
                     Включено
                 </label>
             </FormField>
-            <FormField label="Интервал запуска, сек" helpText="Через сколько секунд запускается следующий цикл обработки остатков.">
-                <input
-                    type="number"
-                    min="1"
+        <FormField label="Интервал запуска, минут" helpText="Через сколько минут запускается следующий цикл обработки остатков.">
+            <input
+                type="number"
+                min="1"
                     style={inputStyle}
                     value={draft.business_stock_interval_seconds}
                     onChange={(event) => onChange("business_stock_interval_seconds", event.target.value)}

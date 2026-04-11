@@ -8,6 +8,7 @@ from typing import List, Any
 import os
 import json
 import tempfile
+import math
 from datetime import timedelta
 
 from app import crud, schemas, database
@@ -768,7 +769,7 @@ async def _get_or_create_business_settings_row_for_write(
         id=1,
         business_enterprise_code=payload.business_enterprise_code,
         business_stock_enabled=payload.business_stock_enabled,
-        business_stock_interval_seconds=payload.business_stock_interval_seconds,
+        business_stock_interval_seconds=payload.business_stock_interval_seconds * 60,
         biotus_enterprise_code_override=_env_override_value_against_primary(
             "BIOTUS_ENTERPRISE_CODE",
             payload.business_enterprise_code,
@@ -961,6 +962,18 @@ def _fallback_business_stock_interval_seconds(enterprise: EnterpriseSettings | N
     if normalized < 1:
         return 60
     return normalized * 60
+
+
+def _seconds_to_stock_interval_minutes(value: int | None) -> int:
+    if value is None:
+        return 1
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 1
+    if normalized <= 0:
+        return 1
+    return max(1, math.ceil(normalized / 60))
 
 
 def _business_on_off_label(value: bool) -> str:
@@ -1182,10 +1195,12 @@ def _build_business_sections(
         business_stock_enabled_help = (
             "Отдельный Business stock scheduler включён и читает своё состояние из business_settings."
         )
-        business_stock_interval_seconds_value = int(business_settings_row.business_stock_interval_seconds)
+        business_stock_interval_seconds_value = _seconds_to_stock_interval_minutes(
+            business_settings_row.business_stock_interval_seconds
+        )
         business_stock_interval_seconds_source = "db"
         business_stock_interval_seconds_help = (
-            "Интервал запуска отдельного Business stock scheduler в секундах. Используется DB-first."
+            "Интервал запуска обработки остатков в минутах. Используется DB-first."
         )
         biotus_enable_unhandled_fallback_value = bool(business_settings_row.biotus_enable_unhandled_fallback)
         biotus_enable_unhandled_fallback_source = "db"
@@ -1211,10 +1226,12 @@ def _build_business_sections(
         business_stock_enabled_help = (
             "business_settings row отсутствует, поэтому scheduler fallback-ит к старой gating-семантике через EnterpriseSettings.stock_enabled."
         )
-        business_stock_interval_seconds_value = _fallback_business_stock_interval_seconds(target_enterprise)
+        business_stock_interval_seconds_value = _seconds_to_stock_interval_minutes(
+            _fallback_business_stock_interval_seconds(target_enterprise)
+        )
         business_stock_interval_seconds_source = "derived"
         business_stock_interval_seconds_help = (
-            "business_settings row отсутствует, поэтому используется fallback от старой cadence-семантики через EnterpriseSettings.stock_upload_frequency."
+            "business_settings row отсутствует, поэтому используется fallback в минутах от EnterpriseSettings.stock_upload_frequency."
         )
         biotus_enable_unhandled_fallback_value = _env_bool_value("BIOTUS_ENABLE_UNHANDLED_FALLBACK", "1")
         biotus_enable_unhandled_fallback_source = "env-fallback"
@@ -1333,7 +1350,7 @@ def _build_business_sections(
         ),
         _business_item(
             "business_stock_interval_seconds",
-            "Интервал запуска, сек",
+            "Интервал запуска, минут",
             business_stock_interval_seconds_value,
             business_stock_interval_seconds_source,
             group="Scheduler control",
@@ -1937,7 +1954,7 @@ async def update_business_settings_master_scope(
         payload.business_enterprise_code,
     )
     row.business_stock_enabled = payload.business_stock_enabled
-    row.business_stock_interval_seconds = payload.business_stock_interval_seconds
+    row.business_stock_interval_seconds = payload.business_stock_interval_seconds * 60
     row.biotus_enable_unhandled_fallback = payload.biotus_enable_unhandled_fallback
     row.biotus_unhandled_order_timeout_minutes = payload.biotus_unhandled_order_timeout_minutes
     row.biotus_fallback_additional_status_ids = list(payload.biotus_fallback_additional_status_ids)
