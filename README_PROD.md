@@ -86,11 +86,58 @@ sudo journalctl -u tabletki-cancel-retry.service -f
 sudo journalctl -u telegram_bot -f
 ```
 
-## PostgreSQL и backups
+## Backup
 
 ```bash
-psql -U postgres -d inventory_db
-gunzip -c /root/inventory/backups/backup_YYYY-MM-DD.sql.gz | psql -U postgres -d inventory_db
+/root/inventory/backups
+```
+
+- Backup-файлы лежат в `/root/inventory/backups`
+- Формат имени: `backup_YYYY-MM-DD_HH-MM-SS.sql.gz`
+- Запуск: `systemd timer` в `03:00`
+- Основной скрипт: `/root/inventory/scripts/backup/backup_db.sh`
+
+Ручной запуск:
+
+```bash
+cd /root/inventory
+chmod +x scripts/backup/backup_db.sh
+./scripts/backup/backup_db.sh
+```
+
+Если заданы `BACKUP_REMOTE_HOST` и `BACKUP_REMOTE_PATH`, после локального backup будет выполнен offsite copy через `scp`.
+
+## Restore
+
+Предупреждение:
+
+- Restore может перезаписать данные
+- Всегда сначала тестировать восстановление в test DB
+
+Создать БД:
+
+```bash
+createdb -U postgres test_restore
+```
+
+Восстановление:
+
+```bash
+gunzip -c backup.sql.gz | psql -U postgres -d test_restore
+```
+
+Проверка:
+
+```bash
+psql -U postgres -d test_restore -c "\dt"
+```
+
+Через скрипт:
+
+```bash
+cd /root/inventory
+chmod +x scripts/backup/restore_db.sh
+./scripts/backup/restore_db.sh /root/inventory/backups/backup_YYYY-MM-DD_HH-MM-SS.sql.gz test_restore
 ```
 
 ## Работа с `.env`
