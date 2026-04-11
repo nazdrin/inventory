@@ -13,6 +13,10 @@ import fcntl
 from zoneinfo import ZoneInfo
 
 from app.business.master_catalog_orchestrator import run_master_catalog_orchestrator
+from app.services.master_business_settings_resolver import (
+    MasterBusinessSettingsSnapshot,
+    load_master_business_settings_snapshot,
+)
 from app.services.notification_service import send_notification
 
 
@@ -147,28 +151,58 @@ async def _run_orchestrator_job(name: str, **kwargs: Any) -> JobResult:
         )
 
 
-def _resolve_publish_enterprise() -> str:
-    value = (
-        (os.getenv("MASTER_DAILY_PUBLISH_ENTERPRISE") or "").strip()
-        or (os.getenv("MASTER_CATALOG_ENTERPRISE_CODE") or "").strip()
+def _settings_signature(settings: MasterBusinessSettingsSnapshot) -> tuple[Any, ...]:
+    return (
+        settings.source,
+        settings.business_enterprise_code,
+        settings.daily_publish_enterprise_code_override,
+        settings.weekly_salesdrive_enterprise_code_override,
+        settings.master_weekly_enabled,
+        settings.master_weekly_day,
+        settings.master_weekly_hour,
+        settings.master_weekly_minute,
+        settings.master_daily_publish_enabled,
+        settings.master_daily_publish_hour,
+        settings.master_daily_publish_minute,
+        settings.master_daily_publish_limit,
+        settings.master_archive_enabled,
+        settings.master_archive_every_minutes,
+        settings.primary_enterprise_exists,
+        settings.inconsistency,
     )
-    if not value:
-        raise RuntimeError("MASTER_DAILY_PUBLISH_ENTERPRISE or MASTER_CATALOG_ENTERPRISE_CODE is required for daily publish")
-    return value
 
 
-def _resolve_salesdrive_enterprise() -> str:
-    value = (
-        (os.getenv("MASTER_WEEKLY_SALESDRIVE_ENTERPRISE") or "").strip()
-        or (os.getenv("MASTER_CATALOG_ENTERPRISE_CODE") or "").strip()
-    )
-    if not value:
-        raise RuntimeError("MASTER_WEEKLY_SALESDRIVE_ENTERPRISE or MASTER_CATALOG_ENTERPRISE_CODE is required for weekly salesdrive export")
-    return value
+_LAST_SETTINGS_SIGNATURE: tuple[Any, ...] | None = None
 
 
-def _notify_weekly_success(duration_sec: float) -> None:
-    enterprise_code = _resolve_salesdrive_enterprise()
+def _log_master_settings_if_changed(settings: MasterBusinessSettingsSnapshot) -> None:
+    global _LAST_SETTINGS_SIGNATURE
+    signature = _settings_signature(settings)
+    if signature == _LAST_SETTINGS_SIGNATURE:
+        return
+
+    _LAST_SETTINGS_SIGNATURE = signature
+    if settings.source == "db":
+        logger.info(
+            "Master DB-first settings row found: primary=%s daily_effective=%s weekly_effective=%s",
+            settings.business_enterprise_code,
+            settings.effective_daily_publish_enterprise_code,
+            settings.effective_weekly_salesdrive_enterprise_code,
+        )
+    else:
+        logger.info(
+            "Master settings fallback to env because business_settings row is missing: primary=%s daily_effective=%s weekly_effective=%s",
+            settings.business_enterprise_code,
+            settings.effective_daily_publish_enterprise_code,
+            settings.effective_weekly_salesdrive_enterprise_code,
+        )
+
+    if settings.inconsistency:
+        logger.warning("Master settings inconsistency: %s", settings.inconsistency)
+
+
+def _notify_weekly_success(duration_sec: float, settings: MasterBusinessSettingsSnapshot) -> None:
+    enterprise_code = settings.resolve_weekly_salesdrive_enterprise()
     send_notification(
         (
             "🟡 Weekly master catalog enrichment успешно завершен\n"
@@ -178,7 +212,13 @@ def _notify_weekly_success(duration_sec: float) -> None:
     )
 
 
-async def _run_weekly_enrichment() -> JobResult:
+async def _run_weekly_enrichment(settings: MasterBusinessSettingsSnapshot) -> JobResult:
+    logger.info(
+        "Master weekly job targets: source=%s daily_effective=%s weekly_effective=%s",
+        settings.source,
+        settings.effective_daily_publish_enterprise_code,
+        settings.effective_weekly_salesdrive_enterprise_code,
+    )
     enrichment = await _run_orchestrator_job(
         "weekly_enrichment",
         mode="weekly_enrichment",
@@ -192,7 +232,7 @@ async def _run_weekly_enrichment() -> JobResult:
         "weekly_salesdrive",
         mode="salesdrive",
         fail_fast=True,
-        enterprise=_resolve_salesdrive_enterprise(),
+        enterprise=settings.resolve_weekly_salesdrive_enterprise(),
         batch_size=_env_int("MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", 100),
     )
     if salesdrive.status != "ok":
@@ -215,17 +255,23 @@ async def _run_weekly_enrichment() -> JobResult:
             "salesdrive": salesdrive.details,
         },
     )
-    _notify_weekly_success(result.duration_sec)
+    _notify_weekly_success(result.duration_sec, settings)
     return result
 
 
-async def _run_daily_publish() -> JobResult:
+async def _run_daily_publish(settings: MasterBusinessSettingsSnapshot) -> JobResult:
+    logger.info(
+        "Master daily publish target: source=%s effective_daily=%s limit=%s",
+        settings.source,
+        settings.effective_daily_publish_enterprise_code,
+        settings.master_daily_publish_limit,
+    )
     return await _run_orchestrator_job(
         "daily_publish",
         mode="publish",
         fail_fast=True,
-        enterprise=_resolve_publish_enterprise(),
-        limit=_env_int("MASTER_DAILY_PUBLISH_LIMIT", 0),
+        enterprise=settings.resolve_publish_enterprise(),
+        limit=settings.master_daily_publish_limit,
         send=True,
     )
 
@@ -238,16 +284,20 @@ async def _run_hourly_archive() -> JobResult:
     )
 
 
-async def _maybe_run_weekly(now_local: datetime, state: Dict[str, Any]) -> Optional[JobResult]:
-    if not _env_bool("MASTER_WEEKLY_ENABLED", "1"):
+async def _maybe_run_weekly(
+    now_local: datetime,
+    state: Dict[str, Any],
+    settings: MasterBusinessSettingsSnapshot,
+) -> Optional[JobResult]:
+    if not settings.master_weekly_enabled:
         return None
 
-    target_day = WEEKDAY_MAP[(os.getenv("MASTER_WEEKLY_DAY", "SUN") or "SUN").strip().upper()]
+    target_day = WEEKDAY_MAP[settings.master_weekly_day]
     if now_local.weekday() != target_day:
         return None
 
-    target_hour = _env_int("MASTER_WEEKLY_HOUR", 3)
-    target_minute = _env_int("MASTER_WEEKLY_MINUTE", 0)
+    target_hour = settings.master_weekly_hour
+    target_minute = settings.master_weekly_minute
     if not _is_within_window(now_local, target_hour, target_minute):
         return None
 
@@ -255,19 +305,23 @@ async def _maybe_run_weekly(now_local: datetime, state: Dict[str, Any]) -> Optio
     if state.get("weekly_enrichment") == slot:
         return None
 
-    result = await _run_weekly_enrichment()
+    result = await _run_weekly_enrichment(settings)
     if result.status == "ok":
         state["weekly_enrichment"] = slot
         _save_state(state)
     return result
 
 
-async def _maybe_run_daily_publish(now_local: datetime, state: Dict[str, Any]) -> Optional[JobResult]:
-    if not _env_bool("MASTER_DAILY_PUBLISH_ENABLED", "1"):
+async def _maybe_run_daily_publish(
+    now_local: datetime,
+    state: Dict[str, Any],
+    settings: MasterBusinessSettingsSnapshot,
+) -> Optional[JobResult]:
+    if not settings.master_daily_publish_enabled:
         return None
 
-    target_hour = _env_int("MASTER_DAILY_PUBLISH_HOUR", 9)
-    target_minute = _env_int("MASTER_DAILY_PUBLISH_MINUTE", 0)
+    target_hour = settings.master_daily_publish_hour
+    target_minute = settings.master_daily_publish_minute
     if not _is_within_window(now_local, target_hour, target_minute):
         return None
 
@@ -275,18 +329,22 @@ async def _maybe_run_daily_publish(now_local: datetime, state: Dict[str, Any]) -
     if state.get("daily_publish") == slot:
         return None
 
-    result = await _run_daily_publish()
+    result = await _run_daily_publish(settings)
     if result.status == "ok":
         state["daily_publish"] = slot
         _save_state(state)
     return result
 
 
-async def _maybe_run_archive(now_local: datetime, state: Dict[str, Any]) -> Optional[JobResult]:
-    if not _env_bool("MASTER_ARCHIVE_ENABLED", "1"):
+async def _maybe_run_archive(
+    now_local: datetime,
+    state: Dict[str, Any],
+    settings: MasterBusinessSettingsSnapshot,
+) -> Optional[JobResult]:
+    if not settings.master_archive_enabled:
         return None
 
-    every_minutes = max(1, _env_int("MASTER_ARCHIVE_EVERY_MINUTES", 60))
+    every_minutes = settings.master_archive_every_minutes
     slot = _slot_for_interval(now_local, every_minutes)
     if state.get("hourly_archive") == slot:
         return None
@@ -306,19 +364,21 @@ async def _maybe_run_archive(now_local: datetime, state: Dict[str, Any]) -> Opti
 async def run_master_catalog_scheduler_once() -> Dict[str, Any]:
     now_local = datetime.now(timezone.utc).astimezone(KYIV_TZ)
     state = _load_state()
+    settings = await load_master_business_settings_snapshot()
+    _log_master_settings_if_changed(settings)
     executed: list[Dict[str, Any]] = []
 
-    weekly = await _maybe_run_weekly(now_local, state)
+    weekly = await _maybe_run_weekly(now_local, state, settings)
     if weekly:
         executed.append({"job": weekly.name, "status": weekly.status, "duration_sec": round(weekly.duration_sec, 3)})
         return {"now": now_local.isoformat(), "jobs": executed}
 
-    daily = await _maybe_run_daily_publish(now_local, state)
+    daily = await _maybe_run_daily_publish(now_local, state, settings)
     if daily:
         executed.append({"job": daily.name, "status": daily.status, "duration_sec": round(daily.duration_sec, 3)})
         return {"now": now_local.isoformat(), "jobs": executed}
 
-    archive = await _maybe_run_archive(now_local, state)
+    archive = await _maybe_run_archive(now_local, state, settings)
     if archive:
         executed.append({"job": archive.name, "status": archive.status, "duration_sec": round(archive.duration_sec, 3)})
 

@@ -160,6 +160,14 @@ class BusinessSettings(Base, TimestampMixin):
         ForeignKey("enterprise_settings.enterprise_code"),
         nullable=True,
     )
+    biotus_enable_unhandled_fallback = Column(Boolean, nullable=False, server_default=text("true"))
+    biotus_unhandled_order_timeout_minutes = Column(Integer, nullable=False, server_default=text("60"))
+    biotus_fallback_additional_status_ids = Column(
+        ARRAY(Integer),
+        nullable=False,
+        server_default=text("ARRAY[9,19,18,20]"),
+    )
+    biotus_duplicate_status_id = Column(Integer, nullable=False, server_default=text("20"))
 
     master_weekly_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     master_weekly_day = Column(String(3), nullable=False, server_default=text("'SUN'"))
@@ -197,6 +205,18 @@ class BusinessSettings(Base, TimestampMixin):
         CheckConstraint(
             "master_archive_every_minutes >= 1",
             name="ck_business_settings_archive_every_minutes_positive",
+        ),
+        CheckConstraint(
+            "biotus_unhandled_order_timeout_minutes >= 0",
+            name="ck_business_settings_biotus_timeout_non_negative",
+        ),
+        CheckConstraint(
+            "biotus_duplicate_status_id >= 1",
+            name="ck_business_settings_biotus_duplicate_status_positive",
+        ),
+        CheckConstraint(
+            "coalesce(array_length(biotus_fallback_additional_status_ids, 1), 0) >= 1",
+            name="ck_business_settings_biotus_additional_status_ids_non_empty",
         ),
     )
 

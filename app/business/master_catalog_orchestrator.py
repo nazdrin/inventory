@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
@@ -67,6 +66,7 @@ from app.business.salesdrive_category_exporter import export_categories_to_sales
 from app.business.salesdrive_master_catalog_exporter import export_master_catalog_to_salesdrive
 from app.business.tabletki_master_catalog_exporter import export_master_catalog_to_tabletki
 from app.business.tabletki_master_catalog_loader import load_tabletki_master_catalog
+from app.services.master_business_settings_resolver import load_master_business_settings_snapshot
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -100,12 +100,20 @@ def _make_step(name: str, fn: AsyncStep) -> Dict[str, Any]:
     return {"name": name, "fn": fn}
 
 
-def _require_enterprise(enterprise: Optional[str], purpose: str = "salesdrive") -> str:
+async def _require_enterprise(enterprise: Optional[str], purpose: str = "salesdrive") -> str:
     load_dotenv()
-    value = (enterprise or "").strip() or (os.getenv("MASTER_CATALOG_ENTERPRISE_CODE") or "").strip()
-    if not value:
-        raise RuntimeError(f"Для режима {purpose} требуется --enterprise или MASTER_CATALOG_ENTERPRISE_CODE")
-    return value
+    explicit = (enterprise or "").strip()
+    if explicit:
+        return explicit
+
+    settings = await load_master_business_settings_snapshot()
+    if settings.inconsistency:
+        logger.warning("Master orchestrator enterprise inconsistency for %s: %s", purpose, settings.inconsistency)
+    if purpose == "salesdrive":
+        return settings.resolve_weekly_salesdrive_enterprise()
+    if purpose == "publish":
+        return settings.resolve_publish_enterprise()
+    return settings.resolve_primary_business_enterprise(purpose=purpose)
 
 
 def _build_tabletki_steps() -> List[Dict[str, Any]]:
@@ -180,8 +188,8 @@ def _build_archive_steps() -> List[Dict[str, Any]]:
     return [_make_step("master_archive_import", lambda: import_master_archive(limit=0))]
 
 
-def _build_salesdrive_steps(enterprise: Optional[str], batch_size: int) -> List[Dict[str, Any]]:
-    enterprise_code = _require_enterprise(enterprise, purpose="salesdrive")
+async def _build_salesdrive_steps(enterprise: Optional[str], batch_size: int) -> List[Dict[str, Any]]:
+    enterprise_code = await _require_enterprise(enterprise, purpose="salesdrive")
     return [
         _make_step(
             "salesdrive_category_exporter",
@@ -202,8 +210,8 @@ def _build_salesdrive_steps(enterprise: Optional[str], batch_size: int) -> List[
     ]
 
 
-def _build_publish_steps(enterprise: Optional[str], limit: int, send: bool) -> List[Dict[str, Any]]:
-    enterprise_code = _require_enterprise(enterprise, purpose="publish")
+async def _build_publish_steps(enterprise: Optional[str], limit: int, send: bool) -> List[Dict[str, Any]]:
+    enterprise_code = await _require_enterprise(enterprise, purpose="publish")
     return [
         _make_step(
             "tabletki_master_catalog_exporter",
@@ -220,7 +228,7 @@ def _build_report_steps() -> List[Dict[str, Any]]:
     return [_make_step("master_catalog_coverage_report", build_master_catalog_coverage_report)]
 
 
-def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, limit: int, send: bool, skip_salesdrive: bool, skip_archive: bool, skip_report: bool) -> List[Dict[str, Any]]:
+async def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, limit: int, send: bool, skip_salesdrive: bool, skip_archive: bool, skip_report: bool) -> List[Dict[str, Any]]:
     if mode == "weekly_enrichment":
         steps: List[Dict[str, Any]] = []
         steps.extend(_build_tabletki_steps())
@@ -238,7 +246,7 @@ def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, lim
         if not skip_archive:
             steps.extend(_build_archive_steps())
         if not skip_salesdrive:
-            steps.extend(_build_salesdrive_steps(enterprise, batch_size))
+            steps.extend(await _build_salesdrive_steps(enterprise, batch_size))
         if not skip_report:
             steps.extend(_build_report_steps())
         return steps
@@ -252,9 +260,9 @@ def _resolve_steps(mode: str, *, enterprise: Optional[str], batch_size: int, lim
     if mode == "archive":
         return [] if skip_archive else _build_archive_steps()
     if mode == "salesdrive":
-        return [] if skip_salesdrive else _build_salesdrive_steps(enterprise, batch_size)
+        return [] if skip_salesdrive else await _build_salesdrive_steps(enterprise, batch_size)
     if mode == "publish":
-        return _build_publish_steps(enterprise, limit, send)
+        return await _build_publish_steps(enterprise, limit, send)
     if mode == "report":
         return [] if skip_report else _build_report_steps()
 
@@ -310,7 +318,7 @@ async def run_master_catalog_orchestrator(
     send: bool = False,
 ) -> Dict[str, Any]:
     started_at = _utc_now_iso()
-    steps = _resolve_steps(
+    steps = await _resolve_steps(
         mode,
         enterprise=enterprise,
         batch_size=batch_size,

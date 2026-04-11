@@ -17,7 +17,7 @@ from app.schemas import (
     MappingBranchConstrainedUpdateSchema, EnterpriseListItemVM, EnterpriseDetailVM,
     EnterpriseFieldMetaVM, EnterpriseSectionVM, SupplierListItemVM, SupplierDetailVM,
     SupplierSectionVM, BusinessSettingsVM, BusinessSectionVM, BusinessSettingItemVM,
-    BusinessEnterpriseCandidateVM,
+    BusinessEnterpriseCandidateVM, BusinessEnterpriseOptionVM, BusinessSettingsUpdateSchema,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.auth import verify_token  # как у enterprise
-from app.models import DropshipEnterprise
+from app.models import DropshipEnterprise, BusinessSettings
 from app.schemas import DropshipEnterpriseSchema
 
 
@@ -497,25 +497,38 @@ def _env_optional_value(name: str) -> str | None:
 
 def _business_planned_writable_keys() -> list[str]:
     return [
-        "MASTER_CATALOG_ENTERPRISE_CODE",
-        "MASTER_DAILY_PUBLISH_ENTERPRISE",
-        "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE",
-        "MASTER_WEEKLY_ENABLED",
-        "MASTER_WEEKLY_DAY",
-        "MASTER_WEEKLY_HOUR",
-        "MASTER_WEEKLY_MINUTE",
-        "MASTER_DAILY_PUBLISH_ENABLED",
-        "MASTER_DAILY_PUBLISH_HOUR",
-        "MASTER_DAILY_PUBLISH_MINUTE",
-        "MASTER_DAILY_PUBLISH_LIMIT",
-        "MASTER_ARCHIVE_ENABLED",
-        "MASTER_ARCHIVE_EVERY_MINUTES",
+        "business_enterprise_code",
+        "daily_publish_enterprise_code_override",
+        "weekly_salesdrive_enterprise_code_override",
+        "biotus_enable_unhandled_fallback",
+        "biotus_unhandled_order_timeout_minutes",
+        "biotus_fallback_additional_status_ids",
+        "biotus_duplicate_status_id",
+        "master_weekly_enabled",
+        "master_weekly_day",
+        "master_weekly_hour",
+        "master_weekly_minute",
+        "master_daily_publish_enabled",
+        "master_daily_publish_hour",
+        "master_daily_publish_minute",
+        "master_daily_publish_limit",
+        "master_archive_enabled",
+        "master_archive_every_minutes",
     ]
 
 
 async def _load_all_enterprises(db: AsyncSession) -> list[EnterpriseSettings]:
     result = await db.execute(select(EnterpriseSettings).order_by(EnterpriseSettings.enterprise_name))
     return list(result.scalars().all())
+
+
+async def _load_business_settings_row(db: AsyncSession) -> BusinessSettings | None:
+    result = await db.execute(
+        select(BusinessSettings)
+        .order_by(BusinessSettings.id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 def _filter_business_candidates(enterprises: list[EnterpriseSettings]) -> list[EnterpriseSettings]:
@@ -545,6 +558,17 @@ def _build_business_candidates_vm(items: list[EnterpriseSettings]) -> list[Busin
     ]
 
 
+def _build_business_enterprise_options_vm(items: list[EnterpriseSettings]) -> list[BusinessEnterpriseOptionVM]:
+    return [
+        BusinessEnterpriseOptionVM(
+            enterprise_code=item.enterprise_code,
+            enterprise_name=item.enterprise_name,
+            data_format=item.data_format,
+        )
+        for item in items
+    ]
+
+
 def _business_resolution_state(candidates: list[EnterpriseSettings]) -> tuple[str, str, EnterpriseSettings | None]:
     if not candidates:
         return (
@@ -563,6 +587,98 @@ def _business_resolution_state(candidates: list[EnterpriseSettings]) -> tuple[st
         "Найден один Business enterprise. Он используется для read-side snapshot страницы.",
         candidates[0],
     )
+
+
+def _normalize_override_value(value: str | None, primary_code: str) -> str | None:
+    normalized = str(value or "").strip() or None
+    if not normalized or normalized == primary_code:
+        return None
+    return normalized
+
+
+def _env_override_value_against_primary(name: str, primary_code: str) -> str | None:
+    return _normalize_override_value(_env_optional_value(name), primary_code)
+
+
+def _validate_business_settings_update(
+    payload: BusinessSettingsUpdateSchema,
+    *,
+    enterprise_lookup: dict[str, EnterpriseSettings],
+    business_candidates: list[EnterpriseSettings],
+) -> None:
+    primary = enterprise_lookup.get(payload.business_enterprise_code)
+    if primary is None:
+        raise HTTPException(status_code=400, detail="Primary business enterprise does not exist.")
+
+    business_codes = {
+        str(item.enterprise_code): item
+        for item in business_candidates
+    }
+    if payload.business_enterprise_code not in business_codes:
+        raise HTTPException(
+            status_code=400,
+            detail="business_enterprise_code must reference EnterpriseSettings with data_format=Business.",
+        )
+
+    for field_name, enterprise_code in (
+        ("daily_publish_enterprise_code_override", payload.daily_publish_enterprise_code_override),
+        ("weekly_salesdrive_enterprise_code_override", payload.weekly_salesdrive_enterprise_code_override),
+    ):
+        normalized = str(enterprise_code or "").strip() or None
+        if normalized and normalized not in enterprise_lookup:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field_name} must reference an existing EnterpriseSettings.enterprise_code.",
+            )
+
+
+async def _get_or_create_business_settings_row_for_write(
+    db: AsyncSession,
+    *,
+    all_enterprises: list[EnterpriseSettings],
+    payload: BusinessSettingsUpdateSchema,
+) -> BusinessSettings:
+    row = await _load_business_settings_row(db)
+    if row is not None:
+        return row
+
+    business_candidates = _filter_business_candidates(all_enterprises)
+    if payload.business_enterprise_code not in {
+        str(item.enterprise_code) for item in business_candidates
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "business_settings row is missing and cannot be initialized from this payload: "
+                "business_enterprise_code must point to an existing Business enterprise."
+            ),
+        )
+
+    row = BusinessSettings(
+        id=1,
+        business_enterprise_code=payload.business_enterprise_code,
+        biotus_enterprise_code_override=_env_override_value_against_primary(
+            "BIOTUS_ENTERPRISE_CODE",
+            payload.business_enterprise_code,
+        ),
+        biotus_enable_unhandled_fallback=payload.biotus_enable_unhandled_fallback,
+        biotus_unhandled_order_timeout_minutes=payload.biotus_unhandled_order_timeout_minutes,
+        biotus_fallback_additional_status_ids=list(payload.biotus_fallback_additional_status_ids),
+        biotus_duplicate_status_id=payload.biotus_duplicate_status_id,
+        master_weekly_enabled=payload.master_weekly_enabled,
+        master_weekly_day=payload.master_weekly_day,
+        master_weekly_hour=payload.master_weekly_hour,
+        master_weekly_minute=payload.master_weekly_minute,
+        master_daily_publish_enabled=payload.master_daily_publish_enabled,
+        master_daily_publish_hour=payload.master_daily_publish_hour,
+        master_daily_publish_minute=payload.master_daily_publish_minute,
+        master_daily_publish_limit=payload.master_daily_publish_limit,
+        master_archive_enabled=payload.master_archive_enabled,
+        master_archive_every_minutes=payload.master_archive_every_minutes,
+    )
+    db.add(row)
+    await db.flush()
+    return row
 
 
 def _business_item(
@@ -602,6 +718,13 @@ def _business_joined_env_list(name: str, default: str = "") -> str:
     return ", ".join(parts) if parts else "—"
 
 
+def _business_joined_int_list(values: list[int] | tuple[int, ...] | None) -> str:
+    if not values:
+        return "—"
+    normalized = [str(int(item)) for item in values]
+    return ", ".join(normalized) if normalized else "—"
+
+
 def _resolve_effective_target(explicit_name: str, fallback_name: str) -> tuple[str | None, str]:
     explicit_value = _env_optional_value(explicit_name)
     fallback_value = _env_optional_value(fallback_name)
@@ -610,6 +733,21 @@ def _resolve_effective_target(explicit_name: str, fallback_name: str) -> tuple[s
     if fallback_value:
         return fallback_value, f"{fallback_name} (fallback)"
     return None, "missing"
+
+
+def _db_effective_target(
+    override_value: str | None,
+    primary_value: str | None,
+    *,
+    override_help: str,
+) -> tuple[str | None, str, str]:
+    override = str(override_value or "").strip() or None
+    primary = str(primary_value or "").strip() or None
+    if override:
+        return override, "db-derived", override_help
+    if primary:
+        return primary, "db-derived", "Inherited from business_settings.business_enterprise_code."
+    return None, "db-derived", "business_settings row exists, but the primary business selector is missing."
 
 
 def _target_consistency_status(
@@ -644,75 +782,274 @@ def _target_consistency_status(
     )
 
 
+def _db_target_consistency_status(
+    *,
+    db_row_exists: bool,
+    primary_code: str | None,
+    primary_enterprise: EnterpriseSettings | None,
+    business_candidates: list[EnterpriseSettings],
+    effective_daily_target: str | None,
+    effective_weekly_target: str | None,
+    effective_biotus_target: str | None,
+) -> tuple[str, str]:
+    if not db_row_exists:
+        return (
+            "fallback-env",
+            "business_settings row отсутствует; page использует fallback на env и текущую EnterpriseSettings resolution logic.",
+        )
+    if not primary_code:
+        return (
+            "db-missing-primary",
+            "business_settings row существует, но business_enterprise_code пустой или не читается.",
+        )
+    if primary_enterprise is None:
+        return (
+            "db-primary-enterprise-missing",
+            "business_settings row существует, но business_enterprise_code не найден в EnterpriseSettings. Page показывает DB-backed selectors без silent env fallback.",
+        )
+    if len(business_candidates) > 1:
+        return (
+            "db-overrides-ambiguous-enterprises",
+            "В EnterpriseSettings найдено несколько data_format=Business, но page использует explicit primary selector из business_settings.",
+        )
+    if effective_biotus_target and effective_biotus_target != primary_code:
+        return (
+            "db-biotus-target-separate",
+            "Biotus target остаётся отдельным contour selector и читается из DB override/primary model без runtime unification.",
+        )
+    if (
+        (effective_daily_target and effective_daily_target != primary_code)
+        or (effective_weekly_target and effective_weekly_target != primary_code)
+    ):
+        return (
+            "db-master-target-overrides",
+            "Daily/weekly master targets читаются из business_settings и частично переопределяют primary business enterprise.",
+        )
+    return (
+        "db-primary-aligned",
+        "business_settings является source of truth для first-migration fields; effective master targets наследуются от primary business_enterprise_code.",
+    )
+
+
 def _build_business_sections(
     enterprise: EnterpriseSettings | None,
     *,
     resolution_status: str,
     all_enterprises: list[EnterpriseSettings],
+    business_settings_row: BusinessSettings | None,
+    business_candidates: list[EnterpriseSettings],
 ) -> list[BusinessSectionVM]:
     business_exists = enterprise is not None or resolution_status == "ambiguous"
     old_catalog_disabled = _env_bool_value("DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER", "0")
     use_master_mapping = _env_bool_value("USE_MASTER_MAPPING_FOR_STOCK", "0")
-    planned_write_supported = False
-    master_catalog_target = _env_optional_value("MASTER_CATALOG_ENTERPRISE_CODE")
-    explicit_daily_target = _env_optional_value("MASTER_DAILY_PUBLISH_ENTERPRISE")
-    explicit_weekly_target = _env_optional_value("MASTER_WEEKLY_SALESDRIVE_ENTERPRISE")
-    effective_daily_target, daily_target_source = _resolve_effective_target(
-        "MASTER_DAILY_PUBLISH_ENTERPRISE",
-        "MASTER_CATALOG_ENTERPRISE_CODE",
-    )
-    effective_weekly_target, weekly_target_source = _resolve_effective_target(
-        "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE",
-        "MASTER_CATALOG_ENTERPRISE_CODE",
-    )
-    biotus_target = _env_optional_value("BIOTUS_ENTERPRISE_CODE")
-    consistency_status, consistency_note = _target_consistency_status(
-        resolution_status,
-        enterprise.enterprise_code if enterprise is not None else None,
-        master_catalog_target,
-        biotus_target,
-    )
+    planned_write_supported = True
     enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
-    token_hint_target_code = master_catalog_target or (enterprise.enterprise_code if enterprise else None)
+    business_settings_exists = business_settings_row is not None
+
+    if business_settings_row is not None:
+        db_primary_code = str(business_settings_row.business_enterprise_code or "").strip() or None
+        db_primary_enterprise = enterprise_lookup.get(str(db_primary_code or ""))
+        master_catalog_target = db_primary_code
+        master_catalog_target_source = "db"
+        master_catalog_target_help = "Primary Business target is read from business_settings.business_enterprise_code."
+
+        explicit_daily_target = (
+            str(business_settings_row.daily_publish_enterprise_code_override or "").strip() or None
+        )
+        explicit_weekly_target = (
+            str(business_settings_row.weekly_salesdrive_enterprise_code_override or "").strip() or None
+        )
+        explicit_biotus_target = (
+            str(business_settings_row.biotus_enterprise_code_override or "").strip() or None
+        )
+        explicit_daily_source = "db"
+        explicit_weekly_source = "db"
+        explicit_biotus_source = "db"
+
+        effective_daily_target, daily_target_source, daily_target_help = _db_effective_target(
+            explicit_daily_target,
+            db_primary_code,
+            override_help="Derived from daily_publish_enterprise_code_override.",
+        )
+        effective_weekly_target, weekly_target_source, weekly_target_help = _db_effective_target(
+            explicit_weekly_target,
+            db_primary_code,
+            override_help="Derived from weekly_salesdrive_enterprise_code_override.",
+        )
+        biotus_target, biotus_target_source, biotus_target_help = _db_effective_target(
+            explicit_biotus_target,
+            db_primary_code,
+            override_help="Derived from biotus_enterprise_code_override.",
+        )
+        consistency_status, consistency_note = _db_target_consistency_status(
+            db_row_exists=True,
+            primary_code=db_primary_code,
+            primary_enterprise=db_primary_enterprise,
+            business_candidates=business_candidates,
+            effective_daily_target=effective_daily_target,
+            effective_weekly_target=effective_weekly_target,
+            effective_biotus_target=biotus_target,
+        )
+        target_enterprise = db_primary_enterprise
+        target_resolution_status = "db-primary-enterprise-missing" if db_primary_enterprise is None else "db-primary"
+        target_resolution_source = "db"
+        target_resolution_help = (
+            "business_settings row exists, but the referenced primary enterprise is missing in EnterpriseSettings."
+            if db_primary_enterprise is None
+            else "Target enterprise for first-migration fields is resolved from business_settings."
+        )
+        target_primary_code = db_primary_code
+    else:
+        master_catalog_target = _env_optional_value("MASTER_CATALOG_ENTERPRISE_CODE")
+        master_catalog_target_source = "env-fallback"
+        master_catalog_target_help = "Fallback path: MASTER_CATALOG_ENTERPRISE_CODE from env is used because business_settings row is missing."
+        explicit_daily_target = _env_optional_value("MASTER_DAILY_PUBLISH_ENTERPRISE")
+        explicit_weekly_target = _env_optional_value("MASTER_WEEKLY_SALESDRIVE_ENTERPRISE")
+        explicit_biotus_target = _env_optional_value("BIOTUS_ENTERPRISE_CODE")
+        explicit_daily_source = "env-fallback"
+        explicit_weekly_source = "env-fallback"
+        explicit_biotus_source = "env-fallback"
+        effective_daily_target, daily_target_source = _resolve_effective_target(
+            "MASTER_DAILY_PUBLISH_ENTERPRISE",
+            "MASTER_CATALOG_ENTERPRISE_CODE",
+        )
+        effective_weekly_target, weekly_target_source = _resolve_effective_target(
+            "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE",
+            "MASTER_CATALOG_ENTERPRISE_CODE",
+        )
+        daily_target_help = "Fallback env logic: explicit selector overrides MASTER_CATALOG_ENTERPRISE_CODE."
+        weekly_target_help = "Fallback env logic: explicit selector overrides MASTER_CATALOG_ENTERPRISE_CODE."
+        biotus_target = explicit_biotus_target
+        biotus_target_source = "env-fallback"
+        biotus_target_help = "Fallback env selector is used only because business_settings row is missing."
+        consistency_status, consistency_note = _target_consistency_status(
+            resolution_status,
+            enterprise.enterprise_code if enterprise is not None else None,
+            master_catalog_target,
+            biotus_target,
+        )
+        target_enterprise = enterprise
+        target_resolution_status = resolution_status
+        target_resolution_source = "EnterpriseSettings-derived"
+        target_resolution_help = "Fallback path: current Business enterprise resolution is derived from EnterpriseSettings.data_format=Business."
+        target_primary_code = enterprise.enterprise_code if enterprise is not None else None
+
+    if business_settings_row is not None:
+        biotus_enable_unhandled_fallback_value = bool(business_settings_row.biotus_enable_unhandled_fallback)
+        biotus_enable_unhandled_fallback_source = "db"
+        biotus_enable_unhandled_fallback_help = "DB-first policy flag from business_settings."
+        biotus_unhandled_order_timeout_minutes_value = int(
+            business_settings_row.biotus_unhandled_order_timeout_minutes
+        )
+        biotus_unhandled_order_timeout_minutes_source = "db"
+        biotus_unhandled_order_timeout_minutes_help = "DB-first fallback timeout policy from business_settings."
+        biotus_fallback_additional_status_ids_value = _business_joined_int_list(
+            list(business_settings_row.biotus_fallback_additional_status_ids or [])
+        )
+        biotus_fallback_additional_status_ids_source = "db"
+        biotus_fallback_additional_status_ids_help = (
+            "Stored in business_settings as integer array; UI edits it as comma-separated SalesDrive status ids."
+        )
+        biotus_duplicate_status_id_value = int(business_settings_row.biotus_duplicate_status_id)
+        biotus_duplicate_status_id_source = "db"
+        biotus_duplicate_status_id_help = "DB-first duplicate status policy from business_settings."
+    else:
+        biotus_enable_unhandled_fallback_value = _env_bool_value("BIOTUS_ENABLE_UNHANDLED_FALLBACK", "1")
+        biotus_enable_unhandled_fallback_source = "env-fallback"
+        biotus_enable_unhandled_fallback_help = (
+            "Fallback env policy is used only because business_settings row is missing."
+        )
+        biotus_unhandled_order_timeout_minutes_value = _env_int_value(
+            "BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES",
+            60,
+        )
+        biotus_unhandled_order_timeout_minutes_source = "env-fallback"
+        biotus_unhandled_order_timeout_minutes_help = (
+            "Fallback env policy is used only because business_settings row is missing."
+        )
+        biotus_fallback_additional_status_ids_value = _business_joined_env_list(
+            "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
+            "9,19,18,20",
+        )
+        biotus_fallback_additional_status_ids_source = "env-fallback"
+        biotus_fallback_additional_status_ids_help = (
+            "Fallback env policy is used only because business_settings row is missing."
+        )
+        biotus_duplicate_status_id_value = _env_int_value("BIOTUS_DUPLICATE_STATUS_ID", 20)
+        biotus_duplicate_status_id_source = "env-fallback"
+        biotus_duplicate_status_id_help = (
+            "Fallback env policy is used only because business_settings row is missing."
+        )
+
+    token_hint_target_code = target_primary_code or master_catalog_target
     token_hint_target = enterprise_lookup.get(str(token_hint_target_code or ""))
     token_presence = bool((getattr(token_hint_target, "token", None) or "").strip()) if token_hint_target else False
 
-    if resolution_status == "resolved" and enterprise is not None:
+    if target_enterprise is not None:
         target_items = [
-            _business_item("enterprise_name", "Название предприятия", enterprise.enterprise_name, "EnterpriseSettings", group="Resolved Business enterprise"),
-            _business_item("enterprise_code", "Код предприятия", enterprise.enterprise_code, "EnterpriseSettings", group="Resolved Business enterprise"),
-            _business_item("data_format", "Текущий data_format", enterprise.data_format, "EnterpriseSettings", group="Resolved Business enterprise"),
-            _business_item("branch_id", "Branch ID", enterprise.branch_id, "EnterpriseSettings", group="Resolved Business enterprise"),
-            _business_item("catalog_enabled", "Каталог включён", bool(enterprise.catalog_enabled), "EnterpriseSettings", group="Resolved Business enterprise"),
-            _business_item("stock_enabled", "Сток включён", bool(enterprise.stock_enabled), "EnterpriseSettings", group="Resolved Business enterprise"),
-            _business_item("order_fetcher", "Получение заказов", bool(enterprise.order_fetcher), "EnterpriseSettings", group="Resolved Business enterprise"),
+            _business_item(
+                "target_resolution_status",
+                "Target resolution mode",
+                target_resolution_status,
+                target_resolution_source,
+                group="Primary business target",
+                help_text=target_resolution_help,
+            ),
+            _business_item("enterprise_name", "Название предприятия", target_enterprise.enterprise_name, "EnterpriseSettings", group="Primary business target"),
+            _business_item("enterprise_code", "Код предприятия", target_enterprise.enterprise_code, "EnterpriseSettings", group="Primary business target"),
+            _business_item("data_format", "Текущий data_format", target_enterprise.data_format, "EnterpriseSettings", group="Primary business target"),
+            _business_item("branch_id", "Branch ID", target_enterprise.branch_id, "EnterpriseSettings", group="Primary business target"),
+            _business_item("catalog_enabled", "Каталог включён", bool(target_enterprise.catalog_enabled), "EnterpriseSettings", group="Primary business target"),
+            _business_item("stock_enabled", "Сток включён", bool(target_enterprise.stock_enabled), "EnterpriseSettings", group="Primary business target"),
+            _business_item("order_fetcher", "Получение заказов", bool(target_enterprise.order_fetcher), "EnterpriseSettings", group="Primary business target"),
         ]
     else:
         target_items = [
             _business_item(
-                "resolution_status",
-                "Статус определения Business enterprise",
-                resolution_status,
-                "computed",
-                group="Resolved Business enterprise",
+                "target_resolution_status",
+                "Target resolution mode",
+                target_resolution_status,
+                target_resolution_source,
+                group="Primary business target",
+                help_text=target_resolution_help,
+            ),
+            _business_item(
+                "enterprise_code_missing",
+                "Primary business enterprise code",
+                target_primary_code,
+                "db" if business_settings_exists else "computed",
+                group="Primary business target",
+                help_text=(
+                    "DB row exists but the referenced enterprise is missing in EnterpriseSettings."
+                    if business_settings_exists
+                    else "Business enterprise could not be resolved from EnterpriseSettings fallback logic."
+                ),
             ),
         ]
 
     target_items.extend(
         [
             _business_item(
-                "master_catalog_enterprise_code",
-                "MASTER_CATALOG_ENTERPRISE_CODE",
+                "business_enterprise_code",
+                "Primary business enterprise code",
                 master_catalog_target,
-                "env",
-                group="Linked runtime targets",
+                master_catalog_target_source,
+                group="Primary business target",
+                help_text=master_catalog_target_help,
+                readonly=False,
             ),
             _business_item(
                 "master_daily_publish_enterprise_explicit",
                 "Daily publish explicit target",
                 explicit_daily_target,
-                "env",
+                explicit_daily_source,
                 group="Linked runtime targets",
+                help_text=(
+                    "NULL in DB means inherit primary business_enterprise_code."
+                    if business_settings_exists
+                    else "Fallback env selector is used only because business_settings row is missing."
+                ),
+                readonly=False,
             ),
             _business_item(
                 "master_daily_publish_enterprise_effective",
@@ -720,13 +1057,20 @@ def _build_business_sections(
                 effective_daily_target,
                 daily_target_source,
                 group="Linked runtime targets",
+                help_text=daily_target_help,
             ),
             _business_item(
                 "master_weekly_salesdrive_enterprise_explicit",
                 "Weekly SalesDrive explicit target",
                 explicit_weekly_target,
-                "env",
+                explicit_weekly_source,
                 group="Linked runtime targets",
+                help_text=(
+                    "NULL in DB means inherit primary business_enterprise_code."
+                    if business_settings_exists
+                    else "Fallback env selector is used only because business_settings row is missing."
+                ),
+                readonly=False,
             ),
             _business_item(
                 "master_weekly_salesdrive_enterprise_effective",
@@ -734,27 +1078,32 @@ def _build_business_sections(
                 effective_weekly_target,
                 weekly_target_source,
                 group="Linked runtime targets",
+                help_text=weekly_target_help,
             ),
             _business_item(
                 "biotus_enterprise_code_target",
                 "BIOTUS_ENTERPRISE_CODE",
                 biotus_target,
-                "env",
+                biotus_target_source,
                 group="Separate runtime target",
-                help_text="Biotus target показывается отдельно и не объединяется в единый runtime selector.",
+                help_text=(
+                    biotus_target_help
+                    if business_settings_exists
+                    else "Biotus target показывается отдельно и не объединяется в единый runtime selector."
+                ),
             ),
             _business_item(
                 "target_consistency_status",
                 "Target consistency status",
                 consistency_status,
-                "computed",
+                "computed" if not business_settings_exists else "db",
                 group="Consistency",
             ),
             _business_item(
                 "target_consistency_note",
                 "Consistency note",
                 consistency_note,
-                "computed",
+                "computed" if not business_settings_exists else "db",
                 group="Consistency",
             ),
         ]
@@ -817,34 +1166,49 @@ def _build_business_sections(
     ]
 
     orders_items = [
-        _business_item("biotus_enterprise_code", "BIOTUS_ENTERPRISE_CODE", biotus_target, "env", group="Target"),
+        _business_item(
+            "biotus_enterprise_code",
+            "BIOTUS_ENTERPRISE_CODE",
+            biotus_target,
+            biotus_target_source,
+            group="Target",
+            help_text=biotus_target_help,
+        ),
         _business_item(
             "biotus_enable_unhandled_fallback",
             "BIOTUS_ENABLE_UNHANDLED_FALLBACK",
-            _env_bool_value("BIOTUS_ENABLE_UNHANDLED_FALLBACK", "1"),
-            "env",
+            biotus_enable_unhandled_fallback_value,
+            biotus_enable_unhandled_fallback_source,
             group="Fallback policy",
+            help_text=biotus_enable_unhandled_fallback_help,
+            readonly=False,
         ),
         _business_item(
             "biotus_unhandled_order_timeout_minutes",
             "BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES",
-            _env_int_value("BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES", 60),
-            "env",
+            biotus_unhandled_order_timeout_minutes_value,
+            biotus_unhandled_order_timeout_minutes_source,
             group="Fallback policy",
+            help_text=biotus_unhandled_order_timeout_minutes_help,
+            readonly=False,
         ),
         _business_item(
             "biotus_fallback_additional_status_ids",
             "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
-            _business_joined_env_list("BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS", "9,19,18,20"),
-            "env",
+            biotus_fallback_additional_status_ids_value,
+            biotus_fallback_additional_status_ids_source,
             group="Fallback policy",
+            help_text=biotus_fallback_additional_status_ids_help,
+            readonly=False,
         ),
         _business_item(
             "biotus_duplicate_status_id",
             "BIOTUS_DUPLICATE_STATUS_ID",
-            _env_int_value("BIOTUS_DUPLICATE_STATUS_ID", 20),
-            "env",
+            biotus_duplicate_status_id_value,
+            biotus_duplicate_status_id_source,
             group="Fallback policy",
+            help_text=biotus_duplicate_status_id_help,
+            readonly=False,
         ),
         _business_item(
             "biotus_time_default_minutes",
@@ -900,35 +1264,127 @@ def _build_business_sections(
 
     master_items = [
         _business_item("master_scheduler_enabled", "MASTER_SCHEDULER_ENABLED", _env_bool_value("MASTER_SCHEDULER_ENABLED", "1"), "env", group="Scheduler gates"),
-        _business_item("master_catalog_enterprise_code_vm", "MASTER_CATALOG_ENTERPRISE_CODE", master_catalog_target, "env", group="Target selectors"),
-        _business_item("master_daily_publish_enterprise", "MASTER_DAILY_PUBLISH_ENTERPRISE", explicit_daily_target, "env", group="Target selectors"),
+        _business_item(
+            "master_catalog_enterprise_code_vm",
+            "Primary business enterprise code",
+            master_catalog_target,
+            master_catalog_target_source,
+            group="Target selectors",
+        ),
+        _business_item(
+            "master_daily_publish_enterprise",
+            "Daily publish explicit target",
+            explicit_daily_target,
+            explicit_daily_source,
+            group="Target selectors",
+        ),
         _business_item("master_daily_publish_effective_target", "Daily publish effective target", effective_daily_target, daily_target_source, group="Target selectors"),
-        _business_item("master_weekly_salesdrive_enterprise", "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE", explicit_weekly_target, "env", group="Target selectors"),
+        _business_item(
+            "master_weekly_salesdrive_enterprise",
+            "Weekly SalesDrive explicit target",
+            explicit_weekly_target,
+            explicit_weekly_source,
+            group="Target selectors",
+        ),
         _business_item("master_weekly_salesdrive_effective_target", "Weekly SalesDrive effective target", effective_weekly_target, weekly_target_source, group="Target selectors"),
-        _business_item("master_weekly_enabled", "MASTER_WEEKLY_ENABLED", _env_bool_value("MASTER_WEEKLY_ENABLED", "1"), "env", group="Weekly orchestration"),
-        _business_item("master_weekly_day", "MASTER_WEEKLY_DAY", _env_optional_value("MASTER_WEEKLY_DAY") or "SUN", "env", group="Weekly orchestration"),
-        _business_item("master_weekly_hour", "MASTER_WEEKLY_HOUR", _env_int_value("MASTER_WEEKLY_HOUR", 3), "env", group="Weekly orchestration"),
-        _business_item("master_weekly_minute", "MASTER_WEEKLY_MINUTE", _env_int_value("MASTER_WEEKLY_MINUTE", 0), "env", group="Weekly orchestration"),
+        _business_item(
+            "master_weekly_enabled",
+            "MASTER_WEEKLY_ENABLED",
+            bool(business_settings_row.master_weekly_enabled) if business_settings_exists else _env_bool_value("MASTER_WEEKLY_ENABLED", "1"),
+            "db" if business_settings_exists else "env-fallback",
+            group="Weekly orchestration",
+            readonly=False,
+        ),
+        _business_item(
+            "master_weekly_day",
+            "MASTER_WEEKLY_DAY",
+            business_settings_row.master_weekly_day if business_settings_exists else (_env_optional_value("MASTER_WEEKLY_DAY") or "SUN"),
+            "db" if business_settings_exists else "env-fallback",
+            group="Weekly orchestration",
+            readonly=False,
+        ),
+        _business_item(
+            "master_weekly_hour",
+            "MASTER_WEEKLY_HOUR",
+            int(business_settings_row.master_weekly_hour) if business_settings_exists else _env_int_value("MASTER_WEEKLY_HOUR", 3),
+            "db" if business_settings_exists else "env-fallback",
+            group="Weekly orchestration",
+            readonly=False,
+        ),
+        _business_item(
+            "master_weekly_minute",
+            "MASTER_WEEKLY_MINUTE",
+            int(business_settings_row.master_weekly_minute) if business_settings_exists else _env_int_value("MASTER_WEEKLY_MINUTE", 0),
+            "db" if business_settings_exists else "env-fallback",
+            group="Weekly orchestration",
+            readonly=False,
+        ),
         _business_item("master_weekly_salesdrive_batch_size", "MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", _env_int_value("MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", 100), "env", group="Weekly orchestration"),
-        _business_item("master_daily_publish_enabled", "MASTER_DAILY_PUBLISH_ENABLED", _env_bool_value("MASTER_DAILY_PUBLISH_ENABLED", "0"), "env", group="Daily publish"),
-        _business_item("master_daily_publish_hour", "MASTER_DAILY_PUBLISH_HOUR", _env_int_value("MASTER_DAILY_PUBLISH_HOUR", 8), "env", group="Daily publish"),
-        _business_item("master_daily_publish_minute", "MASTER_DAILY_PUBLISH_MINUTE", _env_int_value("MASTER_DAILY_PUBLISH_MINUTE", 0), "env", group="Daily publish"),
-        _business_item("master_daily_publish_limit", "MASTER_DAILY_PUBLISH_LIMIT", _env_int_value("MASTER_DAILY_PUBLISH_LIMIT", 0), "env", group="Daily publish"),
-        _business_item("master_archive_enabled", "MASTER_ARCHIVE_ENABLED", _env_bool_value("MASTER_ARCHIVE_ENABLED", "0"), "env", group="Archive"),
-        _business_item("master_archive_every_minutes", "MASTER_ARCHIVE_EVERY_MINUTES", _env_int_value("MASTER_ARCHIVE_EVERY_MINUTES", 60), "env", group="Archive"),
+        _business_item(
+            "master_daily_publish_enabled",
+            "MASTER_DAILY_PUBLISH_ENABLED",
+            bool(business_settings_row.master_daily_publish_enabled) if business_settings_exists else _env_bool_value("MASTER_DAILY_PUBLISH_ENABLED", "1"),
+            "db" if business_settings_exists else "env-fallback",
+            group="Daily publish",
+            readonly=False,
+        ),
+        _business_item(
+            "master_daily_publish_hour",
+            "MASTER_DAILY_PUBLISH_HOUR",
+            int(business_settings_row.master_daily_publish_hour) if business_settings_exists else _env_int_value("MASTER_DAILY_PUBLISH_HOUR", 9),
+            "db" if business_settings_exists else "env-fallback",
+            group="Daily publish",
+            readonly=False,
+        ),
+        _business_item(
+            "master_daily_publish_minute",
+            "MASTER_DAILY_PUBLISH_MINUTE",
+            int(business_settings_row.master_daily_publish_minute) if business_settings_exists else _env_int_value("MASTER_DAILY_PUBLISH_MINUTE", 0),
+            "db" if business_settings_exists else "env-fallback",
+            group="Daily publish",
+            readonly=False,
+        ),
+        _business_item(
+            "master_daily_publish_limit",
+            "MASTER_DAILY_PUBLISH_LIMIT",
+            int(business_settings_row.master_daily_publish_limit) if business_settings_exists else _env_int_value("MASTER_DAILY_PUBLISH_LIMIT", 0),
+            "db" if business_settings_exists else "env-fallback",
+            group="Daily publish",
+            readonly=False,
+        ),
+        _business_item(
+            "master_archive_enabled",
+            "MASTER_ARCHIVE_ENABLED",
+            bool(business_settings_row.master_archive_enabled) if business_settings_exists else _env_bool_value("MASTER_ARCHIVE_ENABLED", "1"),
+            "db" if business_settings_exists else "env-fallback",
+            group="Archive",
+            readonly=False,
+        ),
+        _business_item(
+            "master_archive_every_minutes",
+            "MASTER_ARCHIVE_EVERY_MINUTES",
+            int(business_settings_row.master_archive_every_minutes) if business_settings_exists else _env_int_value("MASTER_ARCHIVE_EVERY_MINUTES", 60),
+            "db" if business_settings_exists else "env-fallback",
+            group="Archive",
+            readonly=False,
+        ),
         _business_item(
             "master_target_fallback_note",
             "Target fallback note",
-            "Daily/weekly explicit targets fallback to MASTER_CATALOG_ENTERPRISE_CODE when empty.",
-            "computed",
+            (
+                "DB-first: daily/weekly effective targets use override when present, otherwise business_enterprise_code."
+                if business_settings_exists
+                else "Fallback-only mode: daily/weekly explicit targets fallback to MASTER_CATALOG_ENTERPRISE_CODE when empty."
+            ),
+            "db" if business_settings_exists else "computed",
             group="Target selectors",
         ),
         _business_item(
             "writable_scope_status",
             "Writable first scope",
-            "deferred",
+            "enabled-for-master-control-plane",
             "computed",
-            help_text="Persistent write для env-backed orchestration settings намеренно не включён на этом шаге: в проекте нет готового безопасного env-settings backend.",
+            help_text="Write support включён только для DB-backed primary/daily/weekly/archive fields, уже читаемых page и master runtime.",
         ),
     ]
 
@@ -999,25 +1455,43 @@ def _build_business_sections(
 
     technical_items = [
         _business_item("enterprise_settings_owner", "EnterpriseSettings owner", "enterprise runtime fields still owned by EnterpriseSettings", "EnterpriseSettings", group="Source of truth"),
-        _business_item("env_owner", "Env-backed settings", "master orchestration, pricing and Biotus policy still come from env", "env", group="Source of truth"),
+        _business_item(
+            "db_owner",
+            "DB-first settings",
+            (
+                "business_settings is the source of truth for first-migration fields in this page snapshot"
+                if business_settings_exists
+                else "business_settings row missing; DB-first storage exists but is not currently used by this page snapshot"
+            ),
+            "db" if business_settings_exists else "transitional",
+            group="Source of truth",
+        ),
+        _business_item("env_owner", "Env-backed settings", "pricing and Biotus runtime consumers still come from env", "env", group="Source of truth"),
         _business_item("transitional_state", "Transitional settings", "old Business catalog contour, ALLOWED_SUPPLIERS and mapping fallback remain transitional", "transitional", group="Source of truth"),
         _business_item("secret_hidden", "Secret-hidden values", "token/API-key values are represented only as presence/status hints", "secret-hidden", group="Visibility rules"),
-        _business_item("write_support", "Запись orchestration settings", planned_write_supported, "computed", group="Visibility rules"),
+        _business_item(
+            "write_support",
+            "Запись orchestration settings",
+            planned_write_supported,
+            "computed",
+            group="Visibility rules",
+            help_text="Writable scope intentionally ограничен master fields plus bounded Biotus fallback/status policy fields in business_settings.",
+        ),
     ]
 
     return [
         BusinessSectionVM(
             key="target_enterprise",
             title="Целевое предприятие",
-            description="Read-only snapshot resolved Business enterprise и связанных runtime selector-ов без попытки объединить их в один ownership-layer.",
-            readonly=True,
+            description="DB-backed primary selector и nullable overrides для daily/weekly master contour. Изменяемы только поля control-plane, уже читаемые page и master runtime.",
+            readonly=False,
             items=target_items,
         ),
         BusinessSectionVM(
             key="master_catalog",
             title="Master Catalog",
-            description="Текущие master orchestration settings читаются из env. Writable scope намеренно отложен до отдельного шага.",
-            readonly=True,
+            description="DB-backed weekly/daily/archive settings. Изменения применяются к business_settings и используются master contour на следующем цикле.",
+            readonly=False,
             items=master_items,
         ),
         BusinessSectionVM(
@@ -1044,8 +1518,8 @@ def _build_business_sections(
         BusinessSectionVM(
             key="orders_biotus",
             title="Заказы / Biotus",
-            description="Read-only snapshot Business order policy, без write support на этом шаге.",
-            readonly=True,
+            description="Bounded writable Biotus fallback/status policy. Timing window, scheduler/runtime flags and external credentials remain outside this scope.",
+            readonly=False,
             items=orders_items,
         ),
         BusinessSectionVM(
@@ -1067,20 +1541,49 @@ def _build_business_sections(
 
 async def _build_business_settings_vm(db: AsyncSession) -> BusinessSettingsVM:
     all_enterprises = await _load_all_enterprises(db)
+    business_settings_row = await _load_business_settings_row(db)
     candidates = _filter_business_candidates(all_enterprises)
-    resolution_status, resolution_message, resolved = _business_resolution_state(candidates)
+    fallback_resolution_status, fallback_resolution_message, fallback_resolved = _business_resolution_state(candidates)
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+
+    if business_settings_row is not None:
+        db_primary_code = str(business_settings_row.business_enterprise_code or "").strip() or None
+        db_primary_enterprise = enterprise_lookup.get(str(db_primary_code or ""))
+        if db_primary_enterprise is not None:
+            resolution_status = "db-primary"
+            resolution_message = (
+                "Business Settings page uses business_settings as primary source for DB-backed control-plane fields."
+            )
+            resolved = db_primary_enterprise
+        else:
+            resolution_status = "db-primary-enterprise-missing"
+            resolution_message = (
+                "business_settings row exists, but business_enterprise_code is missing in EnterpriseSettings. "
+                "Page stays DB-first for control-plane fields and surfaces inconsistency instead of falling back silently."
+            )
+            resolved = None
+    else:
+        resolution_status = fallback_resolution_status
+        resolution_message = f"business_settings row is missing; page uses fallback env/EnterpriseSettings read path. {fallback_resolution_message}"
+        resolved = fallback_resolved
+
     return BusinessSettingsVM(
         resolution_status=resolution_status,
         resolution_message=resolution_message,
         resolved_enterprise_code=resolved.enterprise_code if resolved else None,
         resolved_enterprise_name=resolved.enterprise_name if resolved else None,
         business_candidates=_build_business_candidates_vm(candidates),
-        writable_supported=False,
-        deferred_write_reason=(
-            "Persistent write для env-backed Business orchestration settings не включён на этом шаге: в проекте нет существующего безопасного app-level settings backend без runtime ownership drift."
-        ),
+        enterprise_options=_build_business_enterprise_options_vm(all_enterprises),
+        writable_supported=True,
+        deferred_write_reason=None,
         planned_writable_keys=_business_planned_writable_keys(),
-        sections=_build_business_sections(resolved, resolution_status=resolution_status, all_enterprises=all_enterprises),
+        sections=_build_business_sections(
+            resolved,
+            resolution_status=fallback_resolution_status,
+            all_enterprises=all_enterprises,
+            business_settings_row=business_settings_row,
+            business_candidates=candidates,
+        ),
     )
 
 
@@ -1362,6 +1865,58 @@ async def get_all_enterprises_view(db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(verify_token)],
 )
 async def get_business_settings_view(db: AsyncSession = Depends(get_db)):
+    return await _build_business_settings_vm(db)
+
+
+@router.put(
+    "/business/settings/master-scope",
+    response_model=BusinessSettingsVM,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_settings_master_scope(
+    payload: BusinessSettingsUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    all_enterprises = await _load_all_enterprises(db)
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    business_candidates = _filter_business_candidates(all_enterprises)
+    _validate_business_settings_update(
+        payload,
+        enterprise_lookup=enterprise_lookup,
+        business_candidates=business_candidates,
+    )
+
+    row = await _get_or_create_business_settings_row_for_write(
+        db,
+        all_enterprises=all_enterprises,
+        payload=payload,
+    )
+
+    row.business_enterprise_code = payload.business_enterprise_code
+    row.daily_publish_enterprise_code_override = _normalize_override_value(
+        payload.daily_publish_enterprise_code_override,
+        payload.business_enterprise_code,
+    )
+    row.weekly_salesdrive_enterprise_code_override = _normalize_override_value(
+        payload.weekly_salesdrive_enterprise_code_override,
+        payload.business_enterprise_code,
+    )
+    row.biotus_enable_unhandled_fallback = payload.biotus_enable_unhandled_fallback
+    row.biotus_unhandled_order_timeout_minutes = payload.biotus_unhandled_order_timeout_minutes
+    row.biotus_fallback_additional_status_ids = list(payload.biotus_fallback_additional_status_ids)
+    row.biotus_duplicate_status_id = payload.biotus_duplicate_status_id
+    row.master_weekly_enabled = payload.master_weekly_enabled
+    row.master_weekly_day = payload.master_weekly_day
+    row.master_weekly_hour = payload.master_weekly_hour
+    row.master_weekly_minute = payload.master_weekly_minute
+    row.master_daily_publish_enabled = payload.master_daily_publish_enabled
+    row.master_daily_publish_hour = payload.master_daily_publish_hour
+    row.master_daily_publish_minute = payload.master_daily_publish_minute
+    row.master_daily_publish_limit = payload.master_daily_publish_limit
+    row.master_archive_enabled = payload.master_archive_enabled
+    row.master_archive_every_minutes = payload.master_archive_every_minutes
+
+    await db.commit()
     return await _build_business_settings_vm(db)
 
 

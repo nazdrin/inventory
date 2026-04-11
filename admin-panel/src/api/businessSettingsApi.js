@@ -25,3 +25,19 @@ export const getBusinessSettingsView = async () => {
         throw error;
     }
 };
+
+export const updateBusinessSettingsControlPlaneScope = async (payload) => {
+    try {
+        const response = await axios.put(
+            `${API_BASE_URL}/business/settings/master-scope`,
+            payload,
+            getAuthHeaders(),
+        );
+        return response.data;
+    } catch (error) {
+        console.error("Error updating business settings master scope:", error);
+        throw error;
+    }
+};
+
+export const updateBusinessSettingsMasterScope = updateBusinessSettingsControlPlaneScope;
