@@ -41,3 +41,17 @@ export const updateBusinessSettingsControlPlaneScope = async (payload) => {
 };
 
 export const updateBusinessSettingsMasterScope = updateBusinessSettingsControlPlaneScope;
+
+export const updateBusinessSettingsEnterpriseOperationalScope = async (payload) => {
+    try {
+        const response = await axios.put(
+            `${API_BASE_URL}/business/settings/enterprise-operational-scope`,
+            payload,
+            getAuthHeaders(),
+        );
+        return response.data;
+    } catch (error) {
+        console.error("Error updating business settings enterprise operational scope:", error);
+        throw error;
+    }
+};

@@ -181,6 +181,8 @@ class BusinessSettings(Base, TimestampMixin):
 
     master_archive_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     master_archive_every_minutes = Column(Integer, nullable=False, server_default=text("60"))
+    business_stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    business_stock_interval_seconds = Column(Integer, nullable=False, server_default=text("60"))
 
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_business_settings_singleton_id"),
@@ -205,6 +207,10 @@ class BusinessSettings(Base, TimestampMixin):
         CheckConstraint(
             "master_archive_every_minutes >= 1",
             name="ck_business_settings_archive_every_minutes_positive",
+        ),
+        CheckConstraint(
+            "business_stock_interval_seconds >= 1",
+            name="ck_business_settings_stock_interval_positive",
         ),
         CheckConstraint(
             "biotus_unhandled_order_timeout_minutes >= 0",
