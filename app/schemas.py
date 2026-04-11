@@ -238,7 +238,6 @@ class BusinessSettingsUpdateSchema(BaseModel):
             raise ValueError("master_weekly_day is required")
         return normalized
 
-
 class BusinessPricingSettingsUpdateSchema(BaseModel):
     """Future bounded pricing write contract for Business Settings.
 
@@ -280,7 +279,6 @@ class BusinessPricingSettingsUpdateSchema(BaseModel):
             raise ValueError("pricing_jitter_max_uah must be >= pricing_jitter_min_uah")
 
         return self
-
 
 class BusinessEnterpriseOperationalFieldsUpdateSchema(BaseModel):
     branch_id: str

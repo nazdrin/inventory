@@ -507,7 +507,6 @@ const buildPricingUpdatePayload = (draft) => {
 
     return payload;
 };
-
 const buildItemGroups = (items = []) => {
     const groups = [];
     const map = new Map();
@@ -969,7 +968,6 @@ const PricingEditor = ({ draft, onChange }) => {
         </div>
     );
 };
-
 const SectionCard = ({
     section,
     isOpen,

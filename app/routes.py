@@ -908,7 +908,6 @@ def _business_joined_int_list(values: list[int] | tuple[int, ...] | None) -> str
     normalized = [str(int(item)) for item in values]
     return ", ".join(normalized) if normalized else "—"
 
-
 def _build_pricing_items(
     pricing_snapshot: BusinessPricingSettingsSnapshot,
 ) -> list[BusinessSettingItemVM]:
@@ -941,7 +940,6 @@ def _build_pricing_items(
         )
 
     return items
-
 
 def _fallback_business_stock_enabled(enterprise: EnterpriseSettings | None) -> bool:
     if enterprise is None:
@@ -1528,7 +1526,6 @@ def _build_business_sections(
             group="Подсказка",
         ),
     ]
-
     pricing_items = _build_pricing_items(pricing_snapshot)
 
     return [
@@ -2009,6 +2006,44 @@ async def update_business_settings_pricing_scope(
         "Business Settings pricing update saved: row_exists=%s source=business_settings",
         True,
     )
+
+    await db.commit()
+    return await _build_business_settings_vm(db)
+
+
+@router.put(
+    "/business/settings/enterprise-operational-scope",
+    response_model=BusinessSettingsVM,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_settings_enterprise_operational_scope(
+    payload: BusinessEnterpriseOperationalFieldsUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    all_enterprises = await _load_all_enterprises(db)
+    business_settings_row = await _load_business_settings_row(db)
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    business_candidates = _filter_business_candidates(all_enterprises)
+
+    enterprise = _resolve_business_enterprise_for_operational_write(
+        business_settings_row=business_settings_row,
+        business_candidates=business_candidates,
+        enterprise_lookup=enterprise_lookup,
+    )
+    business_settings_logger.info(
+        "Business Settings token update received for enterprise_code=%s token_present=%s",
+        enterprise.enterprise_code,
+        bool(payload.token),
+    )
+
+    enterprise.branch_id = payload.branch_id
+    enterprise.tabletki_login = _normalize_optional_enterprise_text(payload.tabletki_login)
+    enterprise.tabletki_password = _normalize_optional_enterprise_text(payload.tabletki_password)
+    if payload.token is not None:
+        enterprise.token = _normalize_optional_enterprise_text(payload.token)
+    enterprise.order_fetcher = bool(payload.order_fetcher)
+    enterprise.auto_confirm = bool(payload.auto_confirm)
+    enterprise.stock_correction = bool(payload.stock_correction)
 
     await db.commit()
     return await _build_business_settings_vm(db)
