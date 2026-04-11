@@ -55,3 +55,17 @@ export const updateBusinessSettingsEnterpriseOperationalScope = async (payload) 
         throw error;
     }
 };
+
+export const updateBusinessSettingsPricingScope = async (payload) => {
+    try {
+        const response = await axios.put(
+            `${API_BASE_URL}/business/settings/pricing-scope`,
+            payload,
+            getAuthHeaders(),
+        );
+        return response.data;
+    } catch (error) {
+        console.error("Error updating business settings pricing scope:", error);
+        throw error;
+    }
+};
