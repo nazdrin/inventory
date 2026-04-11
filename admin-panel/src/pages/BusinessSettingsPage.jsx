@@ -3,6 +3,7 @@ import {
     getBusinessSettingsView,
     updateBusinessSettingsControlPlaneScope,
     updateBusinessSettingsEnterpriseOperationalScope,
+    updateBusinessSettingsPricingScope,
 } from "../api/businessSettingsApi";
 
 const pageStyle = {
@@ -95,6 +96,7 @@ const editableSectionKeysExtended = new Set([
     "master_catalog",
     "integration_access",
     "orders_biotus",
+    "pricing",
     "stock_mapping_mode",
 ]);
 const targetEditableItemKeys = new Set(["branch_id"]);
@@ -127,6 +129,24 @@ const stockEditableItemKeys = new Set([
     "business_stock_enabled",
     "business_stock_interval_seconds",
     "stock_correction",
+]);
+const pricingEditableItemKeys = new Set([
+    "pricing_base_thr",
+    "pricing_price_band_low_max",
+    "pricing_price_band_mid_max",
+    "pricing_thr_add_low_uah",
+    "pricing_thr_add_mid_uah",
+    "pricing_thr_add_high_uah",
+    "pricing_no_comp_add_low_uah",
+    "pricing_no_comp_add_mid_uah",
+    "pricing_no_comp_add_high_uah",
+    "pricing_comp_discount_share",
+    "pricing_comp_delta_min_uah",
+    "pricing_comp_delta_max_uah",
+    "pricing_jitter_enabled",
+    "pricing_jitter_step_uah",
+    "pricing_jitter_min_uah",
+    "pricing_jitter_max_uah",
 ]);
 const inputStyle = {
     width: "100%",
@@ -267,6 +287,31 @@ const parsePositiveInteger = (value, label) => {
     return parsed;
 };
 
+const parseDecimalString = (value, label, { min = null, exclusiveMin = null, max = null, exclusiveMax = null } = {}) => {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) {
+        throw new Error(`${label} обязателен.`);
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) {
+        throw new Error(`${label} должен быть числом.`);
+    }
+    if (min !== null && parsed < min) {
+        throw new Error(`${label} должен быть не меньше ${min}.`);
+    }
+    if (exclusiveMin !== null && parsed <= exclusiveMin) {
+        throw new Error(`${label} должен быть больше ${exclusiveMin}.`);
+    }
+    if (max !== null && parsed > max) {
+        throw new Error(`${label} должен быть не больше ${max}.`);
+    }
+    if (exclusiveMax !== null && parsed >= exclusiveMax) {
+        throw new Error(`${label} должен быть меньше ${exclusiveMax}.`);
+    }
+    return normalized;
+};
+
 const flattenItems = (viewModel) => {
     const itemMap = new Map();
     (viewModel?.sections || []).forEach((section) => {
@@ -310,6 +355,22 @@ const buildDraftFromViewModel = (viewModel) => {
         order_fetcher: Boolean(items.get("order_fetcher")?.value),
         auto_confirm: Boolean(items.get("auto_confirm")?.value),
         stock_correction: Boolean(items.get("stock_correction")?.value),
+        pricing_base_thr: String(items.get("pricing_base_thr")?.value ?? "0.08"),
+        pricing_price_band_low_max: String(items.get("pricing_price_band_low_max")?.value ?? "100"),
+        pricing_price_band_mid_max: String(items.get("pricing_price_band_mid_max")?.value ?? "400"),
+        pricing_thr_add_low_uah: String(items.get("pricing_thr_add_low_uah")?.value ?? "1.0"),
+        pricing_thr_add_mid_uah: String(items.get("pricing_thr_add_mid_uah")?.value ?? "1.0"),
+        pricing_thr_add_high_uah: String(items.get("pricing_thr_add_high_uah")?.value ?? "1.0"),
+        pricing_no_comp_add_low_uah: String(items.get("pricing_no_comp_add_low_uah")?.value ?? "1.0"),
+        pricing_no_comp_add_mid_uah: String(items.get("pricing_no_comp_add_mid_uah")?.value ?? "1.0"),
+        pricing_no_comp_add_high_uah: String(items.get("pricing_no_comp_add_high_uah")?.value ?? "1.0"),
+        pricing_comp_discount_share: String(items.get("pricing_comp_discount_share")?.value ?? "0.01"),
+        pricing_comp_delta_min_uah: String(items.get("pricing_comp_delta_min_uah")?.value ?? "2"),
+        pricing_comp_delta_max_uah: String(items.get("pricing_comp_delta_max_uah")?.value ?? "15"),
+        pricing_jitter_enabled: Boolean(items.get("pricing_jitter_enabled")?.value),
+        pricing_jitter_step_uah: String(items.get("pricing_jitter_step_uah")?.value ?? "0.5"),
+        pricing_jitter_min_uah: String(items.get("pricing_jitter_min_uah")?.value ?? "-1.0"),
+        pricing_jitter_max_uah: String(items.get("pricing_jitter_max_uah")?.value ?? "1.0"),
     };
 };
 
@@ -361,6 +422,38 @@ const buildEnterpriseOperationalUpdatePayload = (draft) => {
     };
 };
 
+const buildPricingUpdatePayload = (draft) => {
+    const payload = {
+        pricing_base_thr: parseDecimalString(draft.pricing_base_thr, "Базовый порог", { min: 0 }),
+        pricing_price_band_low_max: parseDecimalString(draft.pricing_price_band_low_max, "Верхняя граница LOW", { min: 0 }),
+        pricing_price_band_mid_max: parseDecimalString(draft.pricing_price_band_mid_max, "Верхняя граница MID", { min: 0 }),
+        pricing_thr_add_low_uah: parseDecimalString(draft.pricing_thr_add_low_uah, "Надбавка LOW", { min: 0 }),
+        pricing_thr_add_mid_uah: parseDecimalString(draft.pricing_thr_add_mid_uah, "Надбавка MID", { min: 0 }),
+        pricing_thr_add_high_uah: parseDecimalString(draft.pricing_thr_add_high_uah, "Надбавка HIGH", { min: 0 }),
+        pricing_no_comp_add_low_uah: parseDecimalString(draft.pricing_no_comp_add_low_uah, "Надбавка LOW без конкурента", { min: 0 }),
+        pricing_no_comp_add_mid_uah: parseDecimalString(draft.pricing_no_comp_add_mid_uah, "Надбавка MID без конкурента", { min: 0 }),
+        pricing_no_comp_add_high_uah: parseDecimalString(draft.pricing_no_comp_add_high_uah, "Надбавка HIGH без конкурента", { min: 0 }),
+        pricing_comp_discount_share: parseDecimalString(draft.pricing_comp_discount_share, "Доля скидки относительно конкурента", { min: 0, exclusiveMax: 1 }),
+        pricing_comp_delta_min_uah: parseDecimalString(draft.pricing_comp_delta_min_uah, "Минимальный delta", { min: 0 }),
+        pricing_comp_delta_max_uah: parseDecimalString(draft.pricing_comp_delta_max_uah, "Максимальный delta", { min: 0 }),
+        pricing_jitter_enabled: Boolean(draft.pricing_jitter_enabled),
+        pricing_jitter_step_uah: parseDecimalString(draft.pricing_jitter_step_uah, "Шаг jitter", { exclusiveMin: 0 }),
+        pricing_jitter_min_uah: parseDecimalString(draft.pricing_jitter_min_uah, "Минимальный jitter"),
+        pricing_jitter_max_uah: parseDecimalString(draft.pricing_jitter_max_uah, "Максимальный jitter"),
+    };
+
+    if (Number(payload.pricing_price_band_mid_max) < Number(payload.pricing_price_band_low_max)) {
+        throw new Error("Верхняя граница MID должна быть не меньше верхней границы LOW.");
+    }
+    if (Number(payload.pricing_comp_delta_max_uah) < Number(payload.pricing_comp_delta_min_uah)) {
+        throw new Error("Максимальный delta должен быть не меньше минимального delta.");
+    }
+    if (Number(payload.pricing_jitter_max_uah) < Number(payload.pricing_jitter_min_uah)) {
+        throw new Error("Максимальный jitter должен быть не меньше минимального jitter.");
+    }
+
+    return payload;
+};
 const buildItemGroups = (items = []) => {
     const groups = [];
     const map = new Map();
@@ -722,6 +815,83 @@ const OrdersBusinessEditor = ({ draft, onChange }) => (
     </div>
 );
 
+const pricingLayoutStyle = {
+    display: "grid",
+    gap: "16px",
+    marginBottom: "18px",
+};
+
+const PricingEditor = ({ draft, onChange }) => {
+    const renderDecimalInput = (key, label, helpText, extra = {}) => (
+        <FormField label={label} helpText={helpText}>
+            <input
+                type="number"
+                step={extra.step || "0.01"}
+                min={extra.min}
+                style={inputStyle}
+                value={draft[key]}
+                onChange={(event) => onChange(key, event.target.value)}
+            />
+        </FormField>
+    );
+
+    return (
+        <div style={pricingLayoutStyle}>
+            <div style={{ display: "grid", gap: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Базовый порог</div>
+                {renderDecimalInput("pricing_base_thr", "Базовый порог", "Доля, которая участвует в threshold calculation. 0.08 = 8%.", { step: "0.000001", min: "0" })}
+            </div>
+
+            <div style={{ display: "grid", gap: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Диапазоны цен</div>
+                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                    {renderDecimalInput("pricing_price_band_low_max", "Верхняя граница LOW", "Если price_opt меньше или равен этому значению, товар попадает в LOW.", { min: "0" })}
+                    {renderDecimalInput("pricing_price_band_mid_max", "Верхняя граница MID", "Если price_opt выше LOW, но не выше этого значения, товар попадает в MID. Всё, что выше, идёт в HIGH.", { min: "0" })}
+                </div>
+            </div>
+
+            <div style={{ display: "grid", gap: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Реакция на конкурентов</div>
+                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                    {renderDecimalInput("pricing_thr_add_low_uah", "Надбавка LOW, грн", "Абсолютная надбавка в гривне для LOW, когда есть конкурент.", { min: "0" })}
+                    {renderDecimalInput("pricing_thr_add_mid_uah", "Надбавка MID, грн", "Абсолютная надбавка в гривне для MID, когда есть конкурент.", { min: "0" })}
+                    {renderDecimalInput("pricing_thr_add_high_uah", "Надбавка HIGH, грн", "Абсолютная надбавка в гривне для HIGH, когда есть конкурент.", { min: "0" })}
+                    {renderDecimalInput("pricing_comp_discount_share", "Доля скидки относительно конкурента", "Share, а не проценты: 0.01 = 1%. Используется для undercut логики.", { step: "0.000001", min: "0" })}
+                    {renderDecimalInput("pricing_comp_delta_min_uah", "Минимальный delta, грн", "Минимальный допустимый отступ от цены конкурента в гривне.", { min: "0" })}
+                    {renderDecimalInput("pricing_comp_delta_max_uah", "Максимальный delta, грн", "Максимальный допустимый отступ от цены конкурента в гривне.", { min: "0" })}
+                </div>
+            </div>
+
+            <div style={{ display: "grid", gap: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Поведение без конкурентов</div>
+                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                    {renderDecimalInput("pricing_no_comp_add_low_uah", "Надбавка LOW без конкурента, грн", "Абсолютная надбавка в гривне для LOW, когда цены конкурента нет.", { min: "0" })}
+                    {renderDecimalInput("pricing_no_comp_add_mid_uah", "Надбавка MID без конкурента, грн", "Абсолютная надбавка в гривне для MID, когда цены конкурента нет.", { min: "0" })}
+                    {renderDecimalInput("pricing_no_comp_add_high_uah", "Надбавка HIGH без конкурента, грн", "Абсолютная надбавка в гривне для HIGH, когда цены конкурента нет.", { min: "0" })}
+                </div>
+            </div>
+
+            <div style={{ display: "grid", gap: "12px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Jitter</div>
+                <FormField label="Включить jitter" helpText="Добавляет случайное смещение после основного расчёта цены. Runtime формулы при этом не меняются.">
+                    <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
+                        <input
+                            type="checkbox"
+                            checked={draft.pricing_jitter_enabled}
+                            onChange={(event) => onChange("pricing_jitter_enabled", event.target.checked)}
+                        />
+                        Включено
+                    </label>
+                </FormField>
+                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                    {renderDecimalInput("pricing_jitter_step_uah", "Шаг jitter, грн", "Шаг сетки, по которой выбирается случайное смещение цены.", { min: "0.01" })}
+                    {renderDecimalInput("pricing_jitter_min_uah", "Минимальный jitter, грн", "Нижняя граница случайного смещения цены.", {})}
+                    {renderDecimalInput("pricing_jitter_max_uah", "Максимальный jitter, грн", "Верхняя граница случайного смещения цены.", {})}
+                </div>
+            </div>
+        </div>
+    );
+};
 const SectionCard = ({
     section,
     editing,
@@ -746,6 +916,8 @@ const SectionCard = ({
                 ? biotusEditableItemKeys
                 : section.key === "stock_mapping_mode"
                     ? stockEditableItemKeys
+                    : section.key === "pricing"
+                        ? pricingEditableItemKeys
             : new Set();
     const visibleGroups = editing && editable
         ? groups
@@ -796,6 +968,12 @@ const SectionCard = ({
             )}
             {editing && section.key === "stock_mapping_mode" && (
                 <StockOperationalEditor
+                    draft={draft}
+                    onChange={onDraftChange}
+                />
+            )}
+            {editing && section.key === "pricing" && (
+                <PricingEditor
                     draft={draft}
                     onChange={onDraftChange}
                 />
@@ -906,6 +1084,8 @@ const BusinessSettingsPage = () => {
                 console.log("Business enterprise operational payload:", operationalPayload);
                 await updateBusinessSettingsEnterpriseOperationalScope(operationalPayload);
                 updated = await updateBusinessSettingsControlPlaneScope(buildUpdatePayload(draft));
+            } else if (sectionKey === "pricing") {
+                updated = await updateBusinessSettingsPricingScope(buildPricingUpdatePayload(draft));
             } else {
                 throw new Error("Неподдерживаемая секция сохранения.");
             }

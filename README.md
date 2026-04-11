@@ -64,6 +64,8 @@ python -m app.services.competitor_price_scheduler
 python -m app.services.telegram_bot
 
 python app/services/biotus_check_order_scheduler.py
+python app/services/business_stock_scheduler.py
+python -m app.services.business_stock_scheduler.service
 ```
 
 ## Работа с PostgreSQL

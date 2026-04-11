@@ -18,7 +18,7 @@ from app.schemas import (
     EnterpriseFieldMetaVM, EnterpriseSectionVM, SupplierListItemVM, SupplierDetailVM,
     SupplierSectionVM, BusinessSettingsVM, BusinessSectionVM, BusinessSettingItemVM,
     BusinessEnterpriseCandidateVM, BusinessEnterpriseOptionVM, BusinessSettingsUpdateSchema,
-    BusinessEnterpriseOperationalFieldsUpdateSchema,
+    BusinessEnterpriseOperationalFieldsUpdateSchema, BusinessPricingSettingsUpdateSchema,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -52,6 +52,12 @@ from sqlalchemy.future import select
 from app.auth import verify_token  # как у enterprise
 from app.models import DropshipEnterprise, BusinessSettings
 from app.schemas import DropshipEnterpriseSchema
+from app.services.business_pricing_settings_resolver import (
+    BUSINESS_PRICING_FIELD_SPECS,
+    BUSINESS_PRICING_GROUP_SPECS,
+    BusinessPricingSettingsSnapshot,
+    load_business_pricing_settings_snapshot,
+)
 
 
 def _mapping_semantic_store_label(data_format: str | None) -> str:
@@ -512,6 +518,24 @@ def _env_optional_value(name: str) -> str | None:
     return value or None
 
 
+def _env_int_list_value(name: str, default: list[int]) -> list[int]:
+    raw = _env_optional_value(name)
+    if not raw:
+        return list(default)
+
+    normalized: list[int] = []
+    for chunk in raw.replace(";", ",").split(","):
+        item = chunk.strip()
+        if not item:
+            continue
+        try:
+            normalized.append(int(item))
+        except (TypeError, ValueError):
+            continue
+
+    return normalized or list(default)
+
+
 def _business_planned_writable_keys() -> list[str]:
     return [
         "business_enterprise_code",
@@ -539,6 +563,22 @@ def _business_planned_writable_keys() -> list[str]:
         "master_daily_publish_limit",
         "master_archive_enabled",
         "master_archive_every_minutes",
+        "pricing_base_thr",
+        "pricing_price_band_low_max",
+        "pricing_price_band_mid_max",
+        "pricing_thr_add_low_uah",
+        "pricing_thr_add_mid_uah",
+        "pricing_thr_add_high_uah",
+        "pricing_no_comp_add_low_uah",
+        "pricing_no_comp_add_mid_uah",
+        "pricing_no_comp_add_high_uah",
+        "pricing_comp_discount_share",
+        "pricing_comp_delta_min_uah",
+        "pricing_comp_delta_max_uah",
+        "pricing_jitter_enabled",
+        "pricing_jitter_step_uah",
+        "pricing_jitter_min_uah",
+        "pricing_jitter_max_uah",
     ]
 
 
@@ -753,6 +793,77 @@ async def _get_or_create_business_settings_row_for_write(
     return row
 
 
+def _resolve_business_enterprise_for_pricing_write(
+    *,
+    all_enterprises: list[EnterpriseSettings],
+) -> EnterpriseSettings:
+    business_candidates = _filter_business_candidates(all_enterprises)
+    resolution_status, resolution_message, enterprise = _business_resolution_state(business_candidates)
+    if resolution_status != "resolved" or enterprise is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Не удалось сохранить pricing fields: "
+                f"{resolution_message}"
+            ),
+        )
+    return enterprise
+
+
+async def _get_or_create_business_settings_row_for_pricing_write(
+    db: AsyncSession,
+    *,
+    all_enterprises: list[EnterpriseSettings],
+) -> BusinessSettings:
+    row = await _load_business_settings_row(db)
+    if row is not None:
+        return row
+
+    primary_enterprise = _resolve_business_enterprise_for_pricing_write(
+        all_enterprises=all_enterprises,
+    )
+    primary_code = str(primary_enterprise.enterprise_code)
+
+    row = BusinessSettings(
+        id=1,
+        business_enterprise_code=primary_code,
+        daily_publish_enterprise_code_override=_env_override_value_against_primary(
+            "MASTER_DAILY_PUBLISH_ENTERPRISE",
+            primary_code,
+        ),
+        weekly_salesdrive_enterprise_code_override=_env_override_value_against_primary(
+            "MASTER_WEEKLY_SALESDRIVE_ENTERPRISE",
+            primary_code,
+        ),
+        biotus_enterprise_code_override=_env_override_value_against_primary(
+            "BIOTUS_ENTERPRISE_CODE",
+            primary_code,
+        ),
+        biotus_enable_unhandled_fallback=_env_bool_value("BIOTUS_ENABLE_UNHANDLED_FALLBACK", "1"),
+        biotus_unhandled_order_timeout_minutes=_env_int_value("BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES", 60),
+        biotus_fallback_additional_status_ids=_env_int_list_value(
+            "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
+            [9, 19, 18, 20],
+        ),
+        biotus_duplicate_status_id=_env_int_value("BIOTUS_DUPLICATE_STATUS_ID", 20),
+        master_weekly_enabled=_env_bool_value("MASTER_WEEKLY_ENABLED", "1"),
+        master_weekly_day=(_env_optional_value("MASTER_WEEKLY_DAY") or "SUN").upper(),
+        master_weekly_hour=_env_int_value("MASTER_WEEKLY_HOUR", 3),
+        master_weekly_minute=_env_int_value("MASTER_WEEKLY_MINUTE", 0),
+        master_daily_publish_enabled=_env_bool_value("MASTER_DAILY_PUBLISH_ENABLED", "1"),
+        master_daily_publish_hour=_env_int_value("MASTER_DAILY_PUBLISH_HOUR", 9),
+        master_daily_publish_minute=_env_int_value("MASTER_DAILY_PUBLISH_MINUTE", 0),
+        master_daily_publish_limit=_env_int_value("MASTER_DAILY_PUBLISH_LIMIT", 0),
+        master_archive_enabled=_env_bool_value("MASTER_ARCHIVE_ENABLED", "1"),
+        master_archive_every_minutes=_env_int_value("MASTER_ARCHIVE_EVERY_MINUTES", 60),
+        business_stock_enabled=_fallback_business_stock_enabled(primary_enterprise),
+        business_stock_interval_seconds=_fallback_business_stock_interval_seconds(primary_enterprise),
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
 def _business_item(
     key: str,
     label: str,
@@ -796,6 +907,38 @@ def _business_joined_int_list(values: list[int] | tuple[int, ...] | None) -> str
     normalized = [str(int(item)) for item in values]
     return ", ".join(normalized) if normalized else "—"
 
+def _build_pricing_items(
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> list[BusinessSettingItemVM]:
+    group_titles = {group.key: group.title for group in BUSINESS_PRICING_GROUP_SPECS}
+    items: list[BusinessSettingItemVM] = []
+
+    for spec in BUSINESS_PRICING_FIELD_SPECS:
+        items.append(
+            _business_item(
+                spec.key,
+                spec.label,
+                getattr(pricing_snapshot, spec.key),
+                pricing_snapshot.source,
+                group=group_titles.get(spec.ui_group),
+                help_text=spec.help_text,
+                readonly=False,
+            )
+        )
+
+    if pricing_snapshot.inconsistency:
+        items.append(
+            _business_item(
+                "pricing_snapshot_fallback_reason",
+                "Почему используется fallback",
+                pricing_snapshot.inconsistency,
+                "derived",
+                group="Подсказка",
+                help_text="Если строка business_settings существует, но её pricing payload невалиден, runtime и страница временно используют env fallback целиком.",
+            )
+        )
+
+    return items
 
 def _fallback_business_stock_enabled(enterprise: EnterpriseSettings | None) -> bool:
     if enterprise is None:
@@ -935,6 +1078,7 @@ def _build_business_sections(
     all_enterprises: list[EnterpriseSettings],
     business_settings_row: BusinessSettings | None,
     business_candidates: list[EnterpriseSettings],
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
 ) -> list[BusinessSectionVM]:
     old_catalog_disabled = _env_bool_value("DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER", "0")
     use_master_mapping = _env_bool_value("USE_MASTER_MAPPING_FOR_STOCK", "0")
@@ -1365,47 +1509,7 @@ def _build_business_sections(
             group="Подсказка",
         ),
     ]
-
-    pricing_items = [
-        _business_item(
-            "pricing_base_threshold",
-            "Базовый порог изменения цены",
-            _env_optional_value("BASE_THR") or "0.08",
-            "env",
-            help_text="Базовый коэффициент, от которого отталкивается pricing-контур.",
-        ),
-        _business_item(
-            "pricing_price_bands",
-            "Диапазоны цен",
-            f"до {_env_optional_value('PRICE_BAND_LOW_MAX') or '100'} / до {_env_optional_value('PRICE_BAND_MID_MAX') or '400'} / выше",
-            "env",
-            help_text="Используются для переключения разных правил ценообразования по ценовым диапазонам.",
-        ),
-        _business_item(
-            "pricing_competitor_reaction",
-            "Реакция на цены конкурентов",
-            f"шаг {_env_optional_value('COMP_DELTA_MIN_UAH') or '2'}–{_env_optional_value('COMP_DELTA_MAX_UAH') or '15'} грн, доля {_env_optional_value('COMP_DISCOUNT_SHARE') or '0.01'}",
-            "env",
-            help_text="Короткое summary для правил реакции на конкурентные цены.",
-        ),
-        _business_item(
-            "pricing_without_competitor",
-            "Поведение без конкурентов",
-            f"коэффициенты {_env_optional_value('NO_COMP_MULT_LOW') or '1.0'} / {_env_optional_value('NO_COMP_MULT_MID') or '1.0'} / {_env_optional_value('NO_COMP_MULT_HIGH') or '1.0'}",
-            "env",
-        ),
-        _business_item(
-            "pricing_jitter",
-            "Случайное смещение цены",
-            (
-                f"включено, шаг {_env_optional_value('PRICE_JITTER_STEP_UAH') or '0.5'} грн"
-                if _env_bool_value("PRICE_JITTER_ENABLED", "0")
-                else "выключено"
-            ),
-            "env",
-            help_text="Используется для небольшого разброса цены, если jitter включён.",
-        ),
-    ]
+    pricing_items = _build_pricing_items(pricing_snapshot)
 
     return [
         BusinessSectionVM(
@@ -1439,8 +1543,8 @@ def _build_business_sections(
         BusinessSectionVM(
             key="pricing",
             title="Ценообразование",
-            description="Только чтение. Текущие параметры ценообразования из runtime.",
-            readonly=True,
+            description="DB-first pricing control-plane для Business runtime. Изменения применятся в следующем запуске pipeline.",
+            readonly=False,
             items=pricing_items,
         ),
         BusinessSectionVM(
@@ -1456,6 +1560,7 @@ def _build_business_sections(
 async def _build_business_settings_vm(db: AsyncSession) -> BusinessSettingsVM:
     all_enterprises = await _load_all_enterprises(db)
     business_settings_row = await _load_business_settings_row(db)
+    pricing_snapshot = await load_business_pricing_settings_snapshot(db)
     candidates = _filter_business_candidates(all_enterprises)
     fallback_resolution_status, fallback_resolution_message, fallback_resolved = _business_resolution_state(candidates)
     enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
@@ -1509,6 +1614,7 @@ async def _build_business_settings_vm(db: AsyncSession) -> BusinessSettingsVM:
             all_enterprises=all_enterprises,
             business_settings_row=business_settings_row,
             business_candidates=candidates,
+            pricing_snapshot=pricing_snapshot,
         ),
     )
 
@@ -1843,6 +1949,84 @@ async def update_business_settings_master_scope(
     row.master_daily_publish_limit = payload.master_daily_publish_limit
     row.master_archive_enabled = payload.master_archive_enabled
     row.master_archive_every_minutes = payload.master_archive_every_minutes
+
+    await db.commit()
+    return await _build_business_settings_vm(db)
+
+@router.put(
+    "/business/settings/pricing-scope",
+    response_model=BusinessSettingsVM,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_settings_pricing_scope(
+    payload: BusinessPricingSettingsUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    all_enterprises = await _load_all_enterprises(db)
+    row = await _get_or_create_business_settings_row_for_pricing_write(
+        db,
+        all_enterprises=all_enterprises,
+    )
+
+    row.pricing_base_thr = payload.pricing_base_thr
+    row.pricing_price_band_low_max = payload.pricing_price_band_low_max
+    row.pricing_price_band_mid_max = payload.pricing_price_band_mid_max
+    row.pricing_thr_add_low_uah = payload.pricing_thr_add_low_uah
+    row.pricing_thr_add_mid_uah = payload.pricing_thr_add_mid_uah
+    row.pricing_thr_add_high_uah = payload.pricing_thr_add_high_uah
+    row.pricing_no_comp_add_low_uah = payload.pricing_no_comp_add_low_uah
+    row.pricing_no_comp_add_mid_uah = payload.pricing_no_comp_add_mid_uah
+    row.pricing_no_comp_add_high_uah = payload.pricing_no_comp_add_high_uah
+    row.pricing_comp_discount_share = payload.pricing_comp_discount_share
+    row.pricing_comp_delta_min_uah = payload.pricing_comp_delta_min_uah
+    row.pricing_comp_delta_max_uah = payload.pricing_comp_delta_max_uah
+    row.pricing_jitter_enabled = payload.pricing_jitter_enabled
+    row.pricing_jitter_step_uah = payload.pricing_jitter_step_uah
+    row.pricing_jitter_min_uah = payload.pricing_jitter_min_uah
+    row.pricing_jitter_max_uah = payload.pricing_jitter_max_uah
+
+    business_settings_logger.info(
+        "Business Settings pricing update saved: row_exists=%s source=business_settings",
+        True,
+    )
+
+    await db.commit()
+    return await _build_business_settings_vm(db)
+
+
+@router.put(
+    "/business/settings/enterprise-operational-scope",
+    response_model=BusinessSettingsVM,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_settings_enterprise_operational_scope(
+    payload: BusinessEnterpriseOperationalFieldsUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    all_enterprises = await _load_all_enterprises(db)
+    business_settings_row = await _load_business_settings_row(db)
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    business_candidates = _filter_business_candidates(all_enterprises)
+
+    enterprise = _resolve_business_enterprise_for_operational_write(
+        business_settings_row=business_settings_row,
+        business_candidates=business_candidates,
+        enterprise_lookup=enterprise_lookup,
+    )
+    business_settings_logger.info(
+        "Business Settings token update received for enterprise_code=%s token_present=%s",
+        enterprise.enterprise_code,
+        bool(payload.token),
+    )
+
+    enterprise.branch_id = payload.branch_id
+    enterprise.tabletki_login = _normalize_optional_enterprise_text(payload.tabletki_login)
+    enterprise.tabletki_password = _normalize_optional_enterprise_text(payload.tabletki_password)
+    if payload.token is not None:
+        enterprise.token = _normalize_optional_enterprise_text(payload.token)
+    enterprise.order_fetcher = bool(payload.order_fetcher)
+    enterprise.auto_confirm = bool(payload.auto_confirm)
+    enterprise.stock_correction = bool(payload.stock_correction)
 
     await db.commit()
     return await _build_business_settings_vm(db)

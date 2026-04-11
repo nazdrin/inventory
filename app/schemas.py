@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field, field_validator
+from decimal import Decimal
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
@@ -237,6 +238,47 @@ class BusinessSettingsUpdateSchema(BaseModel):
             raise ValueError("master_weekly_day is required")
         return normalized
 
+class BusinessPricingSettingsUpdateSchema(BaseModel):
+    """Future bounded pricing write contract for Business Settings.
+
+    Phase 1 freeze only:
+    - not wired into routes yet
+    - not used by runtime yet
+    - intended to define the exact DB-backed pricing control-plane payload
+    """
+
+    pricing_base_thr: Decimal = Field(ge=0)
+    pricing_price_band_low_max: Decimal = Field(ge=0)
+    pricing_price_band_mid_max: Decimal = Field(ge=0)
+    pricing_thr_add_low_uah: Decimal = Field(ge=0)
+    pricing_thr_add_mid_uah: Decimal = Field(ge=0)
+    pricing_thr_add_high_uah: Decimal = Field(ge=0)
+    pricing_no_comp_add_low_uah: Decimal = Field(ge=0)
+    pricing_no_comp_add_mid_uah: Decimal = Field(ge=0)
+    pricing_no_comp_add_high_uah: Decimal = Field(ge=0)
+    pricing_comp_discount_share: Decimal = Field(ge=0)
+    pricing_comp_delta_min_uah: Decimal = Field(ge=0)
+    pricing_comp_delta_max_uah: Decimal = Field(ge=0)
+    pricing_jitter_enabled: bool
+    pricing_jitter_step_uah: Decimal = Field(gt=0)
+    pricing_jitter_min_uah: Decimal
+    pricing_jitter_max_uah: Decimal
+
+    @model_validator(mode="after")
+    def _validate_cross_field_constraints(self) -> "BusinessPricingSettingsUpdateSchema":
+        if self.pricing_price_band_mid_max < self.pricing_price_band_low_max:
+            raise ValueError("pricing_price_band_mid_max must be >= pricing_price_band_low_max")
+
+        if self.pricing_comp_discount_share >= Decimal("1"):
+            raise ValueError("pricing_comp_discount_share must be < 1")
+
+        if self.pricing_comp_delta_max_uah < self.pricing_comp_delta_min_uah:
+            raise ValueError("pricing_comp_delta_max_uah must be >= pricing_comp_delta_min_uah")
+
+        if self.pricing_jitter_max_uah < self.pricing_jitter_min_uah:
+            raise ValueError("pricing_jitter_max_uah must be >= pricing_jitter_min_uah")
+
+        return self
 
 class BusinessEnterpriseOperationalFieldsUpdateSchema(BaseModel):
     branch_id: str

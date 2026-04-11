@@ -183,6 +183,22 @@ class BusinessSettings(Base, TimestampMixin):
     master_archive_every_minutes = Column(Integer, nullable=False, server_default=text("60"))
     business_stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     business_stock_interval_seconds = Column(Integer, nullable=False, server_default=text("60"))
+    pricing_base_thr = Column(Numeric(8, 6), nullable=False, server_default=text("0.08"))
+    pricing_price_band_low_max = Column(Numeric(12, 2), nullable=False, server_default=text("100"))
+    pricing_price_band_mid_max = Column(Numeric(12, 2), nullable=False, server_default=text("400"))
+    pricing_thr_add_low_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_thr_add_mid_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_thr_add_high_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_no_comp_add_low_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_no_comp_add_mid_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_no_comp_add_high_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_comp_discount_share = Column(Numeric(8, 6), nullable=False, server_default=text("0.01"))
+    pricing_comp_delta_min_uah = Column(Numeric(12, 2), nullable=False, server_default=text("2"))
+    pricing_comp_delta_max_uah = Column(Numeric(12, 2), nullable=False, server_default=text("15"))
+    pricing_jitter_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    pricing_jitter_step_uah = Column(Numeric(12, 2), nullable=False, server_default=text("0.5"))
+    pricing_jitter_min_uah = Column(Numeric(12, 2), nullable=False, server_default=text("-1.0"))
+    pricing_jitter_max_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
 
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_business_settings_singleton_id"),
@@ -223,6 +239,62 @@ class BusinessSettings(Base, TimestampMixin):
         CheckConstraint(
             "coalesce(array_length(biotus_fallback_additional_status_ids, 1), 0) >= 1",
             name="ck_business_settings_biotus_additional_status_ids_non_empty",
+        ),
+        CheckConstraint(
+            "pricing_base_thr >= 0",
+            name="ck_business_settings_pricing_base_thr_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_price_band_low_max >= 0",
+            name="ck_business_settings_pricing_band_low_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_price_band_mid_max >= pricing_price_band_low_max",
+            name="ck_business_settings_pricing_band_mid_ge_low",
+        ),
+        CheckConstraint(
+            "pricing_thr_add_low_uah >= 0",
+            name="ck_business_settings_pricing_thr_add_low_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_thr_add_mid_uah >= 0",
+            name="ck_business_settings_pricing_thr_add_mid_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_thr_add_high_uah >= 0",
+            name="ck_business_settings_pricing_thr_add_high_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_no_comp_add_low_uah >= 0",
+            name="ck_business_settings_pricing_no_comp_add_low_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_no_comp_add_mid_uah >= 0",
+            name="ck_business_settings_pricing_no_comp_add_mid_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_no_comp_add_high_uah >= 0",
+            name="ck_business_settings_pricing_no_comp_add_high_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_comp_discount_share >= 0 AND pricing_comp_discount_share < 1",
+            name="ck_business_settings_pricing_comp_discount_share_range",
+        ),
+        CheckConstraint(
+            "pricing_comp_delta_min_uah >= 0",
+            name="ck_business_settings_pricing_comp_delta_min_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_comp_delta_max_uah >= pricing_comp_delta_min_uah",
+            name="ck_business_settings_pricing_comp_delta_max_ge_min",
+        ),
+        CheckConstraint(
+            "pricing_jitter_step_uah > 0",
+            name="ck_business_settings_pricing_jitter_step_positive",
+        ),
+        CheckConstraint(
+            "pricing_jitter_max_uah >= pricing_jitter_min_uah",
+            name="ck_business_settings_pricing_jitter_max_ge_min",
         ),
     )
 

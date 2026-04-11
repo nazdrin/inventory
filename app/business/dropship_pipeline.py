@@ -7,25 +7,6 @@ import argparse
 import os
 import random
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING, ROUND_FLOOR
-PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "100"))
-PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "400"))
-PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "999999"))
-THR_MULT_LOW = Decimal(os.getenv("THR_MULT_LOW", "1.0"))
-THR_MULT_MID = Decimal(os.getenv("THR_MULT_MID", "1.0"))
-THR_MULT_HIGH = Decimal(os.getenv("THR_MULT_HIGH", "1.0"))
-THR_MULT_PREMIUM = Decimal(os.getenv("THR_MULT_PREMIUM", "1.0"))
-NO_COMP_MULT_LOW = Decimal(os.getenv("NO_COMP_MULT_LOW", "1.0"))
-NO_COMP_MULT_MID = Decimal(os.getenv("NO_COMP_MULT_MID", "1.0"))
-NO_COMP_MULT_HIGH = Decimal(os.getenv("NO_COMP_MULT_HIGH", "1.0"))
-NO_COMP_MULT_PREMIUM = Decimal(os.getenv("NO_COMP_MULT_PREMIUM", "1.0"))
-# --- Новый базовый порог (доля, например 0.08 = 8%) ---
-BASE_THR = Decimal(os.getenv("BASE_THR", "0.08"))
-# --- Competitor undercut behavior (env-controlled) ---
-# fixed discount share (default 1%)
-COMP_DISCOUNT_SHARE = Decimal(os.getenv("COMP_DISCOUNT_SHARE", "0.01"))
-# clamp undercut in UAH
-COMP_DELTA_MIN_UAH = Decimal(os.getenv("COMP_DELTA_MIN_UAH", "2"))
-COMP_DELTA_MAX_UAH = Decimal(os.getenv("COMP_DELTA_MAX_UAH", "15"))
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 import tempfile
@@ -170,6 +151,10 @@ from app.business.feed_toros import parse_feed_stock_to_json as parse_feed_D11
 from app.business.feed_vetstar import parse_feed_stock_to_json as parse_feed_D12
 from app.business.feed_zoocomplex import parse_zoocomplex_stock_to_json as parse_feed_D13
 from app.business.feed_fulfillment_salesdrive import parse_fulfillment_salesdrive_stock_to_json
+from app.services.business_pricing_settings_resolver import (
+    BusinessPricingSettingsSnapshot,
+    load_business_pricing_settings_snapshot,
+)
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -269,43 +254,7 @@ def _cap_price_not_above_competitor(competitor_price: Decimal, supplier_code: st
         return comp.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return capped
 
-
-def _env_decimal(name: str, default: str) -> Decimal:
-    raw = (os.getenv(name, default) or default).strip()
-    try:
-        return Decimal(raw)
-    except Exception:
-        logging.getLogger("dropship").warning(
-            "Invalid decimal env %s=%r, fallback to %s", name, raw, default
-        )
-        return Decimal(default)
-
-
-def _env_optional_decimal(name: str) -> Decimal | None:
-    raw = os.getenv(name)
-    if raw is None:
-        return None
-    raw = raw.strip()
-    if not raw:
-        return None
-    try:
-        return Decimal(raw)
-    except Exception:
-        logging.getLogger("dropship").warning(
-            "Invalid decimal env %s=%r, ignored", name, raw
-        )
-        return None
-
-
-PRICE_JITTER_RANGE_UAH = _env_decimal("PRICE_JITTER_RANGE_UAH", "1.0")
-PRICE_JITTER_STEP_UAH = _env_decimal("PRICE_JITTER_STEP_UAH", "0.5")
-PRICE_JITTER_MIN_UAH = _env_optional_decimal("PRICE_JITTER_MIN_UAH")
-PRICE_JITTER_MAX_UAH = _env_optional_decimal("PRICE_JITTER_MAX_UAH")
 _PRICE_JITTER_WARNED: set[str] = set()
-
-
-def _price_jitter_enabled() -> bool:
-    return os.getenv("PRICE_JITTER_ENABLED", "0") == "1"
 
 
 def _warn_price_jitter_once(key: str, msg: str, *args: Any) -> None:
@@ -315,29 +264,25 @@ def _warn_price_jitter_once(key: str, msg: str, *args: Any) -> None:
     logger.warning(msg, *args)
 
 
-def _build_price_jitter_deltas() -> list[Decimal]:
-    jitter_step = _to_decimal(PRICE_JITTER_STEP_UAH)
+def _build_price_jitter_deltas(
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> list[Decimal]:
+    jitter_step = _to_decimal(pricing_snapshot.pricing_jitter_step_uah)
     if jitter_step <= 0:
         _warn_price_jitter_once(
             "step_non_positive",
-            "price jitter disabled: PRICE_JITTER_STEP_UAH must be > 0, got %s",
+            "price jitter disabled: pricing_jitter_step_uah must be > 0, got %s",
             jitter_step,
         )
         return []
 
-    jitter_min = PRICE_JITTER_MIN_UAH
-    jitter_max = PRICE_JITTER_MAX_UAH
-
-    # Backward compatibility: if MIN/MAX not fully set, use symmetric range [-R; +R].
-    if jitter_min is None or jitter_max is None:
-        jitter_range = abs(_to_decimal(PRICE_JITTER_RANGE_UAH))
-        jitter_min = -jitter_range
-        jitter_max = jitter_range
+    jitter_min = _to_decimal(pricing_snapshot.pricing_jitter_min_uah)
+    jitter_max = _to_decimal(pricing_snapshot.pricing_jitter_max_uah)
 
     if jitter_min > jitter_max:
         _warn_price_jitter_once(
             "invalid_min_max",
-            "price jitter disabled: PRICE_JITTER_MIN_UAH (%s) > PRICE_JITTER_MAX_UAH (%s)",
+            "price jitter disabled: pricing_jitter_min_uah (%s) > pricing_jitter_max_uah (%s)",
             jitter_min,
             jitter_max,
         )
@@ -351,12 +296,15 @@ def _build_price_jitter_deltas() -> list[Decimal]:
     return deltas
 
 
-def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
-    if not _price_jitter_enabled():
+def _apply_price_jitter(
+    price: Decimal,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> tuple[Decimal, Decimal]:
+    if not pricing_snapshot.pricing_jitter_enabled:
         return price, Decimal("0")
 
     p = _to_decimal(price)
-    deltas = _build_price_jitter_deltas()
+    deltas = _build_price_jitter_deltas(pricing_snapshot)
     if not deltas:
         return p, Decimal("0")
 
@@ -366,10 +314,13 @@ def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
         return p, Decimal("0")
     return new_price, delta
 
-def resolve_price_band(base_price: Decimal) -> str:
-    if base_price <= PRICE_BAND_LOW_MAX:
+def resolve_price_band(
+    base_price: Decimal,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> str:
+    if base_price <= pricing_snapshot.pricing_price_band_low_max:
         return "LOW"
-    elif base_price <= PRICE_BAND_MID_MAX:
+    elif base_price <= pricing_snapshot.pricing_price_band_mid_max:
         return "MID"
     else:
         return "HIGH"
@@ -1150,6 +1101,7 @@ def rule_porog_by_band(rules: list[dict], band_id: str) -> Optional[Decimal]:
 # --- Новая логика расчёта цены ---
 def _compute_price_for_item_with_source(
     *,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
     is_dumping: bool,
@@ -1199,12 +1151,12 @@ def _compute_price_for_item_with_source(
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
     if competitor_price is not None and competitor_price > 0:
-        candidate = competitor_price * (Decimal("1") - COMP_DISCOUNT_SHARE)
+        candidate = competitor_price * (Decimal("1") - pricing_snapshot.pricing_comp_discount_share)
         delta = competitor_price - candidate
-        if delta < COMP_DELTA_MIN_UAH:
-            candidate = competitor_price - COMP_DELTA_MIN_UAH
-        elif delta > COMP_DELTA_MAX_UAH:
-            candidate = competitor_price - COMP_DELTA_MAX_UAH
+        if delta < pricing_snapshot.pricing_comp_delta_min_uah:
+            candidate = competitor_price - pricing_snapshot.pricing_comp_delta_min_uah
+        elif delta > pricing_snapshot.pricing_comp_delta_max_uah:
+            candidate = competitor_price - pricing_snapshot.pricing_comp_delta_max_uah
         # safety: never above competitor
         if candidate > competitor_price:
             candidate = competitor_price
@@ -1246,6 +1198,7 @@ def _compute_price_for_item_with_source(
 
 def compute_price_for_item(
     *,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
     is_dumping: bool,
@@ -1255,6 +1208,7 @@ def compute_price_for_item(
     threshold_percent_effective: Optional[float | Decimal],
 ) -> Decimal:
     price, _ = _compute_price_for_item_with_source(
+        pricing_snapshot=pricing_snapshot,
         competitor_price=competitor_price,
         is_rrp=is_rrp,
         is_dumping=is_dumping,
@@ -1442,6 +1396,7 @@ async def process_supplier(
     session: AsyncSession,
     ent: DropshipEnterprise,
     parser_registry: Dict[str, ParserFn],
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
 ) -> None:
     code = ent.code
     parser = parser_registry.get(code, parse_feed_stock_to_json_template)
@@ -1498,6 +1453,10 @@ async def process_supplier(
 
     # 5.3 параметры ценообразования
     is_rrp = bool(ent.is_rrp)
+    # Future resolver integration point:
+    # load one pricing snapshot per pipeline run or per supplier call,
+    # then thread it into band resolution, threshold calculation,
+    # competitor logic and jitter logic without changing balancer flow.
 
     # Новый режим "демпинга" (временное поле): если включён, цена считается жёстко по формуле
     # price = price_opt * (1 + retail_markup)
@@ -1638,38 +1597,37 @@ async def process_supplier(
             competitor_dec = competitor if competitor is not None else Decimal("0")
 
             # Определяем band по себестоимости (по по_dec)
-            band = resolve_price_band(po_dec)
+            band = resolve_price_band(po_dec, pricing_snapshot)
 
             # supplier_add_uah — абсолютная надбавка из таблицы (min_markup_threshold)
             supplier_add_uah = supplier_threshold_percent
 
-            # Выбор абсолютной надбавки по бэнду
             if competitor_dec > 0:
                 if band == "LOW":
-                    band_add_uah = THR_MULT_LOW
+                    band_add_uah = pricing_snapshot.pricing_thr_add_low_uah
                 elif band == "MID":
-                    band_add_uah = THR_MULT_MID
+                    band_add_uah = pricing_snapshot.pricing_thr_add_mid_uah
                 elif band == "HIGH":
-                    band_add_uah = THR_MULT_HIGH
+                    band_add_uah = pricing_snapshot.pricing_thr_add_high_uah
                 else:
-                    band_add_uah = THR_MULT_PREMIUM
+                    band_add_uah = pricing_snapshot.pricing_thr_add_high_uah
             else:
                 if band == "LOW":
-                    band_add_uah = NO_COMP_MULT_LOW
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_low_uah
                 elif band == "MID":
-                    band_add_uah = NO_COMP_MULT_MID
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_mid_uah
                 elif band == "HIGH":
-                    band_add_uah = NO_COMP_MULT_HIGH
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_high_uah
                 else:
-                    band_add_uah = NO_COMP_MULT_PREMIUM
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_high_uah
 
-            # Расчёт thr_effective по Путь A
             if po_dec > 0:
-                thr_effective = BASE_THR + (band_add_uah + supplier_add_uah) / po_dec
+                thr_effective = pricing_snapshot.pricing_base_thr + (band_add_uah + supplier_add_uah) / po_dec
             else:
                 thr_effective = Decimal("0")
 
             price, price_source = _compute_price_for_item_with_source(
+                pricing_snapshot=pricing_snapshot,
                 competitor_price=competitor,
                 is_rrp=is_rrp,
                 is_dumping=is_dumping,
@@ -1679,9 +1637,9 @@ async def process_supplier(
                 threshold_percent_effective=thr_effective,
             )
             price = _round_price_export_for_supplier(price, code)
-            if _price_jitter_enabled():
+            if pricing_snapshot.pricing_jitter_enabled:
                 base_price = price
-                price, delta = _apply_price_jitter(price)
+                price, delta = _apply_price_jitter(price, pricing_snapshot)
                 price = _round_price_export_for_supplier(price, code)
                 if delta != 0:
                     logger.debug(
@@ -1921,6 +1879,16 @@ async def run_pipeline(
     file_type: Optional[str] = None,
 ) -> None:
     async with get_async_db() as session:
+        pricing_snapshot = await load_business_pricing_settings_snapshot(session)
+        if pricing_snapshot.inconsistency:
+            logger.warning(
+                "Pricing runtime source=%s fallback_reason=%s",
+                pricing_snapshot.source,
+                pricing_snapshot.inconsistency,
+            )
+        else:
+            logger.info("Pricing runtime source=%s", pricing_snapshot.source)
+
         # 0) Санитарная очистка: удаляем офферы по списку поставщиков, которых нужно очистить
         try:
             to_clear = await fetch_suppliers_to_clear(session)
@@ -1971,7 +1939,7 @@ async def run_pipeline(
                             )
                             await session.rollback()
                         continue
-                    await process_supplier(session, ent, PARSERS)
+                    await process_supplier(session, ent, PARSERS, pricing_snapshot)
                     await session.commit()
                 except Exception as exc:
                     logger.exception("Failed supplier %s: %s", supplier_code or "<unknown>", exc)
