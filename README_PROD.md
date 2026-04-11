@@ -1,0 +1,121 @@
+# Inventory Service: Prod Runbook
+
+Короткая памятка по прод-серверу.
+
+## Подключение
+
+```bash
+ssh root@164.92.213.254
+cd /root/inventory
+source .venv/bin/activate
+```
+
+## Типовой деплой backend
+
+Без миграций:
+
+```bash
+git pull origin main
+pip install -r requirements.txt
+sudo systemctl restart fastapi.service
+```
+
+С миграциями:
+
+```bash
+git pull origin main
+source .venv/bin/activate
+python -m alembic upgrade head
+sudo systemctl restart fastapi.service
+```
+
+Если менялись unit-файлы:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+## Frontend deploy
+
+`npm start` не обновляет прод. Продовый frontend обслуживается из `/usr/share/nginx/html`.
+
+```bash
+cd /root/inventory/admin-panel
+npm install
+npm run build
+sudo rm -rf /usr/share/nginx/html/*
+sudo cp -r build/* /usr/share/nginx/html/
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+## Основные сервисы
+
+Перезапуск:
+
+```bash
+sudo systemctl restart fastapi.service
+sudo systemctl restart nginx
+sudo systemctl restart stock_scheduler.service
+sudo systemctl restart catalog_scheduler.service
+sudo systemctl restart order_scheduler.service
+sudo systemctl restart competitor_price_scheduler.service
+sudo systemctl restart telegram_bot
+sudo systemctl restart biotus_check_order_scheduler.service
+sudo systemctl restart backup_db.service
+sudo systemctl restart master-catalog-scheduler.service
+sudo systemctl restart business_stock_scheduler.service
+sudo systemctl restart tabletki-cancel-retry.service
+```
+
+Статус и логи:
+
+```bash
+sudo systemctl status fastapi.service --no-pager -l
+sudo systemctl status nginx --no-pager -l
+sudo journalctl -u fastapi.service -f -o short-iso
+sudo journalctl -u nginx -f
+sudo journalctl -u stock_scheduler.service -f
+sudo journalctl -u catalog_scheduler.service -f
+sudo journalctl -u order_scheduler.service -f
+sudo journalctl -u competitor_price_scheduler.service -f
+sudo journalctl -u biotus_check_order_scheduler.service -f
+sudo journalctl -u business_stock_scheduler.service -f
+sudo journalctl -u master-catalog-scheduler.service -f
+sudo journalctl -u tabletki-cancel-retry.service -f
+sudo journalctl -u telegram_bot -f
+```
+
+## PostgreSQL и backups
+
+```bash
+psql -U postgres -d inventory_db
+gunzip -c /root/inventory/backups/backup_YYYY-MM-DD.sql.gz | psql -U postgres -d inventory_db
+```
+
+## Работа с `.env`
+
+Перед изменением:
+
+```bash
+cd /root/inventory
+cp .env .env.bak.$(date +%F-%H%M%S)
+nano .env
+```
+
+После изменения переменных нужно перезапускать только затронутые сервисы:
+
+- `MASTER_*` -> `master-catalog-scheduler.service`
+- `BIOTUS_*` -> `biotus_check_order_scheduler.service`
+- `TABLETKI_*` -> `tabletki-cancel-retry.service`
+- stock/catalog env -> соответствующий scheduler
+
+## Полезные пути и адреса
+
+- Проект: `/root/inventory`
+- Frontend source: `/root/inventory/admin-panel`
+- Runtime cache: `/root/inventory/state_cache`
+- Backups: `/root/inventory/backups`
+- App: [http://164.92.213.254](http://164.92.213.254)
+- Backend: [http://164.92.213.254:8000](http://164.92.213.254:8000)
+- Developer login: [http://164.92.213.254:8000/developer_panel/login](http://164.92.213.254:8000/developer_panel/login)
