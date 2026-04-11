@@ -1014,11 +1014,11 @@ def _target_consistency_status(
     if resolved_enterprise_code and biotus_target and resolved_enterprise_code != biotus_target:
         return (
             "biotus-target-separate",
-            "Biotus target остаётся отдельным selector и сейчас не должен считаться unified runtime target.",
+            "Контур обработки заказов использует отдельный selector и сейчас не должен считаться единым runtime target.",
         )
     return (
         "linked-but-separate",
-        "MASTER targets можно показывать как связанную семью selector-ов, а Biotus target остаётся отдельным contour selector.",
+        "MASTER targets можно показывать как связанную семью selector-ов, а контур обработки заказов остаётся отдельным contour selector.",
     )
 
 
@@ -1055,7 +1055,7 @@ def _db_target_consistency_status(
     if effective_biotus_target and effective_biotus_target != primary_code:
         return (
             "db-biotus-target-separate",
-            "Biotus target остаётся отдельным contour selector и читается из DB override/primary model без runtime unification.",
+            "Контур обработки заказов использует отдельный contour selector и читается из DB override/primary model без runtime unification.",
         )
     if (
         (effective_daily_target and effective_daily_target != primary_code)
@@ -1356,7 +1356,7 @@ def _build_business_sections(
             bool(target_enterprise.order_fetcher) if target_enterprise is not None else None,
             "EnterpriseSettings" if target_enterprise is not None else "derived",
             group="Основной контур заказов",
-            help_text="Включает order scheduler для resolved Business enterprise. Значение хранится в EnterpriseSettings.",
+            help_text="Включает получение заказов для основного предприятия. Значение хранится в EnterpriseSettings.",
             readonly=False,
         ),
         _business_item(
@@ -1365,23 +1365,23 @@ def _build_business_sections(
             bool(target_enterprise.auto_confirm) if target_enterprise is not None else None,
             "EnterpriseSettings" if target_enterprise is not None else "derived",
             group="Основной контур заказов",
-            help_text="Переключает order fetcher между auto-confirm path и обычной обработкой заказов.",
+            help_text="Автоматически подтверждает заказы при наличии товара.",
             readonly=False,
         ),
         _business_item(
             "biotus_enterprise_code",
-            "Предприятие для Biotus",
+            "Предприятие обработки заказов",
             biotus_target,
             biotus_target_source,
-            group="Предприятие",
-            help_text="Сейчас только для чтения. Если отдельное предприятие не задано, используется основное.",
+            group="Предприятие обработки заказов",
+            help_text="Используется для определения, к какому предприятию применяется обработка заказов. Поле только для чтения.",
         ),
         _business_item(
             "biotus_enable_unhandled_fallback",
             "Обрабатывать необработанные заказы",
             biotus_enable_unhandled_fallback_value,
             biotus_enable_unhandled_fallback_source,
-            group="Политика обработки",
+            group="Дополнительная обработка заказов",
             help_text="Если включено, система дополнительно проверяет заказы, которые не попали в основной контур.",
             readonly=False,
         ),
@@ -1390,7 +1390,7 @@ def _build_business_sections(
             "Ожидание перед дополнительной обработкой, минут",
             biotus_unhandled_order_timeout_minutes_value,
             biotus_unhandled_order_timeout_minutes_source,
-            group="Политика обработки",
+            group="Дополнительная обработка заказов",
             help_text="Через сколько минут заказ считается просроченным для дополнительной обработки.",
             readonly=False,
         ),
@@ -1399,7 +1399,7 @@ def _build_business_sections(
             "Дополнительные статусы SalesDrive",
             biotus_fallback_additional_status_ids_value,
             biotus_fallback_additional_status_ids_source,
-            group="Политика обработки",
+            group="Дополнительная обработка заказов",
             help_text="Список status id через запятую. Используется для дополнительной обработки заказов.",
             readonly=False,
         ),
@@ -1408,7 +1408,7 @@ def _build_business_sections(
             "Статус для дублей",
             biotus_duplicate_status_id_value,
             biotus_duplicate_status_id_source,
-            group="Политика обработки",
+            group="Дополнительная обработка заказов",
             help_text="Status id в SalesDrive, который ставится заказам с дублирующимся телефоном.",
             readonly=False,
         ),
@@ -1535,8 +1535,8 @@ def _build_business_sections(
         ),
         BusinessSectionVM(
             key="orders_biotus",
-            title="Заказы / Biotus",
-            description="Order runtime toggles Business enterprise и политика дополнительной обработки Biotus. Operational fields пока пишутся в EnterpriseSettings, Biotus policy — в business_settings.",
+            title="Заказы",
+            description="Настройки основного контура заказов, дополнительной обработки и предприятия, к которому применяется этот контур.",
             readonly=False,
             items=orders_items,
         ),

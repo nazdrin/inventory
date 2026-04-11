@@ -10,6 +10,10 @@ const pageStyle = {
     padding: "24px",
     display: "grid",
     gap: "20px",
+    width: "100%",
+    maxWidth: "1280px",
+    margin: "0 auto",
+    boxSizing: "border-box",
 };
 
 const cardStyle = {
@@ -24,6 +28,27 @@ const sectionTitleStyle = {
     fontSize: "20px",
     fontWeight: 700,
     color: "#111827",
+};
+
+const formGridTwoStyle = {
+    display: "grid",
+    gap: "16px 20px",
+    gridTemplateColumns: "repeat(2, minmax(220px, 1fr))",
+    alignItems: "start",
+};
+
+const formGridThreeStyle = {
+    display: "grid",
+    gap: "16px 20px",
+    gridTemplateColumns: "repeat(3, minmax(220px, 1fr))",
+    alignItems: "start",
+};
+
+const formSectionStyle = {
+    display: "grid",
+    gap: "16px",
+    width: "100%",
+    marginBottom: "18px",
 };
 
 const mutedTextStyle = {
@@ -46,48 +71,6 @@ const sourceBadgeStyle = {
     backgroundColor: "#eff6ff",
     color: "#1d4ed8",
     padding: "4px 8px",
-};
-
-const readonlyBadgeStyle = {
-    ...badgeBaseStyle,
-    backgroundColor: "#f8fafc",
-    color: "#475569",
-};
-
-const statusStyleByResolution = {
-    resolved: {
-        backgroundColor: "#ecfdf5",
-        borderColor: "#bbf7d0",
-        color: "#166534",
-    },
-    ambiguous: {
-        backgroundColor: "#fff7ed",
-        borderColor: "#fed7aa",
-        color: "#9a3412",
-    },
-    none: {
-        backgroundColor: "#fef2f2",
-        borderColor: "#fecaca",
-        color: "#991b1b",
-    },
-    "db-primary": {
-        backgroundColor: "#ecfeff",
-        borderColor: "#a5f3fc",
-        color: "#155e75",
-    },
-    "db-primary-enterprise-missing": {
-        backgroundColor: "#fef2f2",
-        borderColor: "#fecaca",
-        color: "#991b1b",
-    },
-};
-
-const resolutionLabelByStatus = {
-    resolved: "Предприятие найдено",
-    ambiguous: "Найдено несколько предприятий",
-    none: "Предприятие не найдено",
-    "db-primary": "Используется БД",
-    "db-primary-enterprise-missing": "Предприятие из БД не найдено",
 };
 
 const emptyValue = "—";
@@ -156,6 +139,17 @@ const inputStyle = {
     fontSize: "14px",
     color: "#0f172a",
     backgroundColor: "#ffffff",
+    boxSizing: "border-box",
+};
+const wideInputStyle = {
+    ...inputStyle,
+};
+const checkboxStyle = {
+    width: "18px",
+    height: "18px",
+    accentColor: "#2563eb",
+    margin: 0,
+    flex: "0 0 auto",
 };
 const buttonBaseStyle = {
     borderRadius: "10px",
@@ -167,14 +161,14 @@ const buttonBaseStyle = {
 };
 const primaryButtonStyle = {
     ...buttonBaseStyle,
-    backgroundColor: "#0f766e",
+    backgroundColor: "#2563eb",
     color: "#ffffff",
 };
 const secondaryButtonStyle = {
     ...buttonBaseStyle,
-    backgroundColor: "#ffffff",
-    color: "#334155",
-    borderColor: "#cbd5e1",
+    backgroundColor: "#eff6ff",
+    color: "#1d4ed8",
+    borderColor: "#bfdbfe",
 };
 
 const sectionOrder = [
@@ -185,6 +179,56 @@ const sectionOrder = [
     "pricing",
     "integration_access",
 ];
+
+const hiddenItemKeys = new Set([
+    "master_target_fallback_note",
+    "biotus_enterprise_code",
+]);
+
+const decimalDisplayKeys = new Set([
+    "pricing_base_thr",
+    "pricing_price_band_low_max",
+    "pricing_price_band_mid_max",
+    "pricing_thr_add_low_uah",
+    "pricing_thr_add_mid_uah",
+    "pricing_thr_add_high_uah",
+    "pricing_no_comp_add_low_uah",
+    "pricing_no_comp_add_mid_uah",
+    "pricing_no_comp_add_high_uah",
+    "pricing_comp_discount_share",
+    "pricing_comp_delta_min_uah",
+    "pricing_comp_delta_max_uah",
+    "pricing_jitter_step_uah",
+    "pricing_jitter_min_uah",
+    "pricing_jitter_max_uah",
+]);
+
+const sectionMetaByKey = {
+    target_enterprise: {
+        title: "Предприятие (Business)",
+        description: "Основные параметры рабочего предприятия.",
+    },
+    master_catalog: {
+        title: "Мастер-каталог (Master Catalog)",
+        description: "Расписание и параметры публикации мастер-каталога.",
+    },
+    stock_mapping_mode: {
+        title: "Сток (Stock)",
+        description: "Настройки обработки и публикации остатков.",
+    },
+    orders_biotus: {
+        title: "Заказы",
+        description: "Основной контур заказов и дополнительная обработка.",
+    },
+    pricing: {
+        title: "Ценообразование (Pricing)",
+        description: "Глобальные параметры расчета цен.",
+    },
+    integration_access: {
+        title: "Интеграция и доступ (Integration / Access)",
+        description: "Логины, токены и параметры доступа к внешним системам.",
+    },
+};
 
 const getSourceBadge = (source) => {
     if (source === "db") {
@@ -217,17 +261,22 @@ const getSourceBadge = (source) => {
         };
     }
 
-    if (source === "derived" || source === "computed") {
-        return {
-            label: "derived",
-            style: {
-                backgroundColor: "#f8fafc",
-                color: "#475569",
-            },
-        };
+    return null;
+};
+
+const normalizeDecimalDisplay = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw || !/^[-+]?\d+(?:[.,]\d+)?$/.test(raw)) {
+        return raw;
     }
 
-    return null;
+    const normalized = raw
+        .replace(",", ".")
+        .replace(/(\.\d*?[1-9])0+$/, "$1")
+        .replace(/\.0+$/, "")
+        .replace(".", ",");
+
+    return normalized;
 };
 
 const formatValue = (item) => {
@@ -242,6 +291,10 @@ const formatValue = (item) => {
 
     if (typeof value === "boolean") {
         return value ? "Да" : "Нет";
+    }
+
+    if (decimalDisplayKeys.has(item?.key)) {
+        return normalizeDecimalDisplay(value);
     }
 
     return String(value);
@@ -475,6 +528,12 @@ const buildItemGroups = (items = []) => {
     return groups;
 };
 
+const buildInitialOpenSections = () =>
+    sectionOrder.reduce((acc, key) => {
+        acc[key] = false;
+        return acc;
+    }, {});
+
 const sortSections = (sections = []) => {
     const rank = new Map(sectionOrder.map((key, index) => [key, index]));
     return [...sections].sort((left, right) => {
@@ -511,41 +570,32 @@ const SectionItem = ({ item }) => {
 };
 
 const FormField = ({ label, helpText, children }) => (
-    <div style={{ display: "grid", gap: "8px" }}>
+    <div style={{ display: "grid", gap: "8px", minWidth: 0, alignContent: "start" }}>
         <div style={{ fontWeight: 700, color: "#111827", fontSize: "14px" }}>{label}</div>
         {children}
         {helpText && <div style={mutedTextStyle}>{helpText}</div>}
     </div>
 );
 
-const EditToolbar = ({ editable, editing, saving, onEdit, onCancel, onSave }) => {
+const EditToolbar = ({ editable, saving, onCancel, onSave }) => {
     if (!editable) {
         return null;
     }
 
     return (
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
-            {!editing && (
-                <button type="button" style={secondaryButtonStyle} onClick={onEdit}>
-                    Редактировать
-                </button>
-            )}
-            {editing && (
-                <>
-                    <button type="button" style={primaryButtonStyle} onClick={onSave} disabled={saving}>
-                        {saving ? "Сохранение..." : "Сохранить"}
-                    </button>
-                    <button type="button" style={secondaryButtonStyle} onClick={onCancel} disabled={saving}>
-                        Отмена
-                    </button>
-                </>
-            )}
+            <button type="button" style={primaryButtonStyle} onClick={onSave} disabled={saving}>
+                {saving ? "Сохранение..." : "Сохранить"}
+            </button>
+            <button type="button" style={secondaryButtonStyle} onClick={onCancel} disabled={saving}>
+                Отмена
+            </button>
         </div>
     );
 };
 
 const TargetEnterpriseEditor = ({ draft, onChange }) => (
-    <div style={{ display: "grid", gap: "12px", marginBottom: "18px" }}>
+    <div style={formSectionStyle}>
         <FormField label="Branch ID">
             <input
                 type="text"
@@ -558,18 +608,19 @@ const TargetEnterpriseEditor = ({ draft, onChange }) => (
 );
 
 const MasterCatalogEditor = ({ draft, onChange }) => (
-    <div style={{ display: "grid", gap: "16px", marginBottom: "18px" }}>
+    <div style={formSectionStyle}>
         <FormField label="Еженедельное обновление">
             <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
                 <input
                     type="checkbox"
+                    style={checkboxStyle}
                     checked={draft.master_weekly_enabled}
                     onChange={(event) => onChange("master_weekly_enabled", event.target.checked)}
                 />
                 Включено
             </label>
         </FormField>
-        <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+        <div style={formGridThreeStyle}>
             <FormField label="День">
                 <select
                     style={inputStyle}
@@ -609,13 +660,14 @@ const MasterCatalogEditor = ({ draft, onChange }) => (
             <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
                 <input
                     type="checkbox"
+                    style={checkboxStyle}
                     checked={draft.master_daily_publish_enabled}
                     onChange={(event) => onChange("master_daily_publish_enabled", event.target.checked)}
                 />
                 Включено
             </label>
         </FormField>
-        <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+        <div style={formGridThreeStyle}>
             <FormField label="Час">
                 <input
                     type="number"
@@ -651,6 +703,7 @@ const MasterCatalogEditor = ({ draft, onChange }) => (
             <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
                 <input
                     type="checkbox"
+                    style={checkboxStyle}
                     checked={draft.master_archive_enabled}
                     onChange={(event) => onChange("master_archive_enabled", event.target.checked)}
                 />
@@ -669,19 +722,28 @@ const MasterCatalogEditor = ({ draft, onChange }) => (
     </div>
 );
 
-const BiotusPolicyEditor = ({ draft, onChange }) => (
-    <div style={{ display: "grid", gap: "16px", marginBottom: "18px" }}>
-        <FormField label="Дополнительная обработка заказов">
+const AdditionalOrdersProcessingEditor = ({ draft, onChange }) => (
+    <div style={{ display: "grid", gap: "16px" }}>
+        <div style={{ display: "grid", gap: "6px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>
+                Дополнительная обработка заказов
+            </div>
+            <div style={mutedTextStyle}>
+                Настройки обработки заказов, которые не были обработаны основным контуром
+            </div>
+        </div>
+        <FormField label="Включить дополнительную обработку">
             <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
                 <input
                     type="checkbox"
+                    style={checkboxStyle}
                     checked={draft.biotus_enable_unhandled_fallback}
                     onChange={(event) => onChange("biotus_enable_unhandled_fallback", event.target.checked)}
                 />
                 Включено
             </label>
         </FormField>
-        <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+        <div style={formGridTwoStyle}>
             <FormField label="Ожидание, минут">
                 <input
                     type="number"
@@ -707,7 +769,7 @@ const BiotusPolicyEditor = ({ draft, onChange }) => (
         >
             <input
                 type="text"
-                style={inputStyle}
+                style={wideInputStyle}
                 value={draft.biotus_fallback_additional_status_ids}
                 onChange={(event) => onChange("biotus_fallback_additional_status_ids", event.target.value)}
                 placeholder="9, 19, 18, 20"
@@ -717,107 +779,120 @@ const BiotusPolicyEditor = ({ draft, onChange }) => (
 );
 
 const IntegrationAccessEditor = ({ draft, onChange }) => (
-    <div style={{ display: "grid", gap: "12px", marginBottom: "18px" }}>
-        <FormField label="Логин Tabletki">
-            <input
-                type="text"
-                style={inputStyle}
-                value={draft.tabletki_login}
-                onChange={(event) => onChange("tabletki_login", event.target.value)}
-            />
-        </FormField>
-        <FormField label="Пароль Tabletki">
-            <input
-                type="password"
-                style={inputStyle}
-                value={draft.tabletki_password}
-                onChange={(event) => onChange("tabletki_password", event.target.value)}
-            />
-        </FormField>
-        <FormField
-            label="SalesDrive API key"
-            helpText="Оставьте поле пустым, чтобы не менять текущий токен"
-        >
-            <input
-                type="password"
-                style={inputStyle}
-                value={draft.token}
-                onChange={(event) => onChange("token", event.target.value)}
-                placeholder="Введите новый токен"
-            />
-        </FormField>
+    <div style={formSectionStyle}>
+        <div style={formGridTwoStyle}>
+            <FormField label="Логин Tabletki">
+                <input
+                    type="text"
+                    style={inputStyle}
+                    value={draft.tabletki_login}
+                    onChange={(event) => onChange("tabletki_login", event.target.value)}
+                />
+            </FormField>
+            <FormField label="Пароль Tabletki">
+                <input
+                    type="password"
+                    style={inputStyle}
+                    value={draft.tabletki_password}
+                    onChange={(event) => onChange("tabletki_password", event.target.value)}
+                />
+            </FormField>
+            <FormField label="SalesDrive API key" helpText="Оставьте поле пустым, чтобы не менять текущий токен">
+                <input
+                    type="password"
+                    style={wideInputStyle}
+                    value={draft.token}
+                    onChange={(event) => onChange("token", event.target.value)}
+                    placeholder="Введите новый токен"
+                />
+            </FormField>
+        </div>
     </div>
 );
 
 const StockOperationalEditor = ({ draft, onChange }) => (
-    <div style={{ display: "grid", gap: "16px", marginBottom: "18px" }}>
-        <FormField
-            label="Включить обработку стока"
-            helpText="Включает или выключает отдельный Business stock scheduler."
-        >
-            <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
+    <div style={formSectionStyle}>
+        <div style={formGridTwoStyle}>
+            <FormField
+                label="Включить обработку стока"
+                helpText="Включает или выключает обработку остатков."
+            >
+                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
+                    <input
+                        type="checkbox"
+                        style={checkboxStyle}
+                        checked={draft.business_stock_enabled}
+                        onChange={(event) => onChange("business_stock_enabled", event.target.checked)}
+                    />
+                    Включено
+                </label>
+            </FormField>
+            <FormField label="Интервал запуска, сек" helpText="Через сколько секунд запускается следующий цикл обработки остатков.">
                 <input
-                    type="checkbox"
-                    checked={draft.business_stock_enabled}
-                    onChange={(event) => onChange("business_stock_enabled", event.target.checked)}
+                    type="number"
+                    min="1"
+                    style={inputStyle}
+                    value={draft.business_stock_interval_seconds}
+                    onChange={(event) => onChange("business_stock_interval_seconds", event.target.value)}
                 />
-                Включено
-            </label>
-        </FormField>
-        <FormField
-            label="Интервал запуска, сек"
-            helpText="Через сколько секунд отдельный Business stock scheduler запускает следующий цикл."
-        >
-            <input
-                type="number"
-                min="1"
-                style={inputStyle}
-                value={draft.business_stock_interval_seconds}
-                onChange={(event) => onChange("business_stock_interval_seconds", event.target.value)}
-            />
-        </FormField>
-        <FormField label="Коррекция остатков">
-            <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
-                <input
-                    type="checkbox"
-                    checked={draft.stock_correction}
-                    onChange={(event) => onChange("stock_correction", event.target.checked)}
-                />
-                Включено
-            </label>
-        </FormField>
+            </FormField>
+            <FormField label="Коррекция остатков">
+                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
+                    <input
+                        type="checkbox"
+                        style={checkboxStyle}
+                        checked={draft.stock_correction}
+                        onChange={(event) => onChange("stock_correction", event.target.checked)}
+                    />
+                    Включено
+                </label>
+            </FormField>
+        </div>
     </div>
 );
 
-const OrdersBusinessEditor = ({ draft, onChange }) => (
-    <div style={{ display: "grid", gap: "16px", marginBottom: "18px" }}>
-        <FormField label="Получение заказов">
-            <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
-                <input
-                    type="checkbox"
-                    checked={draft.order_fetcher}
-                    onChange={(event) => onChange("order_fetcher", event.target.checked)}
-                />
-                Включено
-            </label>
-        </FormField>
-        <FormField label="Автоматическое бронирование">
-            <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
-                <input
-                    type="checkbox"
-                    checked={draft.auto_confirm}
-                    onChange={(event) => onChange("auto_confirm", event.target.checked)}
-                />
-                Включено
-            </label>
-        </FormField>
-        <BiotusPolicyEditor draft={draft} onChange={onChange} />
+const OrdersSectionEditor = ({ draft, onChange }) => (
+    <div style={formSectionStyle}>
+        <div style={{ display: "grid", gap: "6px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>
+                Основной контур заказов
+            </div>
+            <div style={mutedTextStyle}>
+                Настройки обработки входящих заказов для основного предприятия
+            </div>
+        </div>
+        <div style={formGridTwoStyle}>
+            <FormField label="Получение заказов" helpText="Включает получение заказов">
+                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
+                    <input
+                        type="checkbox"
+                        style={checkboxStyle}
+                        checked={draft.order_fetcher}
+                        onChange={(event) => onChange("order_fetcher", event.target.checked)}
+                    />
+                    Включено
+                </label>
+            </FormField>
+            <FormField label="Автоматическое бронирование" helpText="Автоматически подтверждать заказы при наличии товара">
+                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
+                    <input
+                        type="checkbox"
+                        style={checkboxStyle}
+                        checked={draft.auto_confirm}
+                        onChange={(event) => onChange("auto_confirm", event.target.checked)}
+                    />
+                    Включено
+                </label>
+            </FormField>
+        </div>
+        <AdditionalOrdersProcessingEditor draft={draft} onChange={onChange} />
     </div>
 );
 
 const pricingLayoutStyle = {
     display: "grid",
     gap: "16px",
+    width: "100%",
     marginBottom: "18px",
 };
 
@@ -844,7 +919,7 @@ const PricingEditor = ({ draft, onChange }) => {
 
             <div style={{ display: "grid", gap: "12px" }}>
                 <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Диапазоны цен</div>
-                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div style={formGridTwoStyle}>
                     {renderDecimalInput("pricing_price_band_low_max", "Верхняя граница LOW", "Если price_opt меньше или равен этому значению, товар попадает в LOW.", { min: "0" })}
                     {renderDecimalInput("pricing_price_band_mid_max", "Верхняя граница MID", "Если price_opt выше LOW, но не выше этого значения, товар попадает в MID. Всё, что выше, идёт в HIGH.", { min: "0" })}
                 </div>
@@ -852,7 +927,7 @@ const PricingEditor = ({ draft, onChange }) => {
 
             <div style={{ display: "grid", gap: "12px" }}>
                 <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Реакция на конкурентов</div>
-                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div style={formGridThreeStyle}>
                     {renderDecimalInput("pricing_thr_add_low_uah", "Надбавка LOW, грн", "Абсолютная надбавка в гривне для LOW, когда есть конкурент.", { min: "0" })}
                     {renderDecimalInput("pricing_thr_add_mid_uah", "Надбавка MID, грн", "Абсолютная надбавка в гривне для MID, когда есть конкурент.", { min: "0" })}
                     {renderDecimalInput("pricing_thr_add_high_uah", "Надбавка HIGH, грн", "Абсолютная надбавка в гривне для HIGH, когда есть конкурент.", { min: "0" })}
@@ -864,7 +939,7 @@ const PricingEditor = ({ draft, onChange }) => {
 
             <div style={{ display: "grid", gap: "12px" }}>
                 <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>Поведение без конкурентов</div>
-                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div style={formGridThreeStyle}>
                     {renderDecimalInput("pricing_no_comp_add_low_uah", "Надбавка LOW без конкурента, грн", "Абсолютная надбавка в гривне для LOW, когда цены конкурента нет.", { min: "0" })}
                     {renderDecimalInput("pricing_no_comp_add_mid_uah", "Надбавка MID без конкурента, грн", "Абсолютная надбавка в гривне для MID, когда цены конкурента нет.", { min: "0" })}
                     {renderDecimalInput("pricing_no_comp_add_high_uah", "Надбавка HIGH без конкурента, грн", "Абсолютная надбавка в гривне для HIGH, когда цены конкурента нет.", { min: "0" })}
@@ -877,13 +952,14 @@ const PricingEditor = ({ draft, onChange }) => {
                     <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
                         <input
                             type="checkbox"
+                            style={checkboxStyle}
                             checked={draft.pricing_jitter_enabled}
                             onChange={(event) => onChange("pricing_jitter_enabled", event.target.checked)}
                         />
                         Включено
                     </label>
                 </FormField>
-                <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div style={formGridThreeStyle}>
                     {renderDecimalInput("pricing_jitter_step_uah", "Шаг jitter, грн", "Шаг сетки, по которой выбирается случайное смещение цены.", { min: "0.01" })}
                     {renderDecimalInput("pricing_jitter_min_uah", "Минимальный jitter, грн", "Нижняя граница случайного смещения цены.", {})}
                     {renderDecimalInput("pricing_jitter_max_uah", "Максимальный jitter, грн", "Верхняя граница случайного смещения цены.", {})}
@@ -894,17 +970,16 @@ const PricingEditor = ({ draft, onChange }) => {
 };
 const SectionCard = ({
     section,
-    editing,
+    isOpen,
     saving,
-    onEdit,
+    onToggle,
     onCancel,
     onSave,
     draft,
     onDraftChange,
-    businessOptions,
-    enterpriseOptions,
 }) => {
-    const groups = buildItemGroups(section.items);
+    const sectionMeta = sectionMetaByKey[section.key] || {};
+    const groups = buildItemGroups(section.items.filter((item) => !hiddenItemKeys.has(item.key)));
     const editable = editableSectionKeysExtended.has(section.key);
     const editableKeys = section.key === "target_enterprise"
         ? targetEditableItemKeys
@@ -919,7 +994,7 @@ const SectionCard = ({
                     : section.key === "pricing"
                         ? pricingEditableItemKeys
             : new Set();
-    const visibleGroups = editing && editable
+    const visibleGroups = isOpen && editable
         ? groups
             .map((group) => ({
                 ...group,
@@ -930,77 +1005,102 @@ const SectionCard = ({
 
     return (
         <div style={{ ...cardStyle, padding: "20px 24px" }}>
-            <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
-                <h2 style={sectionTitleStyle}>{section.title}</h2>
-                {section.description && <p style={mutedTextStyle}>{section.description}</p>}
+            <div
+                style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                }}
+            >
+                <div style={{ display: "grid", gap: "8px" }}>
+                    <h2 style={sectionTitleStyle}>{sectionMeta.title || section.title}</h2>
+                    {(sectionMeta.description || section.description) && (
+                        <p style={mutedTextStyle}>{sectionMeta.description || section.description}</p>
+                    )}
+                </div>
+                <button type="button" style={secondaryButtonStyle} onClick={() => onToggle(section.key)} disabled={saving}>
+                    {isOpen ? "Свернуть" : "Развернуть"}
+                </button>
             </div>
-            <EditToolbar
-                editable={editable}
-                editing={editing}
-                saving={saving}
-                onEdit={() => onEdit(section.key)}
-                onCancel={onCancel}
-                onSave={() => onSave(section.key)}
-            />
-            {editing && section.key === "target_enterprise" && (
-                <TargetEnterpriseEditor
-                    draft={draft}
-                    onChange={onDraftChange}
-                />
-            )}
-            {editing && section.key === "integration_access" && (
-                <IntegrationAccessEditor
-                    draft={draft}
-                    onChange={onDraftChange}
-                />
-            )}
-            {editing && section.key === "master_catalog" && (
-                <MasterCatalogEditor
-                    draft={draft}
-                    onChange={onDraftChange}
-                />
-            )}
-            {editing && section.key === "orders_biotus" && (
-                <OrdersBusinessEditor
-                    draft={draft}
-                    onChange={onDraftChange}
-                />
-            )}
-            {editing && section.key === "stock_mapping_mode" && (
-                <StockOperationalEditor
-                    draft={draft}
-                    onChange={onDraftChange}
-                />
-            )}
-            {editing && section.key === "pricing" && (
-                <PricingEditor
-                    draft={draft}
-                    onChange={onDraftChange}
-                />
-            )}
-            <div style={{ display: "grid", gap: "18px" }}>
-                {visibleGroups.map((group) => (
-                    <div key={group.key} style={{ display: "grid", gap: "12px" }}>
-                        {group.title && (
-                            <div
-                                style={{
-                                    fontSize: "13px",
-                                    fontWeight: 700,
-                                    color: "#475569",
-                                    letterSpacing: "0.02em",
-                                }}
-                            >
-                                {group.title}
+            {isOpen && (
+                <div style={{ display: "grid", gap: "18px", marginTop: "16px" }}>
+                    <EditToolbar
+                        editable={editable}
+                        saving={saving}
+                        onCancel={onCancel}
+                        onSave={() => onSave(section.key)}
+                    />
+                    {section.key === "target_enterprise" && (
+                        <TargetEnterpriseEditor
+                            draft={draft}
+                            onChange={onDraftChange}
+                        />
+                    )}
+                    {section.key === "integration_access" && (
+                        <IntegrationAccessEditor
+                            draft={draft}
+                            onChange={onDraftChange}
+                        />
+                    )}
+                    {section.key === "master_catalog" && (
+                        <MasterCatalogEditor
+                            draft={draft}
+                            onChange={onDraftChange}
+                        />
+                    )}
+                    {section.key === "orders_biotus" && (
+                        <OrdersSectionEditor
+                            draft={draft}
+                            onChange={onDraftChange}
+                        />
+                    )}
+                    {section.key === "stock_mapping_mode" && (
+                        <StockOperationalEditor
+                            draft={draft}
+                            onChange={onDraftChange}
+                        />
+                    )}
+                    {section.key === "pricing" && (
+                        <PricingEditor
+                            draft={draft}
+                            onChange={onDraftChange}
+                        />
+                    )}
+                    <div style={{ display: "grid", gap: "18px" }}>
+                        {visibleGroups.map((group) => (
+                            <div key={group.key} style={{ display: "grid", gap: "12px" }}>
+                                {group.title && (
+                                    <div
+                                        style={{
+                                            fontSize: "13px",
+                                            fontWeight: 700,
+                                            color: "#475569",
+                                            letterSpacing: "0.02em",
+                                        }}
+                                    >
+                                        {group.title}
+                                    </div>
+                                )}
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gap: "12px",
+                                        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 280px))",
+                                        alignItems: "start",
+                                        justifyContent: "center",
+                                    }}
+                                >
+                                    {group.items.map((item) => (
+                                        <SectionItem key={item.key} item={item} />
+                                    ))}
+                                </div>
                             </div>
-                        )}
-                        <div style={{ display: "grid", gap: "12px" }}>
-                            {group.items.map((item) => (
-                                <SectionItem key={item.key} item={item} />
-                            ))}
-                        </div>
+                        ))}
                     </div>
-                ))}
-            </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -1010,10 +1110,10 @@ const BusinessSettingsPage = () => {
     const [draft, setDraft] = useState(null);
     const [loading, setLoading] = useState(true);
     const [savingSectionKey, setSavingSectionKey] = useState("");
-    const [editingSectionKey, setEditingSectionKey] = useState("");
     const [error, setError] = useState("");
     const [saveError, setSaveError] = useState("");
     const [saveSuccess, setSaveSuccess] = useState("");
+    const [openSections, setOpenSections] = useState(buildInitialOpenSections);
 
     useEffect(() => {
         const loadView = async () => {
@@ -1039,6 +1139,20 @@ const BusinessSettingsPage = () => {
         }
     }, [viewModel]);
 
+    useEffect(() => {
+        if (viewModel?.sections) {
+            setOpenSections((current) => {
+                const next = { ...buildInitialOpenSections(), ...current };
+                viewModel.sections.forEach((section) => {
+                    if (!(section.key in next)) {
+                        next[section.key] = false;
+                    }
+                });
+                return next;
+            });
+        }
+    }, [viewModel]);
+
     const handleDraftChange = (key, value) => {
         setDraft((current) => ({
             ...(current || {}),
@@ -1046,18 +1160,10 @@ const BusinessSettingsPage = () => {
         }));
     };
 
-    const handleEdit = (sectionKey) => {
-        setSaveError("");
-        setSaveSuccess("");
-        setDraft(buildDraftFromViewModel(viewModel));
-        setEditingSectionKey(sectionKey);
-    };
-
     const handleCancel = () => {
         setSaveError("");
         setSaveSuccess("");
         setDraft(buildDraftFromViewModel(viewModel));
-        setEditingSectionKey("");
     };
 
     const handleSave = async (sectionKey) => {
@@ -1091,7 +1197,6 @@ const BusinessSettingsPage = () => {
             }
 
             setViewModel(updated);
-            setEditingSectionKey("");
             setSaveSuccess("Настройки сохранены.");
         } catch (saveRequestError) {
             console.error("Error saving business settings:", saveRequestError);
@@ -1101,18 +1206,22 @@ const BusinessSettingsPage = () => {
         }
     };
 
-    const resolutionStyle = statusStyleByResolution[viewModel?.resolution_status] || statusStyleByResolution.none;
-    const businessOptions = (viewModel?.enterprise_options || []).filter(
-        (option) => String(option.data_format || "").trim().toLowerCase() === "business",
-    );
-    const enterpriseOptions = viewModel?.enterprise_options || [];
+    const handleToggleSection = (sectionKey) => {
+        setOpenSections((current) => ({
+            ...current,
+            [sectionKey]: !current[sectionKey],
+        }));
+        setSaveError("");
+        setSaveSuccess("");
+        setDraft(buildDraftFromViewModel(viewModel));
+    };
 
     return (
         <div style={pageStyle}>
             <div style={{ ...cardStyle, padding: "20px 24px", display: "grid", gap: "10px" }}>
                 <h1 style={{ margin: 0, fontSize: "28px", color: "#111827" }}>Business Settings</h1>
                 <p style={mutedTextStyle}>
-                    Единая операторская страница для Business control-plane. Настройки из `business_settings` используются в первую очередь, а ENV нужен только как fallback там, где это ещё не переведено в БД.
+                    Единая страница настройки рабочего предприятия, заказов, остатков, публикаций и доступов.
                 </p>
             </div>
 
@@ -1130,48 +1239,6 @@ const BusinessSettingsPage = () => {
 
             {!loading && !error && viewModel && (
                 <>
-                    <div
-                        style={{
-                            ...cardStyle,
-                            padding: "20px 24px",
-                            backgroundColor: resolutionStyle.backgroundColor,
-                            borderColor: resolutionStyle.borderColor,
-                            display: "grid",
-                            gap: "10px",
-                        }}
-                    >
-                        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                            <span style={{ ...badgeBaseStyle, backgroundColor: "#ffffff", color: resolutionStyle.color }}>
-                                {resolutionLabelByStatus[viewModel.resolution_status] || viewModel.resolution_status}
-                            </span>
-                            {viewModel.writable_supported ? (
-                                <span style={{ ...readonlyBadgeStyle, backgroundColor: "#ffffff" }}>
-                                    доступно редактирование
-                                </span>
-                            ) : (
-                                <span style={{ ...readonlyBadgeStyle, backgroundColor: "#ffffff" }}>
-                                    только чтение
-                                </span>
-                            )}
-                        </div>
-                        <p style={{ ...mutedTextStyle, color: resolutionStyle.color }}>{viewModel.resolution_message}</p>
-                        {viewModel.deferred_write_reason && (
-                            <p style={mutedTextStyle}>{viewModel.deferred_write_reason}</p>
-                        )}
-                        {Array.isArray(viewModel.business_candidates) && viewModel.business_candidates.length > 1 && (
-                            <div style={{ display: "grid", gap: "8px" }}>
-                                <div style={{ fontWeight: 700, color: "#111827" }}>Найденные предприятия Business</div>
-                                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                                    {viewModel.business_candidates.map((candidate) => (
-                                        <span key={candidate.enterprise_code} style={sourceBadgeStyle}>
-                                            {candidate.enterprise_name} ({candidate.enterprise_code})
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
                     {saveError && (
                         <div style={{ ...cardStyle, padding: "16px 20px", borderColor: "#fecaca", backgroundColor: "#fef2f2" }}>
                             <p style={{ margin: 0, color: "#991b1b", fontWeight: 600 }}>{saveError}</p>
@@ -1188,15 +1255,13 @@ const BusinessSettingsPage = () => {
                         <SectionCard
                             key={section.key}
                             section={section}
-                            editing={editingSectionKey === section.key}
+                            isOpen={Boolean(openSections[section.key])}
                             saving={savingSectionKey === section.key}
-                            onEdit={handleEdit}
+                            onToggle={handleToggleSection}
                             onCancel={handleCancel}
                             onSave={handleSave}
                             draft={draft}
                             onDraftChange={handleDraftChange}
-                            businessOptions={businessOptions}
-                            enterpriseOptions={enterpriseOptions}
                         />
                     ))}
                 </>
