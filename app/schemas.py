@@ -160,6 +160,7 @@ class BusinessSettingsVM(BaseModel):
     resolution_message: str
     resolved_enterprise_code: Optional[str] = None
     resolved_enterprise_name: Optional[str] = None
+    token_present: bool = False
     business_candidates: List[BusinessEnterpriseCandidateVM] = Field(default_factory=list)
     enterprise_options: List[BusinessEnterpriseOptionVM] = Field(default_factory=list)
     writable_supported: bool = False
@@ -172,6 +173,8 @@ class BusinessSettingsUpdateSchema(BaseModel):
     business_enterprise_code: str
     daily_publish_enterprise_code_override: Optional[str] = None
     weekly_salesdrive_enterprise_code_override: Optional[str] = None
+    business_stock_enabled: bool
+    business_stock_interval_seconds: int = Field(ge=1)
     biotus_enable_unhandled_fallback: bool
     biotus_unhandled_order_timeout_minutes: int = Field(ge=0)
     biotus_fallback_additional_status_ids: List[int] = Field(min_length=1)
@@ -233,6 +236,32 @@ class BusinessSettingsUpdateSchema(BaseModel):
         if not normalized:
             raise ValueError("master_weekly_day is required")
         return normalized
+
+
+class BusinessEnterpriseOperationalFieldsUpdateSchema(BaseModel):
+    branch_id: str
+    tabletki_login: Optional[str] = None
+    tabletki_password: Optional[str] = None
+    token: Optional[str] = None
+    order_fetcher: bool
+    auto_confirm: bool
+    stock_correction: bool
+
+    @field_validator("branch_id", mode="before")
+    @classmethod
+    def _normalize_branch_id(cls, value: Any) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("branch_id is required")
+        return normalized
+
+    @field_validator("tabletki_login", "tabletki_password", "token", mode="before")
+    @classmethod
+    def _normalize_optional_credentials(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
 
 # Схема таблицы mapping

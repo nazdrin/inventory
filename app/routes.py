@@ -18,6 +18,7 @@ from app.schemas import (
     EnterpriseFieldMetaVM, EnterpriseSectionVM, SupplierListItemVM, SupplierDetailVM,
     SupplierSectionVM, BusinessSettingsVM, BusinessSectionVM, BusinessSettingItemVM,
     BusinessEnterpriseCandidateVM, BusinessEnterpriseOptionVM, BusinessSettingsUpdateSchema,
+    BusinessEnterpriseOperationalFieldsUpdateSchema,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -39,6 +40,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 sd_logger = logging.getLogger("salesdrive")
 sd_logger.setLevel(logging.INFO)
+business_settings_logger = logging.getLogger("business_settings")
 
 # ⏩ ОДИН РАЗ указываем prefix, а внутри маршрутов больше не дублируем developer_panel
 router = APIRouter(prefix="/developer_panel", tags=["Developer Panel"])
@@ -117,6 +119,21 @@ def _mapping_overloaded_fields(data_format: str | None, has_google_folder: bool)
 def _mapping_semantics_summary(data_format: str | None, semantic_store_label: str) -> str:
     fmt = (data_format or "").strip() or "unknown format"
     return f"Format={fmt}; store_id should be presented as '{semantic_store_label}' rather than a raw generic storage field."
+
+
+def _resolve_business_settings_enterprise(
+    *,
+    all_enterprises: list[EnterpriseSettings],
+    business_settings_row: BusinessSettings | None,
+) -> EnterpriseSettings | None:
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    if business_settings_row is not None:
+        db_primary_code = str(business_settings_row.business_enterprise_code or "").strip() or None
+        return enterprise_lookup.get(str(db_primary_code or ""))
+
+    candidates = _filter_business_candidates(all_enterprises)
+    _resolution_status, _resolution_message, resolved = _business_resolution_state(candidates)
+    return resolved
 
 
 def _supplier_split_cities(city_value: str | None) -> list[str]:
@@ -500,6 +517,14 @@ def _business_planned_writable_keys() -> list[str]:
         "business_enterprise_code",
         "daily_publish_enterprise_code_override",
         "weekly_salesdrive_enterprise_code_override",
+        "business_stock_enabled",
+        "business_stock_interval_seconds",
+        "branch_id",
+        "tabletki_login",
+        "tabletki_password",
+        "order_fetcher",
+        "auto_confirm",
+        "stock_correction",
         "biotus_enable_unhandled_fallback",
         "biotus_unhandled_order_timeout_minutes",
         "biotus_fallback_additional_status_ids",
@@ -596,6 +621,51 @@ def _normalize_override_value(value: str | None, primary_code: str) -> str | Non
     return normalized
 
 
+def _normalize_optional_enterprise_text(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _resolve_business_enterprise_for_operational_write(
+    *,
+    business_settings_row: BusinessSettings | None,
+    business_candidates: list[EnterpriseSettings],
+    enterprise_lookup: dict[str, EnterpriseSettings],
+) -> EnterpriseSettings:
+    if business_settings_row is not None:
+        primary_code = str(business_settings_row.business_enterprise_code or "").strip() or None
+        if not primary_code:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Не удалось сохранить enterprise operational fields: "
+                    "business_settings row существует, но business_enterprise_code пустой."
+                ),
+            )
+
+        enterprise = enterprise_lookup.get(primary_code)
+        if enterprise is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Не удалось сохранить enterprise operational fields: "
+                    "business_settings указывает на предприятие, которого нет в EnterpriseSettings."
+                ),
+            )
+        return enterprise
+
+    resolution_status, resolution_message, enterprise = _business_resolution_state(business_candidates)
+    if resolution_status != "resolved" or enterprise is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Не удалось сохранить enterprise operational fields: "
+                f"{resolution_message}"
+            ),
+        )
+    return enterprise
+
+
 def _env_override_value_against_primary(name: str, primary_code: str) -> str | None:
     return _normalize_override_value(_env_optional_value(name), primary_code)
 
@@ -657,6 +727,8 @@ async def _get_or_create_business_settings_row_for_write(
     row = BusinessSettings(
         id=1,
         business_enterprise_code=payload.business_enterprise_code,
+        business_stock_enabled=payload.business_stock_enabled,
+        business_stock_interval_seconds=payload.business_stock_interval_seconds,
         biotus_enterprise_code_override=_env_override_value_against_primary(
             "BIOTUS_ENTERPRISE_CODE",
             payload.business_enterprise_code,
@@ -723,6 +795,31 @@ def _business_joined_int_list(values: list[int] | tuple[int, ...] | None) -> str
         return "—"
     normalized = [str(int(item)) for item in values]
     return ", ".join(normalized) if normalized else "—"
+
+
+def _fallback_business_stock_enabled(enterprise: EnterpriseSettings | None) -> bool:
+    if enterprise is None:
+        return True
+    return bool(enterprise.stock_enabled)
+
+
+def _fallback_business_stock_interval_seconds(enterprise: EnterpriseSettings | None) -> int:
+    if enterprise is None:
+        return 60
+    frequency = getattr(enterprise, "stock_upload_frequency", None)
+    if frequency is None:
+        return 60
+    try:
+        normalized = int(frequency)
+    except (TypeError, ValueError):
+        return 60
+    if normalized < 1:
+        return 60
+    return normalized * 60
+
+
+def _business_on_off_label(value: bool) -> str:
+    return "включено" if value else "выключено"
 
 
 def _resolve_effective_target(explicit_name: str, fallback_name: str) -> tuple[str | None, str]:
@@ -839,7 +936,6 @@ def _build_business_sections(
     business_settings_row: BusinessSettings | None,
     business_candidates: list[EnterpriseSettings],
 ) -> list[BusinessSectionVM]:
-    business_exists = enterprise is not None or resolution_status == "ambiguous"
     old_catalog_disabled = _env_bool_value("DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER", "0")
     use_master_mapping = _env_bool_value("USE_MASTER_MAPPING_FOR_STOCK", "0")
     planned_write_supported = True
@@ -881,7 +977,7 @@ def _build_business_sections(
             db_primary_code,
             override_help="Derived from biotus_enterprise_code_override.",
         )
-        consistency_status, consistency_note = _db_target_consistency_status(
+        _consistency_status, _consistency_note = _db_target_consistency_status(
             db_row_exists=True,
             primary_code=db_primary_code,
             primary_enterprise=db_primary_enterprise,
@@ -922,7 +1018,7 @@ def _build_business_sections(
         biotus_target = explicit_biotus_target
         biotus_target_source = "env-fallback"
         biotus_target_help = "Fallback env selector is used only because business_settings row is missing."
-        consistency_status, consistency_note = _target_consistency_status(
+        _consistency_status, _consistency_note = _target_consistency_status(
             resolution_status,
             enterprise.enterprise_code if enterprise is not None else None,
             master_catalog_target,
@@ -935,6 +1031,16 @@ def _build_business_sections(
         target_primary_code = enterprise.enterprise_code if enterprise is not None else None
 
     if business_settings_row is not None:
+        business_stock_enabled_value = bool(business_settings_row.business_stock_enabled)
+        business_stock_enabled_source = "db"
+        business_stock_enabled_help = (
+            "Отдельный Business stock scheduler включён и читает своё состояние из business_settings."
+        )
+        business_stock_interval_seconds_value = int(business_settings_row.business_stock_interval_seconds)
+        business_stock_interval_seconds_source = "db"
+        business_stock_interval_seconds_help = (
+            "Интервал запуска отдельного Business stock scheduler в секундах. Используется DB-first."
+        )
         biotus_enable_unhandled_fallback_value = bool(business_settings_row.biotus_enable_unhandled_fallback)
         biotus_enable_unhandled_fallback_source = "db"
         biotus_enable_unhandled_fallback_help = "DB-first policy flag from business_settings."
@@ -954,6 +1060,16 @@ def _build_business_sections(
         biotus_duplicate_status_id_source = "db"
         biotus_duplicate_status_id_help = "DB-first duplicate status policy from business_settings."
     else:
+        business_stock_enabled_value = _fallback_business_stock_enabled(target_enterprise)
+        business_stock_enabled_source = "derived"
+        business_stock_enabled_help = (
+            "business_settings row отсутствует, поэтому scheduler fallback-ит к старой gating-семантике через EnterpriseSettings.stock_enabled."
+        )
+        business_stock_interval_seconds_value = _fallback_business_stock_interval_seconds(target_enterprise)
+        business_stock_interval_seconds_source = "derived"
+        business_stock_interval_seconds_help = (
+            "business_settings row отсутствует, поэтому используется fallback от старой cadence-семантики через EnterpriseSettings.stock_upload_frequency."
+        )
         biotus_enable_unhandled_fallback_value = _env_bool_value("BIOTUS_ENABLE_UNHANDLED_FALLBACK", "1")
         biotus_enable_unhandled_fallback_source = "env-fallback"
         biotus_enable_unhandled_fallback_help = (
@@ -987,42 +1103,30 @@ def _build_business_sections(
 
     if target_enterprise is not None:
         target_items = [
-            _business_item(
-                "target_resolution_status",
-                "Target resolution mode",
-                target_resolution_status,
-                target_resolution_source,
-                group="Primary business target",
-                help_text=target_resolution_help,
-            ),
-            _business_item("enterprise_name", "Название предприятия", target_enterprise.enterprise_name, "EnterpriseSettings", group="Primary business target"),
-            _business_item("enterprise_code", "Код предприятия", target_enterprise.enterprise_code, "EnterpriseSettings", group="Primary business target"),
-            _business_item("data_format", "Текущий data_format", target_enterprise.data_format, "EnterpriseSettings", group="Primary business target"),
-            _business_item("branch_id", "Branch ID", target_enterprise.branch_id, "EnterpriseSettings", group="Primary business target"),
-            _business_item("catalog_enabled", "Каталог включён", bool(target_enterprise.catalog_enabled), "EnterpriseSettings", group="Primary business target"),
-            _business_item("stock_enabled", "Сток включён", bool(target_enterprise.stock_enabled), "EnterpriseSettings", group="Primary business target"),
-            _business_item("order_fetcher", "Получение заказов", bool(target_enterprise.order_fetcher), "EnterpriseSettings", group="Primary business target"),
+            _business_item("enterprise_name", "Текущее предприятие", target_enterprise.enterprise_name, "EnterpriseSettings", group="Сейчас используется"),
+            _business_item("enterprise_code", "Код предприятия", target_enterprise.enterprise_code, "EnterpriseSettings", group="Сейчас используется"),
+            _business_item("data_format", "Формат данных", target_enterprise.data_format, "EnterpriseSettings", group="Сейчас используется"),
         ]
     else:
         target_items = [
             _business_item(
                 "target_resolution_status",
-                "Target resolution mode",
+                "Статус выбора предприятия",
                 target_resolution_status,
                 target_resolution_source,
-                group="Primary business target",
+                group="Сейчас используется",
                 help_text=target_resolution_help,
             ),
             _business_item(
                 "enterprise_code_missing",
-                "Primary business enterprise code",
+                "Код предприятия",
                 target_primary_code,
                 "db" if business_settings_exists else "computed",
-                group="Primary business target",
+                group="Сейчас используется",
                 help_text=(
-                    "DB row exists but the referenced enterprise is missing in EnterpriseSettings."
+                    "В business_settings указано предприятие, которого сейчас нет в EnterpriseSettings."
                     if business_settings_exists
-                    else "Business enterprise could not be resolved from EnterpriseSettings fallback logic."
+                    else "Не удалось определить предприятие по fallback-логике."
                 ),
             ),
         ]
@@ -1030,511 +1134,321 @@ def _build_business_sections(
     target_items.extend(
         [
             _business_item(
-                "business_enterprise_code",
-                "Primary business enterprise code",
-                master_catalog_target,
-                master_catalog_target_source,
-                group="Primary business target",
-                help_text=master_catalog_target_help,
+                "branch_id",
+                "Branch ID",
+                target_enterprise.branch_id if target_enterprise is not None else None,
+                "EnterpriseSettings" if target_enterprise is not None else "derived",
+                group="Операционные поля",
+                help_text="Используется в export/routing потоках Business enterprise и пока хранится в EnterpriseSettings.",
                 readonly=False,
-            ),
-            _business_item(
-                "master_daily_publish_enterprise_explicit",
-                "Daily publish explicit target",
-                explicit_daily_target,
-                explicit_daily_source,
-                group="Linked runtime targets",
-                help_text=(
-                    "NULL in DB means inherit primary business_enterprise_code."
-                    if business_settings_exists
-                    else "Fallback env selector is used only because business_settings row is missing."
-                ),
-                readonly=False,
-            ),
-            _business_item(
-                "master_daily_publish_enterprise_effective",
-                "Daily publish effective target",
-                effective_daily_target,
-                daily_target_source,
-                group="Linked runtime targets",
-                help_text=daily_target_help,
-            ),
-            _business_item(
-                "master_weekly_salesdrive_enterprise_explicit",
-                "Weekly SalesDrive explicit target",
-                explicit_weekly_target,
-                explicit_weekly_source,
-                group="Linked runtime targets",
-                help_text=(
-                    "NULL in DB means inherit primary business_enterprise_code."
-                    if business_settings_exists
-                    else "Fallback env selector is used only because business_settings row is missing."
-                ),
-                readonly=False,
-            ),
-            _business_item(
-                "master_weekly_salesdrive_enterprise_effective",
-                "Weekly SalesDrive effective target",
-                effective_weekly_target,
-                weekly_target_source,
-                group="Linked runtime targets",
-                help_text=weekly_target_help,
-            ),
-            _business_item(
-                "biotus_enterprise_code_target",
-                "BIOTUS_ENTERPRISE_CODE",
-                biotus_target,
-                biotus_target_source,
-                group="Separate runtime target",
-                help_text=(
-                    biotus_target_help
-                    if business_settings_exists
-                    else "Biotus target показывается отдельно и не объединяется в единый runtime selector."
-                ),
-            ),
-            _business_item(
-                "target_consistency_status",
-                "Target consistency status",
-                consistency_status,
-                "computed" if not business_settings_exists else "db",
-                group="Consistency",
-            ),
-            _business_item(
-                "target_consistency_note",
-                "Consistency note",
-                consistency_note,
-                "computed" if not business_settings_exists else "db",
-                group="Consistency",
             ),
         ]
     )
 
-    legacy_items = [
+    integration_items = [
         _business_item(
-            "old_business_contour_status",
-            "Статус старого Business catalog contour",
-            "scheduler-disabled" if old_catalog_disabled else "scheduler-reachable",
-            "computed",
+            "tabletki_login",
+            "Логин Tabletki",
+            target_enterprise.tabletki_login if target_enterprise is not None else None,
+            "EnterpriseSettings" if target_enterprise is not None else "derived",
+            group="Операционные поля",
+            help_text="Business runtime использует эти креды для заказов, отмен и export-paths. Хранение пока остаётся в EnterpriseSettings.",
+            readonly=False,
         ),
         _business_item(
-            "disable_old_business_catalog_scheduler",
-            "DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER",
-            old_catalog_disabled,
-            "env",
+            "tabletki_password",
+            "Пароль Tabletki",
+            target_enterprise.tabletki_password if target_enterprise is not None else None,
+            "EnterpriseSettings" if target_enterprise is not None else "derived",
+            group="Операционные поля",
+            help_text="В режиме просмотра пароль скрыт. При сохранении значение пишется в EnterpriseSettings resolved Business enterprise.",
+            readonly=False,
         ),
         _business_item(
-            "scheduler_disabled",
-            "Scheduler disabled",
-            old_catalog_disabled,
-            "computed",
-        ),
-        _business_item(
-            "business_enterprise_exists",
-            "Business enterprise найден",
-            business_exists,
-            "computed",
-        ),
-        _business_item(
-            "manual_reachability",
-            "Manual reachability",
-            "CLI/direct call still possible",
-            "computed",
-            help_text="Old Business contour остаётся manually reachable через import_catalog.py и не считается удалённым.",
+            "token_masked",
+            "SalesDrive API key",
+            "Настроен" if token_presence else "Не задан",
+            "EnterpriseSettings" if token_hint_target is not None else "derived",
+            group="Операционные поля",
+            help_text="Текущий токен не возвращается API. Оставьте поле пустым в режиме редактирования, чтобы не менять текущий токен.",
+            readonly=False,
         ),
     ]
 
     stock_items = [
         _business_item(
-            "use_master_mapping_for_stock",
-            "USE_MASTER_MAPPING_FOR_STOCK",
-            use_master_mapping,
-            "env",
+            "business_stock_enabled",
+            "Включить обработку стока",
+            business_stock_enabled_value,
+            business_stock_enabled_source,
+            group="Scheduler control",
+            help_text=business_stock_enabled_help,
+            readonly=False,
         ),
         _business_item(
-            "mapping_mode_status",
-            "Текущий mapping mode",
-            "master-first with legacy fallback" if use_master_mapping else "legacy mapping primary",
-            "computed",
+            "business_stock_interval_seconds",
+            "Интервал запуска, сек",
+            business_stock_interval_seconds_value,
+            business_stock_interval_seconds_source,
+            group="Scheduler control",
+            help_text=business_stock_interval_seconds_help,
+            readonly=False,
         ),
         _business_item(
-            "catalog_mapping_dependency",
-            "catalog_mapping runtime dependency",
-            "order_sender + dropship fallback still read catalog_mapping",
-            "computed",
-            help_text="Это snapshot статуса по текущему коду, без deep runtime probe.",
+            "stock_correction",
+            "Коррекция остатков",
+            bool(target_enterprise.stock_correction) if target_enterprise is not None else None,
+            "EnterpriseSettings" if target_enterprise is not None else "derived",
+            group="Политика стока",
+            help_text="Если включено, stock runtime вычитает активные заказы Tabletki перед записью остатков.",
+            readonly=False,
         ),
     ]
 
     orders_items = [
         _business_item(
+            "order_fetcher",
+            "Получение заказов",
+            bool(target_enterprise.order_fetcher) if target_enterprise is not None else None,
+            "EnterpriseSettings" if target_enterprise is not None else "derived",
+            group="Основной контур заказов",
+            help_text="Включает order scheduler для resolved Business enterprise. Значение хранится в EnterpriseSettings.",
+            readonly=False,
+        ),
+        _business_item(
+            "auto_confirm",
+            "Автоматическое бронирование",
+            bool(target_enterprise.auto_confirm) if target_enterprise is not None else None,
+            "EnterpriseSettings" if target_enterprise is not None else "derived",
+            group="Основной контур заказов",
+            help_text="Переключает order fetcher между auto-confirm path и обычной обработкой заказов.",
+            readonly=False,
+        ),
+        _business_item(
             "biotus_enterprise_code",
-            "BIOTUS_ENTERPRISE_CODE",
+            "Предприятие для Biotus",
             biotus_target,
             biotus_target_source,
-            group="Target",
-            help_text=biotus_target_help,
+            group="Предприятие",
+            help_text="Сейчас только для чтения. Если отдельное предприятие не задано, используется основное.",
         ),
         _business_item(
             "biotus_enable_unhandled_fallback",
-            "BIOTUS_ENABLE_UNHANDLED_FALLBACK",
+            "Обрабатывать необработанные заказы",
             biotus_enable_unhandled_fallback_value,
             biotus_enable_unhandled_fallback_source,
-            group="Fallback policy",
-            help_text=biotus_enable_unhandled_fallback_help,
+            group="Политика обработки",
+            help_text="Если включено, система дополнительно проверяет заказы, которые не попали в основной контур.",
             readonly=False,
         ),
         _business_item(
             "biotus_unhandled_order_timeout_minutes",
-            "BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES",
+            "Ожидание перед дополнительной обработкой, минут",
             biotus_unhandled_order_timeout_minutes_value,
             biotus_unhandled_order_timeout_minutes_source,
-            group="Fallback policy",
-            help_text=biotus_unhandled_order_timeout_minutes_help,
+            group="Политика обработки",
+            help_text="Через сколько минут заказ считается просроченным для дополнительной обработки.",
             readonly=False,
         ),
         _business_item(
             "biotus_fallback_additional_status_ids",
-            "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
+            "Дополнительные статусы SalesDrive",
             biotus_fallback_additional_status_ids_value,
             biotus_fallback_additional_status_ids_source,
-            group="Fallback policy",
-            help_text=biotus_fallback_additional_status_ids_help,
+            group="Политика обработки",
+            help_text="Список status id через запятую. Используется для дополнительной обработки заказов.",
             readonly=False,
         ),
         _business_item(
             "biotus_duplicate_status_id",
-            "BIOTUS_DUPLICATE_STATUS_ID",
+            "Статус для дублей",
             biotus_duplicate_status_id_value,
             biotus_duplicate_status_id_source,
-            group="Fallback policy",
-            help_text=biotus_duplicate_status_id_help,
+            group="Политика обработки",
+            help_text="Status id в SalesDrive, который ставится заказам с дублирующимся телефоном.",
             readonly=False,
-        ),
-        _business_item(
-            "biotus_time_default_minutes",
-            "BIOTUS_TIME_DEFAULT_MINUTES",
-            _env_int_value("BIOTUS_TIME_DEFAULT_MINUTES", 30),
-            "env",
-            group="Timing window",
-        ),
-        _business_item(
-            "biotus_time_switch_hour",
-            "BIOTUS_TIME_SWITCH_HOUR",
-            _env_int_value("BIOTUS_TIME_SWITCH_HOUR", 12),
-            "env",
-            group="Timing window",
-        ),
-        _business_item(
-            "biotus_time_switch_end_hour",
-            "BIOTUS_TIME_SWITCH_END_HOUR",
-            _env_int_value("BIOTUS_TIME_SWITCH_END_HOUR", 13),
-            "env",
-            group="Timing window",
-        ),
-        _business_item(
-            "biotus_time_after_switch_minutes",
-            "BIOTUS_TIME_AFTER_SWITCH_MINUTES",
-            _env_int_value("BIOTUS_TIME_AFTER_SWITCH_MINUTES", 15),
-            "env",
-            group="Timing window",
-        ),
-        _business_item(
-            "biotus_tz",
-            "BIOTUS_TZ",
-            _env_optional_value("BIOTUS_TZ") or "Europe/Kyiv",
-            "env",
-            group="Timing window",
-        ),
-        _business_item(
-            "tabletki_cancel_reason_default",
-            "TABLETKI_CANCEL_REASON_DEFAULT",
-            _env_int_value("TABLETKI_CANCEL_REASON_DEFAULT", 18),
-            "env",
-            group="Fallback policy",
-        ),
-        _business_item(
-            "allowed_suppliers",
-            "ALLOWED_SUPPLIERS",
-            _business_joined_env_list("ALLOWED_SUPPLIERS", "38;41"),
-            "env",
-            group="Transitional fallback",
-            help_text="Fallback allowlist. Основной контур выбора поставщиков уже смещается в supplier-model driven flags.",
         ),
     ]
 
     master_items = [
-        _business_item("master_scheduler_enabled", "MASTER_SCHEDULER_ENABLED", _env_bool_value("MASTER_SCHEDULER_ENABLED", "1"), "env", group="Scheduler gates"),
-        _business_item(
-            "master_catalog_enterprise_code_vm",
-            "Primary business enterprise code",
-            master_catalog_target,
-            master_catalog_target_source,
-            group="Target selectors",
-        ),
-        _business_item(
-            "master_daily_publish_enterprise",
-            "Daily publish explicit target",
-            explicit_daily_target,
-            explicit_daily_source,
-            group="Target selectors",
-        ),
-        _business_item("master_daily_publish_effective_target", "Daily publish effective target", effective_daily_target, daily_target_source, group="Target selectors"),
-        _business_item(
-            "master_weekly_salesdrive_enterprise",
-            "Weekly SalesDrive explicit target",
-            explicit_weekly_target,
-            explicit_weekly_source,
-            group="Target selectors",
-        ),
-        _business_item("master_weekly_salesdrive_effective_target", "Weekly SalesDrive effective target", effective_weekly_target, weekly_target_source, group="Target selectors"),
+        _business_item("master_scheduler_enabled", "Автозапуск master-контура", _env_bool_value("MASTER_SCHEDULER_ENABLED", "1"), "env", group="Только чтение"),
         _business_item(
             "master_weekly_enabled",
-            "MASTER_WEEKLY_ENABLED",
+            "Еженедельное обновление",
             bool(business_settings_row.master_weekly_enabled) if business_settings_exists else _env_bool_value("MASTER_WEEKLY_ENABLED", "1"),
             "db" if business_settings_exists else "env-fallback",
-            group="Weekly orchestration",
+            group="Еженедельный запуск",
             readonly=False,
         ),
         _business_item(
             "master_weekly_day",
-            "MASTER_WEEKLY_DAY",
+            "День",
             business_settings_row.master_weekly_day if business_settings_exists else (_env_optional_value("MASTER_WEEKLY_DAY") or "SUN"),
             "db" if business_settings_exists else "env-fallback",
-            group="Weekly orchestration",
+            group="Еженедельный запуск",
             readonly=False,
         ),
         _business_item(
             "master_weekly_hour",
-            "MASTER_WEEKLY_HOUR",
+            "Час",
             int(business_settings_row.master_weekly_hour) if business_settings_exists else _env_int_value("MASTER_WEEKLY_HOUR", 3),
             "db" if business_settings_exists else "env-fallback",
-            group="Weekly orchestration",
+            group="Еженедельный запуск",
             readonly=False,
         ),
         _business_item(
             "master_weekly_minute",
-            "MASTER_WEEKLY_MINUTE",
+            "Минута",
             int(business_settings_row.master_weekly_minute) if business_settings_exists else _env_int_value("MASTER_WEEKLY_MINUTE", 0),
             "db" if business_settings_exists else "env-fallback",
-            group="Weekly orchestration",
+            group="Еженедельный запуск",
             readonly=False,
         ),
-        _business_item("master_weekly_salesdrive_batch_size", "MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", _env_int_value("MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", 100), "env", group="Weekly orchestration"),
+        _business_item("master_weekly_salesdrive_batch_size", "Размер пакета для SalesDrive", _env_int_value("MASTER_WEEKLY_SALESDRIVE_BATCH_SIZE", 100), "env", group="Только чтение"),
         _business_item(
             "master_daily_publish_enabled",
-            "MASTER_DAILY_PUBLISH_ENABLED",
+            "Ежедневная выгрузка",
             bool(business_settings_row.master_daily_publish_enabled) if business_settings_exists else _env_bool_value("MASTER_DAILY_PUBLISH_ENABLED", "1"),
             "db" if business_settings_exists else "env-fallback",
-            group="Daily publish",
+            group="Ежедневная выгрузка",
             readonly=False,
         ),
         _business_item(
             "master_daily_publish_hour",
-            "MASTER_DAILY_PUBLISH_HOUR",
+            "Час",
             int(business_settings_row.master_daily_publish_hour) if business_settings_exists else _env_int_value("MASTER_DAILY_PUBLISH_HOUR", 9),
             "db" if business_settings_exists else "env-fallback",
-            group="Daily publish",
+            group="Ежедневная выгрузка",
             readonly=False,
         ),
         _business_item(
             "master_daily_publish_minute",
-            "MASTER_DAILY_PUBLISH_MINUTE",
+            "Минута",
             int(business_settings_row.master_daily_publish_minute) if business_settings_exists else _env_int_value("MASTER_DAILY_PUBLISH_MINUTE", 0),
             "db" if business_settings_exists else "env-fallback",
-            group="Daily publish",
+            group="Ежедневная выгрузка",
             readonly=False,
         ),
         _business_item(
             "master_daily_publish_limit",
-            "MASTER_DAILY_PUBLISH_LIMIT",
+            "Лимит публикации",
             int(business_settings_row.master_daily_publish_limit) if business_settings_exists else _env_int_value("MASTER_DAILY_PUBLISH_LIMIT", 0),
             "db" if business_settings_exists else "env-fallback",
-            group="Daily publish",
+            group="Ежедневная выгрузка",
             readonly=False,
         ),
         _business_item(
             "master_archive_enabled",
-            "MASTER_ARCHIVE_ENABLED",
+            "Загрузка архива",
             bool(business_settings_row.master_archive_enabled) if business_settings_exists else _env_bool_value("MASTER_ARCHIVE_ENABLED", "1"),
             "db" if business_settings_exists else "env-fallback",
-            group="Archive",
+            group="Архив",
             readonly=False,
         ),
         _business_item(
             "master_archive_every_minutes",
-            "MASTER_ARCHIVE_EVERY_MINUTES",
+            "Интервал, минут",
             int(business_settings_row.master_archive_every_minutes) if business_settings_exists else _env_int_value("MASTER_ARCHIVE_EVERY_MINUTES", 60),
             "db" if business_settings_exists else "env-fallback",
-            group="Archive",
+            group="Архив",
             readonly=False,
         ),
         _business_item(
             "master_target_fallback_note",
-            "Target fallback note",
+            "Как выбирается предприятие",
             (
-                "DB-first: daily/weekly effective targets use override when present, otherwise business_enterprise_code."
+                "Если отдельное предприятие не указано в разделе выше, используется основное."
                 if business_settings_exists
-                else "Fallback-only mode: daily/weekly explicit targets fallback to MASTER_CATALOG_ENTERPRISE_CODE when empty."
+                else "Пока строка business_settings не создана, используется fallback из ENV."
             ),
-            "db" if business_settings_exists else "computed",
-            group="Target selectors",
-        ),
-        _business_item(
-            "writable_scope_status",
-            "Writable first scope",
-            "enabled-for-master-control-plane",
-            "computed",
-            help_text="Write support включён только для DB-backed primary/daily/weekly/archive fields, уже читаемых page и master runtime.",
+            "derived",
+            group="Подсказка",
         ),
     ]
 
     pricing_items = [
-        _business_item("base_thr", "BASE_THR", _env_optional_value("BASE_THR") or "0.08", "env", group="Базовая модель"),
         _business_item(
-            "use_master_mapping_for_stock_pricing",
-            "USE_MASTER_MAPPING_FOR_STOCK",
-            use_master_mapping,
+            "pricing_base_threshold",
+            "Базовый порог изменения цены",
+            _env_optional_value("BASE_THR") or "0.08",
             "env",
-            group="Базовая модель",
-            help_text="Не pricing-only флаг, но напрямую влияет на Business stock/order mapping contour.",
+            help_text="Базовый коэффициент, от которого отталкивается pricing-контур.",
         ),
-        _business_item("price_band_low_max", "PRICE_BAND_LOW_MAX", _env_optional_value("PRICE_BAND_LOW_MAX") or "100", "env", group="Диапазоны цен"),
-        _business_item("price_band_mid_max", "PRICE_BAND_MID_MAX", _env_optional_value("PRICE_BAND_MID_MAX") or "400", "env", group="Диапазоны цен"),
-        _business_item("thr_mult_low", "THR_MULT_LOW", _env_optional_value("THR_MULT_LOW") or "1.0", "env", group="Мультипликаторы"),
-        _business_item("thr_mult_mid", "THR_MULT_MID", _env_optional_value("THR_MULT_MID") or "1.0", "env", group="Мультипликаторы"),
-        _business_item("thr_mult_high", "THR_MULT_HIGH", _env_optional_value("THR_MULT_HIGH") or "1.0", "env", group="Мультипликаторы"),
-        _business_item("no_comp_mult_low", "NO_COMP_MULT_LOW", _env_optional_value("NO_COMP_MULT_LOW") or "1.0", "env", group="Мультипликаторы"),
-        _business_item("no_comp_mult_mid", "NO_COMP_MULT_MID", _env_optional_value("NO_COMP_MULT_MID") or "1.0", "env", group="Мультипликаторы"),
-        _business_item("no_comp_mult_high", "NO_COMP_MULT_HIGH", _env_optional_value("NO_COMP_MULT_HIGH") or "1.0", "env", group="Мультипликаторы"),
-        _business_item("comp_delta_min_uah", "COMP_DELTA_MIN_UAH", _env_optional_value("COMP_DELTA_MIN_UAH") or "2", "env", group="Конкурентное поведение"),
-        _business_item("comp_delta_max_uah", "COMP_DELTA_MAX_UAH", _env_optional_value("COMP_DELTA_MAX_UAH") or "15", "env", group="Конкурентное поведение"),
-        _business_item("comp_discount_share", "COMP_DISCOUNT_SHARE", _env_optional_value("COMP_DISCOUNT_SHARE") or "0.01", "env", group="Конкурентное поведение"),
-        _business_item("price_jitter_enabled", "PRICE_JITTER_ENABLED", _env_bool_value("PRICE_JITTER_ENABLED", "0"), "env", group="Jitter"),
-        _business_item("price_jitter_step_uah", "PRICE_JITTER_STEP_UAH", _env_optional_value("PRICE_JITTER_STEP_UAH") or "0.5", "env", group="Jitter"),
-        _business_item("price_jitter_min_uah", "PRICE_JITTER_MIN_UAH", _env_optional_value("PRICE_JITTER_MIN_UAH"), "env", group="Jitter"),
-        _business_item("price_jitter_max_uah", "PRICE_JITTER_MAX_UAH", _env_optional_value("PRICE_JITTER_MAX_UAH"), "env", group="Jitter"),
-    ]
-
-    salesdrive_items = [
         _business_item(
-            "salesdrive_product_handler_url_status",
-            "SALESDRIVE_PRODUCT_HANDLER_URL",
-            _business_presence_label(_env_optional_value("SALESDRIVE_PRODUCT_HANDLER_URL")),
+            "pricing_price_bands",
+            "Диапазоны цен",
+            f"до {_env_optional_value('PRICE_BAND_LOW_MAX') or '100'} / до {_env_optional_value('PRICE_BAND_MID_MAX') or '400'} / выше",
             "env",
-            group="Handler endpoints",
-            help_text="Показывается только presence/status, без вывода raw endpoint в UI.",
+            help_text="Используются для переключения разных правил ценообразования по ценовым диапазонам.",
         ),
         _business_item(
-            "salesdrive_category_handler_url_status",
-            "SALESDRIVE_CATEGORY_HANDLER_URL",
-            _business_presence_label(_env_optional_value("SALESDRIVE_CATEGORY_HANDLER_URL")),
+            "pricing_competitor_reaction",
+            "Реакция на цены конкурентов",
+            f"шаг {_env_optional_value('COMP_DELTA_MIN_UAH') or '2'}–{_env_optional_value('COMP_DELTA_MAX_UAH') or '15'} грн, доля {_env_optional_value('COMP_DISCOUNT_SHARE') or '0.01'}",
             "env",
-            group="Handler endpoints",
-            help_text="Показывается только presence/status, без вывода raw endpoint в UI.",
+            help_text="Короткое summary для правил реакции на конкурентные цены.",
         ),
         _business_item(
-            "salesdrive_token_presence",
-            "Enterprise token presence",
-            "present" if token_presence else "missing",
-            "secret-hidden",
-            group="Auth source",
-            help_text=(
-                f"Проверка token presence для enterprise={token_hint_target_code}."
-                if token_hint_target_code
-                else "Resolved Business/master target enterprise для token hint не найден."
-            ),
+            "pricing_without_competitor",
+            "Поведение без конкурентов",
+            f"коэффициенты {_env_optional_value('NO_COMP_MULT_LOW') or '1.0'} / {_env_optional_value('NO_COMP_MULT_MID') or '1.0'} / {_env_optional_value('NO_COMP_MULT_HIGH') or '1.0'}",
+            "env",
         ),
         _business_item(
-            "salesdrive_base_url_note",
-            "SALESDRIVE_BASE_URL note",
-            "Current order/Biotus contour still uses hardcoded SalesDrive base URL constant instead of env source-of-truth.",
-            "transitional",
-            group="Runtime note",
-        ),
-    ]
-
-    technical_items = [
-        _business_item("enterprise_settings_owner", "EnterpriseSettings owner", "enterprise runtime fields still owned by EnterpriseSettings", "EnterpriseSettings", group="Source of truth"),
-        _business_item(
-            "db_owner",
-            "DB-first settings",
+            "pricing_jitter",
+            "Случайное смещение цены",
             (
-                "business_settings is the source of truth for first-migration fields in this page snapshot"
-                if business_settings_exists
-                else "business_settings row missing; DB-first storage exists but is not currently used by this page snapshot"
+                f"включено, шаг {_env_optional_value('PRICE_JITTER_STEP_UAH') or '0.5'} грн"
+                if _env_bool_value("PRICE_JITTER_ENABLED", "0")
+                else "выключено"
             ),
-            "db" if business_settings_exists else "transitional",
-            group="Source of truth",
-        ),
-        _business_item("env_owner", "Env-backed settings", "pricing and Biotus runtime consumers still come from env", "env", group="Source of truth"),
-        _business_item("transitional_state", "Transitional settings", "old Business catalog contour, ALLOWED_SUPPLIERS and mapping fallback remain transitional", "transitional", group="Source of truth"),
-        _business_item("secret_hidden", "Secret-hidden values", "token/API-key values are represented only as presence/status hints", "secret-hidden", group="Visibility rules"),
-        _business_item(
-            "write_support",
-            "Запись orchestration settings",
-            planned_write_supported,
-            "computed",
-            group="Visibility rules",
-            help_text="Writable scope intentionally ограничен master fields plus bounded Biotus fallback/status policy fields in business_settings.",
+            "env",
+            help_text="Используется для небольшого разброса цены, если jitter включён.",
         ),
     ]
 
     return [
         BusinessSectionVM(
             key="target_enterprise",
-            title="Целевое предприятие",
-            description="DB-backed primary selector и nullable overrides для daily/weekly master contour. Изменяемы только поля control-plane, уже читаемые page и master runtime.",
+            title="Business Enterprise",
+            description="Основное Business предприятие и его операционный branch routing.",
             readonly=False,
             items=target_items,
         ),
         BusinessSectionVM(
             key="master_catalog",
             title="Master Catalog",
-            description="DB-backed weekly/daily/archive settings. Изменения применяются к business_settings и используются master contour на следующем цикле.",
+            description="Настройки запуска и публикации для master-контура. Сохраняются в business_settings.",
             readonly=False,
             items=master_items,
         ),
         BusinessSectionVM(
-            key="legacy_catalog",
-            title="Старый каталог",
-            description="Статус old Business catalog contour без изменения runtime ownership.",
-            readonly=True,
-            items=legacy_items,
-        ),
-        BusinessSectionVM(
-            key="stock_mapping_mode",
-            title="Сток / Mapping Mode",
-            description="Read-only snapshot текущего режима сопоставления и fallback semantics.",
-            readonly=True,
-            items=stock_items,
-        ),
-        BusinessSectionVM(
-            key="pricing",
-            title="Ценообразование",
-            description="Read-only snapshot pricing control-plane из dropship pipeline. Секция intentionally не включает write logic.",
-            readonly=True,
-            items=pricing_items,
+            key="integration_access",
+            title="Интеграция / доступ",
+            description="Enterprise-level operational fields для Business runtime. Значения редактируются здесь, но пока хранятся в EnterpriseSettings.",
+            readonly=False,
+            items=integration_items,
         ),
         BusinessSectionVM(
             key="orders_biotus",
             title="Заказы / Biotus",
-            description="Bounded writable Biotus fallback/status policy. Timing window, scheduler/runtime flags and external credentials remain outside this scope.",
+            description="Order runtime toggles Business enterprise и политика дополнительной обработки Biotus. Operational fields пока пишутся в EnterpriseSettings, Biotus policy — в business_settings.",
             readonly=False,
             items=orders_items,
         ),
         BusinessSectionVM(
-            key="salesdrive_integrations",
-            title="SalesDrive / Интеграции",
-            description="Read-only visibility по handler endpoints и auth/provenance hints без показа секретов.",
+            key="pricing",
+            title="Ценообразование",
+            description="Только чтение. Текущие параметры ценообразования из runtime.",
             readonly=True,
-            items=salesdrive_items,
+            items=pricing_items,
         ),
         BusinessSectionVM(
-            key="technical_status",
-            title="Технический статус",
-            description="Короткие ownership/provenance hints для текущей Business control-plane surface.",
-            readonly=True,
-            items=technical_items,
+            key="stock_mapping_mode",
+            title="Stock",
+            description="Коррекция остатков для Business enterprise. Operational toggle пока хранится в EnterpriseSettings.",
+            readonly=False,
+            items=stock_items,
         ),
     ]
 
@@ -1545,6 +1459,10 @@ async def _build_business_settings_vm(db: AsyncSession) -> BusinessSettingsVM:
     candidates = _filter_business_candidates(all_enterprises)
     fallback_resolution_status, fallback_resolution_message, fallback_resolved = _business_resolution_state(candidates)
     enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    resolved_enterprise = _resolve_business_settings_enterprise(
+        all_enterprises=all_enterprises,
+        business_settings_row=business_settings_row,
+    )
 
     if business_settings_row is not None:
         db_primary_code = str(business_settings_row.business_enterprise_code or "").strip() or None
@@ -1552,26 +1470,34 @@ async def _build_business_settings_vm(db: AsyncSession) -> BusinessSettingsVM:
         if db_primary_enterprise is not None:
             resolution_status = "db-primary"
             resolution_message = (
-                "Business Settings page uses business_settings as primary source for DB-backed control-plane fields."
+                "Страница читает control-plane поля из business_settings."
             )
             resolved = db_primary_enterprise
         else:
             resolution_status = "db-primary-enterprise-missing"
             resolution_message = (
-                "business_settings row exists, but business_enterprise_code is missing in EnterpriseSettings. "
-                "Page stays DB-first for control-plane fields and surfaces inconsistency instead of falling back silently."
+                "В business_settings указано предприятие, которого нет в EnterpriseSettings. "
+                "Страница не делает silent fallback и показывает это состояние явно."
             )
             resolved = None
     else:
         resolution_status = fallback_resolution_status
-        resolution_message = f"business_settings row is missing; page uses fallback env/EnterpriseSettings read path. {fallback_resolution_message}"
+        resolution_message = f"Строка business_settings пока отсутствует, поэтому страница использует fallback. {fallback_resolution_message}"
         resolved = fallback_resolved
+
+    token_present = bool((getattr(resolved_enterprise, "token", None) or "").strip()) if resolved_enterprise else False
+    business_settings_logger.info(
+        "Business Settings token presence resolved for enterprise_code=%s token_present=%s",
+        resolved_enterprise.enterprise_code if resolved_enterprise is not None else None,
+        token_present,
+    )
 
     return BusinessSettingsVM(
         resolution_status=resolution_status,
         resolution_message=resolution_message,
         resolved_enterprise_code=resolved.enterprise_code if resolved else None,
         resolved_enterprise_name=resolved.enterprise_name if resolved else None,
+        token_present=token_present,
         business_candidates=_build_business_candidates_vm(candidates),
         enterprise_options=_build_business_enterprise_options_vm(all_enterprises),
         writable_supported=True,
@@ -1901,6 +1827,8 @@ async def update_business_settings_master_scope(
         payload.weekly_salesdrive_enterprise_code_override,
         payload.business_enterprise_code,
     )
+    row.business_stock_enabled = payload.business_stock_enabled
+    row.business_stock_interval_seconds = payload.business_stock_interval_seconds
     row.biotus_enable_unhandled_fallback = payload.biotus_enable_unhandled_fallback
     row.biotus_unhandled_order_timeout_minutes = payload.biotus_unhandled_order_timeout_minutes
     row.biotus_fallback_additional_status_ids = list(payload.biotus_fallback_additional_status_ids)
@@ -1915,6 +1843,44 @@ async def update_business_settings_master_scope(
     row.master_daily_publish_limit = payload.master_daily_publish_limit
     row.master_archive_enabled = payload.master_archive_enabled
     row.master_archive_every_minutes = payload.master_archive_every_minutes
+
+    await db.commit()
+    return await _build_business_settings_vm(db)
+
+
+@router.put(
+    "/business/settings/enterprise-operational-scope",
+    response_model=BusinessSettingsVM,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_settings_enterprise_operational_scope(
+    payload: BusinessEnterpriseOperationalFieldsUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    all_enterprises = await _load_all_enterprises(db)
+    business_settings_row = await _load_business_settings_row(db)
+    enterprise_lookup = _enterprise_lookup_by_code(all_enterprises)
+    business_candidates = _filter_business_candidates(all_enterprises)
+
+    enterprise = _resolve_business_enterprise_for_operational_write(
+        business_settings_row=business_settings_row,
+        business_candidates=business_candidates,
+        enterprise_lookup=enterprise_lookup,
+    )
+    business_settings_logger.info(
+        "Business Settings token update received for enterprise_code=%s token_present=%s",
+        enterprise.enterprise_code,
+        bool(payload.token),
+    )
+
+    enterprise.branch_id = payload.branch_id
+    enterprise.tabletki_login = _normalize_optional_enterprise_text(payload.tabletki_login)
+    enterprise.tabletki_password = _normalize_optional_enterprise_text(payload.tabletki_password)
+    if payload.token is not None:
+        enterprise.token = _normalize_optional_enterprise_text(payload.token)
+    enterprise.order_fetcher = bool(payload.order_fetcher)
+    enterprise.auto_confirm = bool(payload.auto_confirm)
+    enterprise.stock_correction = bool(payload.stock_correction)
 
     await db.commit()
     return await _build_business_settings_vm(db)
