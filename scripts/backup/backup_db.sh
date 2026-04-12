@@ -18,7 +18,7 @@ cleanup() {
 }
 
 trap cleanup EXIT
-trap 'log "ERROR: backup failed"; exit 1' ERR
+trap 'python3 /root/inventory/scripts/backup/notify_backup.py error "backup failed"; exit 1' ERR
 
 mkdir -p "${BACKUP_DIR}"
 
@@ -40,3 +40,6 @@ else
 fi
 
 log "Backup finished successfully"
+
+python3 /root/inventory/scripts/backup/upload_to_gdrive.py "${BACKUP_FILE}" || true
+python3 /root/inventory/scripts/backup/notify_backup.py success "${BACKUP_FILE}" || true
