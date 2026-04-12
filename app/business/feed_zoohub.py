@@ -21,6 +21,8 @@ from app.services.notification_service import send_notification
 # Excel
 from openpyxl import load_workbook
 
+from app.core.paths import STATE_CACHE_DIR
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ D10_HEADER_SEARCH_MAX_ROWS = 20
 
 # Кэш/стейт (для дельты и drop-цен)
 # Можно переопределить env: D10_STATE_DIR=/path/to/state
-DEFAULT_STATE_DIR = Path(os.getenv("D10_STATE_DIR") or "state_cache")
+DEFAULT_STATE_DIR = Path(os.getenv("D10_STATE_DIR") or STATE_CACHE_DIR)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

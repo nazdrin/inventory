@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 import httpx
 from sqlalchemy import text
 
+from app.core.paths import STATE_CACHE_DIR
 from app.database import get_async_db
 from app.services.notification_service import send_notification
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 D12_CODE_DEFAULT = "D12"
 
 # Кэш дельты каталога
-DEFAULT_STATE_DIR = Path(os.getenv("D12_STATE_DIR") or "state_cache")
+DEFAULT_STATE_DIR = Path(os.getenv("D12_STATE_DIR") or STATE_CACHE_DIR)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

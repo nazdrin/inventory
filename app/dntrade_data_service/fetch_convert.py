@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 import aiohttp
 from dotenv import load_dotenv
 
+from app.core.paths import STATE_CACHE_DIR
 from app.dntrade_data_service.client import DEFAULT_LIMIT, fetch_products_page
 from app.dntrade_data_service.runtime import (
     fetch_enterprise_settings,
@@ -28,7 +29,7 @@ MAX_REPEAT_PAGES = int(os.getenv("DNTRADE_CATALOG_MAX_REPEAT_PAGES", "3"))
 INCREMENTAL_ENABLED = (os.getenv("DNTRADE_CATALOG_INCREMENTAL_ENABLED", "1") or "").strip().lower() in {"1", "true", "yes", "on"}
 DELTA_SAFETY_WINDOW_MIN = int(os.getenv("DNTRADE_CATALOG_DELTA_SAFETY_WINDOW_MIN", "10"))
 FULL_SYNC_MAX_AGE_HOURS = int(os.getenv("DNTRADE_CATALOG_FULL_SYNC_MAX_AGE_HOURS", "24"))
-STATE_DIR = Path(os.getenv("DNTRADE_STATE_DIR", "state_cache"))
+STATE_DIR = Path(os.getenv("DNTRADE_STATE_DIR") or STATE_CACHE_DIR)
 logger = logging.getLogger(__name__)
 
 

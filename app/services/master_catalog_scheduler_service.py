@@ -13,6 +13,7 @@ import fcntl
 from zoneinfo import ZoneInfo
 
 from app.business.master_catalog_orchestrator import run_master_catalog_orchestrator
+from app.core.paths import STATE_CACHE_DIR
 from app.services.master_business_settings_resolver import (
     MasterBusinessSettingsSnapshot,
     load_master_business_settings_snapshot,
@@ -24,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("master_catalog_scheduler")
 
 KYIV_TZ = ZoneInfo(os.getenv("MASTER_SCHEDULER_TIMEZONE", "Europe/Kiev"))
-STATE_DIR = Path(os.getenv("MASTER_SCHEDULER_STATE_DIR", "state_cache"))
+STATE_DIR = Path(os.getenv("MASTER_SCHEDULER_STATE_DIR") or STATE_CACHE_DIR)
 STATE_PATH = STATE_DIR / "master_catalog_scheduler_state.json"
 LOCK_PATH = STATE_DIR / "master_catalog_scheduler.lock"
 FIRE_WINDOW_SEC = int(os.getenv("MASTER_SCHEDULER_FIRE_WINDOW_SEC", "90"))

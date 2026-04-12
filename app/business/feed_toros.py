@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from sqlalchemy import text
 
+from app.core.paths import STATE_CACHE_DIR
 from app.database import get_async_db
 from app.services.notification_service import send_notification
 
@@ -33,7 +34,7 @@ D11_CODE_DEFAULT = "D11"
 
 # Кэш/стейт (для дельты + цен)
 # Можно переопределить env: D11_STATE_DIR=/path/to/state
-DEFAULT_STATE_DIR = Path(os.getenv("D11_STATE_DIR") or "state_cache")
+DEFAULT_STATE_DIR = Path(os.getenv("D11_STATE_DIR") or STATE_CACHE_DIR)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

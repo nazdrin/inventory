@@ -25,6 +25,8 @@ import requests
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout
 
+from app.core.paths import TEMP_DIR
+
 from sqlalchemy.future import select
 from app.database import get_async_db, EnterpriseSettings
 from app.models import MappingBranch
@@ -413,7 +415,7 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
         catalog = transform_catalog(goods, logger)
 
         if file_type == "catalog":
-            out_dir = f"temp/{enterprise_code}"
+            out_dir = str(TEMP_DIR / str(enterprise_code))
             ensure_dir(out_dir)
             final = os.path.join(out_dir, "catalog.json")
             with open(final, "w", encoding="utf-8") as f:
@@ -430,7 +432,7 @@ async def run_service(enterprise_code: str, file_type: str) -> None:
         # 3) Сборка stock с ценой из каталога (клиника 2)
         stock = build_stock(branches, goods, qty_by_good, PREFERRED_CLINIC_ID, logger)
 
-        out_dir = f"temp/{enterprise_code}"
+        out_dir = str(TEMP_DIR / str(enterprise_code))
         ensure_dir(out_dir)
         final = os.path.join(out_dir, "stock.json")
         with open(final, "w", encoding="utf-8") as f:

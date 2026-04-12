@@ -128,6 +128,7 @@ def save_to_json(data, enterprise_code, file_type):
     
 def save_raw_input(data, enterprise_code):
     try:
+        # TODO(runtime): replace cwd-dependent path with BASE_DIR-based path
         raw_dir = os.path.join(os.getcwd(), "input_raw", str(enterprise_code))
         os.makedirs(raw_dir, exist_ok=True)
         file_path = os.path.join(raw_dir, "raw_catalog.json")
