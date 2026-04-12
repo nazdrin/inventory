@@ -24,7 +24,7 @@ mkdir -p "${BACKUP_DIR}"
 
 log "Starting PostgreSQL backup for database ${DB_NAME}"
 
-pg_dump "${DB_NAME}" | gzip > "${TMP_FILE}"
+pg_dump -U postgres "${DB_NAME}" | gzip > "${TMP_FILE}"
 mv "${TMP_FILE}" "${BACKUP_FILE}"
 
 log "Backup created: ${BACKUP_FILE}"
