@@ -1,49 +1,210 @@
-# Backup and Restore
+# Backup And Restore
+
+## Purpose
+
+Зафиксировать текущий backup/restore flow проекта на основе реальных shell-скриптов и existing production docs.
+
+## Scope
+
+Документ покрывает:
+
+- локальный PostgreSQL backup;
+- retention;
+- optional offsite copy;
+- Google Drive upload hook;
+- notification hook;
+- restore flow и базовую проверку результата.
+
+Документ не покрывает:
+
+- server timer/unit configuration;
+- политику disaster recovery за пределами этих скриптов;
+- backup других артефактов кроме PostgreSQL dump.
+
+## High-level Overview
+
+Текущий backup flow реализован в [scripts/backup/backup_db.sh](/Users/dmitrijnazdrin/inventory_service_1/scripts/backup/backup_db.sh):
+
+1. создаёт gzip-compressed dump базы `inventory_db`
+2. сохраняет файл в `/root/inventory/backups`
+3. удаляет локальные backup-файлы старше 7 дней
+4. при наличии remote env выполняет `scp` offsite copy
+5. пытается загрузить backup в Google Drive
+6. пытается отправить notification о результате
+
+Restore flow реализован в [scripts/backup/restore_db.sh](/Users/dmitrijnazdrin/inventory_service_1/scripts/backup/restore_db.sh).
 
 ## Backup
 
-- Основной backup создаётся скриптом `/root/inventory/scripts/backup/backup_db.sh`.
-- Формат файла: `backup_YYYY-MM-DD_HH-MM-SS.sql.gz`.
-- Локальное хранилище: `/root/inventory/backups`.
-- Источник данных: PostgreSQL database `inventory_db`.
-- Схема: `pg_dump -> gzip -> local file -> optional scp offsite copy`.
-- Ротация: локальные backup-файлы старше 7 дней удаляются автоматически.
+### Main script
+
+```bash
+cd /root/inventory
+chmod +x scripts/backup/backup_db.sh
+./scripts/backup/backup_db.sh
+```
+
+Подтверждённые runtime параметры из скрипта:
+
+- backup directory: `/root/inventory/backups`
+- DB name: `inventory_db`
+- filename format: `backup_YYYY-MM-DD_HH-MM-SS.sql.gz`
+- retention: 7 дней
+
+### Actual flow
+
+Скрипт делает:
+
+```bash
+pg_dump -U postgres inventory_db | gzip > /root/inventory/backups/backup_YYYY-MM-DD_HH-MM-SS.sql.gz
+```
+
+После успешного создания:
+
+- удаляет старые `backup_*.sql.gz` старше `RETENTION_DAYS=7`
+- при заданных `BACKUP_REMOTE_HOST` и `BACKUP_REMOTE_PATH` вызывает `scp`
+- вызывает `upload_to_gdrive.py`
+- вызывает `notify_backup.py success <file>`
+
+Если backup падает:
+
+- trap на `ERR` вызывает `notify_backup.py error "backup failed"`
+
+### Offsite copy
+
+Offsite copy выполняется только если заданы обе переменные:
+
+- `BACKUP_REMOTE_HOST`
+- `BACKUP_REMOTE_PATH`
+
+В этом случае используется:
+
+```bash
+scp "${BACKUP_FILE}" "${BACKUP_REMOTE_HOST}:${BACKUP_REMOTE_PATH}/"
+```
+
+Если хотя бы одна переменная не задана, offsite copy пропускается.
+
+### Google Drive upload
+
+После локального backup скрипт пытается выполнить:
+
+```bash
+/root/inventory/.venv/bin/python /root/inventory/scripts/backup/upload_to_gdrive.py "${BACKUP_FILE}" || true
+```
+
+Подтверждённые условия для upload:
+
+- должен существовать файл `google_set/credentials.json`
+- должен быть задан `GOOGLE_DRIVE_BACKUP_FOLDER_ID`
+- используется service account credentials
+- scope: `https://www.googleapis.com/auth/drive.file`
+
+Operational note:
+
+- Google Drive upload не ломает backup whole-flow, потому что вызов завершается с `|| true`.
+
+### Notifications
+
+Скрипт уведомлений:
+
+- success: `notify_backup.py success /path/to/file`
+- error: `notify_backup.py error "message"`
+
+Success notification содержит:
+
+- имя файла
+- размер файла в MB
+
+Error notification содержит:
+
+- текст ошибки
+
+Operational note:
+
+- notification attempt тоже не ломает already-created backup on success path.
 
 ## Restore
 
-- Restore выполняется скриптом `/root/inventory/scripts/backup/restore_db.sh`.
-- Поддерживаются файлы `.sql.gz` и `.sql`.
-- Целевая БД передаётся вторым аргументом.
-- Если БД не существует, скрипт создаёт её через `createdb`.
-- Если БД уже существует, restore выполняется в существующую БД.
-
-Пример:
+### Main script
 
 ```bash
-./scripts/backup/restore_db.sh /root/inventory/backups/backup_2026-04-11_03-00-00.sql.gz test_restore
+cd /root/inventory
+chmod +x scripts/backup/restore_db.sh
+./scripts/backup/restore_db.sh /root/inventory/backups/backup_YYYY-MM-DD_HH-MM-SS.sql.gz test_restore
 ```
 
-## Где хранится
+Подтверждённое поведение:
 
-- Локально: `/root/inventory/backups`
-- Offsite: `${BACKUP_REMOTE_HOST}:${BACKUP_REMOTE_PATH}` при заданных env-переменных
+- принимает ровно два аргумента: backup path и target DB
+- поддерживает `.sql.gz` и `.sql`
+- если target DB не существует, создаёт её через `createdb`
+- если target DB уже существует, выполняет restore в существующую БД
 
-## Риски
+Restore commands by format:
 
-- Restore в существующую БД может перезаписать данные и привести к конфликтам объектов.
-- Backup не защищает от логических ошибок внутри уже сохранённых данных.
-- Offsite copy зависит от доступности сети, SSH-доступа и прав на удалённый каталог.
-- При restore в production БД требуется отдельное окно обслуживания и подтверждённый rollback plan.
+```bash
+gunzip -c backup.sql.gz | psql -U postgres -d target_db
+psql -U postgres -d target_db < backup.sql
+```
 
-## Как проверить
+## Verification
 
-1. Запустить backup-скрипт вручную и убедиться, что новый файл появился в `/root/inventory/backups`.
-2. Проверить, что backup открывается: `gunzip -c backup.sql.gz | head`.
-3. Восстановить backup в тестовую БД, например `test_restore`.
-4. Проверить список таблиц:
+После backup:
+
+1. проверить наличие нового файла в `/root/inventory/backups`
+2. проверить, что dump читается:
+
+```bash
+gunzip -c /root/inventory/backups/backup_YYYY-MM-DD_HH-MM-SS.sql.gz | head
+```
+
+3. если используется offsite copy, проверить наличие файла на удалённом хосте
+4. если используется GDrive upload, проверить наличие файла в backup folder Google Drive
+
+После restore:
 
 ```bash
 psql -U postgres -d test_restore -c "\dt"
 ```
 
-5. При использовании offsite backup проверить наличие файла на удалённом хосте.
+Дополнительно можно проверить размер и список таблиц:
+
+```bash
+psql -U postgres -d test_restore -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
+```
+
+## Production Restore Warning
+
+Production restore - high-risk operation.
+
+Минимальный безопасный порядок:
+
+1. Остановить scheduler-ы и backend services, которые могут писать в БД.
+2. Проверить отсутствие активных процессов записи в БД.
+3. Сделать дополнительный свежий backup перед restore.
+4. Выполнить restore только после этого.
+5. Проверить таблицы и базовую доступность восстановленной БД.
+6. Включать сервисы поэтапно: сначала backend/API, затем scheduler-ы по одному.
+
+## Source Of Truth
+
+- [scripts/backup/backup_db.sh](/Users/dmitrijnazdrin/inventory_service_1/scripts/backup/backup_db.sh)
+- [scripts/backup/restore_db.sh](/Users/dmitrijnazdrin/inventory_service_1/scripts/backup/restore_db.sh)
+- [scripts/backup/upload_to_gdrive.py](/Users/dmitrijnazdrin/inventory_service_1/scripts/backup/upload_to_gdrive.py)
+- [scripts/backup/notify_backup.py](/Users/dmitrijnazdrin/inventory_service_1/scripts/backup/notify_backup.py)
+- [README_PROD.md](/Users/dmitrijnazdrin/inventory_service_1/README_PROD.md)
+
+## Operational Notes
+
+- `README_PROD.md` говорит о nightly backup через `systemd timer` в `03:00`, но timer/unit files отсутствуют в repo. Это external server truth.
+- Скрипты жёстко ожидают production-like layout `/root/inventory/...`.
+- `PGUSER` используется только в restore script; backup script жёстко использует `-U postgres`.
+
+## Known Limitations / Risks
+
+- Restore в существующую БД может привести к конфликтам и перезаписи данных.
+- Backup не покрывает application files, `.env`, runtime state или external services.
+- Offsite copy зависит от SSH/network availability.
+- Google Drive upload зависит от credentials и `GOOGLE_DRIVE_BACKUP_FOLDER_ID`.
+- Failure в GDrive upload или notification не фейлит успешный local backup, поэтому эти шаги нужно проверять отдельно.
