@@ -7,11 +7,18 @@ const Login = ({ setAuthUser }) => {
     const [login, setLogin] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const navigate = useNavigate();
 
     const handleLogin = async (e) => {
         e.preventDefault();
-        console.log("Отправка данных на сервер:", { developer_login: login, developer_password: password });
+        if (isSubmitting) {
+            return;
+        }
+
+        setError("");
+        setIsSubmitting(true);
 
         try {
             const response = await axios.post(`${API_BASE_URL}/login/`, {
@@ -19,21 +26,19 @@ const Login = ({ setAuthUser }) => {
                 developer_password: password
             });
 
-            console.log("Успешный вход:", response.data);
-
             // Сохранение токена и логина в localStorage
             localStorage.setItem("token", response.data.access_token);
             localStorage.setItem("user_login", login); // 🔹 Теперь логин сохраняется!
 
             // Устанавливаем пользователя в состояние
-            setAuthUser(response.data);
+            setAuthUser({
+                developer_login: login,
+            });
 
             // Перенаправление после входа
             navigate("/developer");
 
         } catch (err) {
-            console.error("Ошибка запроса:", err);
-
             // Обрабатываем ошибки
             if (err.response) {
                 if (err.response.status === 401) {
@@ -44,6 +49,8 @@ const Login = ({ setAuthUser }) => {
             } else {
                 setError("Не удалось подключиться к серверу.");
             }
+        } finally {
+            setIsSubmitting(false);
         }
     };
     return (
@@ -69,12 +76,15 @@ const Login = ({ setAuthUser }) => {
 
                 <form onSubmit={handleLogin}>
                     {/* Поле логина */}
-                    <label style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Логин:</label>
+                    <label htmlFor="login" style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Логин:</label>
                     <input
+                        id="login"
+                        name="username"
                         type="text"
                         value={login}
                         onChange={(e) => setLogin(e.target.value)}
                         placeholder="Введите логин"
+                        autoComplete="username"
                         required
                         style={{
                             width: '100%',
@@ -86,38 +96,66 @@ const Login = ({ setAuthUser }) => {
                     />
 
                     {/* Поле пароля */}
-                    <label style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Пароль:</label>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Введите пароль"
-                        required
-                        style={{
-                            width: '100%',
-                            padding: '10px',
-                            marginBottom: '15px',
-                            borderRadius: '5px',
-                            border: '1px solid #ccc'
-                        }}
-                    />
+                    <label htmlFor="password" style={{ display: 'block', textAlign: 'left', marginBottom: '5px' }}>Пароль:</label>
+                    <div style={{ position: "relative", marginBottom: "15px", width: "100%" }}>
+                        <input
+                            id="password"
+                            name="password"
+                            type={showPassword ? "text" : "password"}
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="Введите пароль"
+                            autoComplete="current-password"
+                            required
+                            style={{
+                                width: '100%',
+                                padding: '10px',
+                                paddingRight: '88px',
+                                boxSizing: 'border-box',
+                                borderRadius: '5px',
+                                border: '1px solid #ccc'
+                            }}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowPassword((prev) => !prev)}
+                            aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                            aria-pressed={showPassword}
+                            style={{
+                                position: "absolute",
+                                top: "50%",
+                                right: "10px",
+                                transform: "translateY(-50%)",
+                                background: "transparent",
+                                border: "none",
+                                cursor: "pointer",
+                                color: "#2563eb",
+                                fontWeight: "bold",
+                                padding: 0
+                            }}
+                        >
+                            {showPassword ? "Скрыть" : "Показать"}
+                        </button>
+                    </div>
 
                     {/* Кнопка Войти */}
                     <button
                         type="submit"
+                        disabled={isSubmitting}
                         style={{
                             width: '100%',
                             padding: '10px',
-                            backgroundColor: '#ffc107',
+                            backgroundColor: isSubmitting ? '#f2cc63' : '#ffc107',
                             color: 'black',
                             border: 'none',
                             borderRadius: '5px',
-                            cursor: 'pointer',
+                            cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                            opacity: isSubmitting ? 0.8 : 1,
                             fontWeight: 'bold',
                             marginTop: '10px'
                         }}
                     >
-                        Войти
+                        {isSubmitting ? "Входим..." : "Войти"}
                     </button>
                 </form>
             </div>

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from sqlalchemy import select, text
 
-from app.business.order_sender import SUPPLIERLIST_MAP
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.database import get_async_db
 from app.models import RawSupplierFeedProduct
 
@@ -53,15 +53,12 @@ def _normalize_string(value: Any) -> Optional[str]:
     return text_value or None
 
 
-def _extract_supplier_id() -> int:
-    supplier_token = SUPPLIERLIST_MAP.get(D6_CODE)
-    if not supplier_token:
-        raise RuntimeError(f"Не найден supplier mapping для {D6_CODE}")
-
-    match = re.search(r"(\d+)$", supplier_token)
-    if not match:
-        raise RuntimeError(f"Не удалось извлечь supplier_id из значения {supplier_token!r} для {D6_CODE}")
-    return int(match.group(1))
+async def _extract_supplier_id() -> int:
+    async with get_async_db(commit_on_exit=False) as session:
+        supplier_id = await resolve_supplier_id_by_code(session, D6_CODE)
+    if supplier_id is None:
+        raise RuntimeError(f"Не найден supplier_id для {D6_CODE}")
+    return supplier_id
 
 
 async def _get_feed_url_by_code(code: str) -> Optional[str]:
@@ -231,7 +228,7 @@ def _parse_item(item: ET.Element, supplier_id: int, stats: LoaderStats) -> Optio
 
 async def load_d6_raw_supplier_feed(limit: int = 0) -> Dict[str, Any]:
     stats = LoaderStats()
-    supplier_id = _extract_supplier_id()
+    supplier_id = await _extract_supplier_id()
     logger.info("Запуск D6 master feed loader, supplier_id=%s", supplier_id)
 
     root = await _load_feed_root(code=D6_CODE)

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 // import Navbar from "./components/Navbar";
 import DeveloperPanel from "./pages/DeveloperPanel";
@@ -6,12 +6,58 @@ import EnterprisePanel from "./pages/EnterprisePanel";
 import MappingBranchPage from "./pages/MappingBranchPage";
 import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
 import FormatsPage from "./pages/FormatsPage";
+import SuppliersPage from "./pages/SuppliersPage";
+import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 
 import Login from "./pages/Login";
 
+const clearStoredAuth = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user_login");
+};
+
+const decodeJwtPayload = (token) => {
+    try {
+        const [, payload] = token.split(".");
+        if (!payload) {
+            return null;
+        }
+
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
+        const decoded = atob(padded);
+        return JSON.parse(decoded);
+    } catch (error) {
+        return null;
+    }
+};
+
+const getStoredAuthUser = () => {
+    const token = localStorage.getItem("token");
+    const payload = token ? decodeJwtPayload(token) : null;
+    const developerLogin = payload?.sub || localStorage.getItem("user_login");
+
+    if (!token || !developerLogin || !payload?.exp) {
+        clearStoredAuth();
+        return null;
+    }
+
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    if (payload.exp <= nowInSeconds) {
+        clearStoredAuth();
+        return null;
+    }
+
+    localStorage.setItem("user_login", developerLogin);
+    return { developer_login: developerLogin };
+};
+
 const App = () => {
-    const [authUser, setAuthUser] = useState(null);
+    const [authUser, setAuthUser] = useState(() => getStoredAuthUser());
     const navigate = useNavigate();
+    const loginElement = useMemo(() => {
+        return authUser ? <Navigate to="/developer" replace /> : <Login setAuthUser={setAuthUser} />;
+    }, [authUser]);
 
     const PrivateRoute = ({ element }) => {
         return authUser ? element : <Navigate to="/" />;
@@ -70,9 +116,9 @@ const App = () => {
                                 cursor: "pointer",
                                 borderRadius: "5px",
                             }}
-                            onClick={() => navigate("/dropship-enterprises")}
+                            onClick={() => navigate("/suppliers")}
                         >
-                            Dropship Enterprises
+                            Suppliers
                         </button>
                         <button
                             style={{
@@ -101,11 +147,26 @@ const App = () => {
                         >
                             Formats
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/business")}
+                        >
+                            Business Settings
+                        </button>
                     </>
                 )}
             </div>
             <Routes>
-                <Route path="/" element={<Login setAuthUser={setAuthUser} />} />
+                <Route path="/" element={loginElement} />
+                <Route path="/login" element={loginElement} />
                 <Route
                     path="/developer"
                     element={<PrivateRoute element={<DeveloperPanel authUser={authUser} />} />}
@@ -113,6 +174,10 @@ const App = () => {
                 <Route
                     path="/enterprise"
                     element={<PrivateRoute element={<EnterprisePanel authUser={authUser} />} />}
+                />
+                <Route
+                    path="/suppliers"
+                    element={<PrivateRoute element={<SuppliersPage authUser={authUser} />} />}
                 />
                 <Route
                     path="/dropship-enterprises"
@@ -125,6 +190,10 @@ const App = () => {
                 <Route
                     path="/formats"
                     element={<PrivateRoute element={<FormatsPage />} />}
+                />
+                <Route
+                    path="/business"
+                    element={<PrivateRoute element={<BusinessSettingsPage authUser={authUser} />} />}
                 />
             </Routes>
         </div>

@@ -134,6 +134,170 @@ class EnterpriseSettings(Base, TimestampMixin):
         Index("ix_enterprise_settings_single_store", "single_store"),
     )
 
+
+class BusinessSettings(Base, TimestampMixin):
+    __tablename__ = "business_settings"
+
+    id = Column(SmallInteger, primary_key=True, server_default=text("1"))
+
+    business_enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    daily_publish_enterprise_code_override = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=True,
+    )
+    weekly_salesdrive_enterprise_code_override = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=True,
+    )
+    biotus_enterprise_code_override = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=True,
+    )
+    biotus_enable_unhandled_fallback = Column(Boolean, nullable=False, server_default=text("true"))
+    biotus_unhandled_order_timeout_minutes = Column(Integer, nullable=False, server_default=text("60"))
+    biotus_fallback_additional_status_ids = Column(
+        ARRAY(Integer),
+        nullable=False,
+        server_default=text("ARRAY[9,19,18,20]"),
+    )
+    biotus_duplicate_status_id = Column(Integer, nullable=False, server_default=text("20"))
+
+    master_weekly_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    master_weekly_day = Column(String(3), nullable=False, server_default=text("'SUN'"))
+    master_weekly_hour = Column(SmallInteger, nullable=False, server_default=text("3"))
+    master_weekly_minute = Column(SmallInteger, nullable=False, server_default=text("0"))
+
+    master_daily_publish_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    master_daily_publish_hour = Column(SmallInteger, nullable=False, server_default=text("9"))
+    master_daily_publish_minute = Column(SmallInteger, nullable=False, server_default=text("0"))
+    master_daily_publish_limit = Column(Integer, nullable=False, server_default=text("0"))
+
+    master_archive_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    master_archive_every_minutes = Column(Integer, nullable=False, server_default=text("60"))
+    business_stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    business_stock_interval_seconds = Column(Integer, nullable=False, server_default=text("60"))
+    pricing_base_thr = Column(Numeric(8, 6), nullable=False, server_default=text("0.08"))
+    pricing_price_band_low_max = Column(Numeric(12, 2), nullable=False, server_default=text("100"))
+    pricing_price_band_mid_max = Column(Numeric(12, 2), nullable=False, server_default=text("400"))
+    pricing_thr_add_low_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_thr_add_mid_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_thr_add_high_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_no_comp_add_low_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_no_comp_add_mid_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_no_comp_add_high_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+    pricing_comp_discount_share = Column(Numeric(8, 6), nullable=False, server_default=text("0.01"))
+    pricing_comp_delta_min_uah = Column(Numeric(12, 2), nullable=False, server_default=text("2"))
+    pricing_comp_delta_max_uah = Column(Numeric(12, 2), nullable=False, server_default=text("15"))
+    pricing_jitter_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    pricing_jitter_step_uah = Column(Numeric(12, 2), nullable=False, server_default=text("0.5"))
+    pricing_jitter_min_uah = Column(Numeric(12, 2), nullable=False, server_default=text("-1.0"))
+    pricing_jitter_max_uah = Column(Numeric(12, 2), nullable=False, server_default=text("1.0"))
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_business_settings_singleton_id"),
+        CheckConstraint(
+            "master_weekly_day IN ('MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN')",
+            name="ck_business_settings_weekly_day",
+        ),
+        CheckConstraint("master_weekly_hour BETWEEN 0 AND 23", name="ck_business_settings_weekly_hour"),
+        CheckConstraint("master_weekly_minute BETWEEN 0 AND 59", name="ck_business_settings_weekly_minute"),
+        CheckConstraint(
+            "master_daily_publish_hour BETWEEN 0 AND 23",
+            name="ck_business_settings_daily_publish_hour",
+        ),
+        CheckConstraint(
+            "master_daily_publish_minute BETWEEN 0 AND 59",
+            name="ck_business_settings_daily_publish_minute",
+        ),
+        CheckConstraint(
+            "master_daily_publish_limit >= 0",
+            name="ck_business_settings_daily_publish_limit_non_negative",
+        ),
+        CheckConstraint(
+            "master_archive_every_minutes >= 1",
+            name="ck_business_settings_archive_every_minutes_positive",
+        ),
+        CheckConstraint(
+            "business_stock_interval_seconds >= 1",
+            name="ck_business_settings_stock_interval_positive",
+        ),
+        CheckConstraint(
+            "biotus_unhandled_order_timeout_minutes >= 0",
+            name="ck_business_settings_biotus_timeout_non_negative",
+        ),
+        CheckConstraint(
+            "biotus_duplicate_status_id >= 1",
+            name="ck_business_settings_biotus_duplicate_status_positive",
+        ),
+        CheckConstraint(
+            "coalesce(array_length(biotus_fallback_additional_status_ids, 1), 0) >= 1",
+            name="ck_business_settings_biotus_additional_status_ids_non_empty",
+        ),
+        CheckConstraint(
+            "pricing_base_thr >= 0",
+            name="ck_business_settings_pricing_base_thr_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_price_band_low_max >= 0",
+            name="ck_business_settings_pricing_band_low_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_price_band_mid_max >= pricing_price_band_low_max",
+            name="ck_business_settings_pricing_band_mid_ge_low",
+        ),
+        CheckConstraint(
+            "pricing_thr_add_low_uah >= 0",
+            name="ck_business_settings_pricing_thr_add_low_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_thr_add_mid_uah >= 0",
+            name="ck_business_settings_pricing_thr_add_mid_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_thr_add_high_uah >= 0",
+            name="ck_business_settings_pricing_thr_add_high_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_no_comp_add_low_uah >= 0",
+            name="ck_business_settings_pricing_no_comp_add_low_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_no_comp_add_mid_uah >= 0",
+            name="ck_business_settings_pricing_no_comp_add_mid_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_no_comp_add_high_uah >= 0",
+            name="ck_business_settings_pricing_no_comp_add_high_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_comp_discount_share >= 0 AND pricing_comp_discount_share < 1",
+            name="ck_business_settings_pricing_comp_discount_share_range",
+        ),
+        CheckConstraint(
+            "pricing_comp_delta_min_uah >= 0",
+            name="ck_business_settings_pricing_comp_delta_min_non_negative",
+        ),
+        CheckConstraint(
+            "pricing_comp_delta_max_uah >= pricing_comp_delta_min_uah",
+            name="ck_business_settings_pricing_comp_delta_max_ge_min",
+        ),
+        CheckConstraint(
+            "pricing_jitter_step_uah > 0",
+            name="ck_business_settings_pricing_jitter_step_positive",
+        ),
+        CheckConstraint(
+            "pricing_jitter_max_uah >= pricing_jitter_min_uah",
+            name="ck_business_settings_pricing_jitter_max_ge_min",
+        ),
+    )
+
 # Сопоставление аптек 
 class MappingBranch(Base):
     __tablename__ = "mapping_branch"
@@ -231,6 +395,17 @@ class DropshipEnterprise(Base, TimestampMixin):
     feed_url = Column(String, nullable=True, doc="Ссылка на прайс-фид")
     gdrive_folder = Column(String, nullable=True, doc="Папка на Google Drive")
     city = Column(String, nullable=True, doc="Город")
+    salesdrive_supplier_id = Column(Integer, nullable=True, doc="SalesDrive supplierlist numeric id")
+    biotus_orders_enabled = Column(Boolean, nullable=False, server_default=text("false"),
+                                   doc="Участвует в Biotus order check main flow")
+    np_fulfillment_enabled = Column(Boolean, nullable=False, server_default=text("false"),
+                                    doc="Использовать fulfillment sender address для NP")
+    schedule_enabled = Column(Boolean, nullable=False, server_default=text("false"),
+                              doc="Включить окно недоступности поставщика")
+    block_start_day = Column(SmallInteger, nullable=True, doc="День начала окна блокировки (1=Mon ... 7=Sun)")
+    block_start_time = Column(String(5), nullable=True, doc="Время начала окна блокировки (HH:MM)")
+    block_end_day = Column(SmallInteger, nullable=True, doc="День конца окна блокировки (1=Mon ... 7=Sun)")
+    block_end_time = Column(String(5), nullable=True, doc="Время конца окна блокировки (HH:MM)")
 
     # Флаги — NOT NULL + дефолт на уровне БД (устойчиво к «пустым» вставкам)
     is_rrp = Column(Boolean, nullable=False, server_default=text("false"), doc="Флаг — есть ли РРЦ")

@@ -1,15 +1,12 @@
 import axios from "axios";
 import { API_BASE_URL } from "../config"; // Импортируем базовый URL из config.js
 
-// Функция для получения токена из localStorage
-const getAuthToken = () => localStorage.getItem("token");
-
 // Конфиг для axios с заголовком Authorization
 const getAuthHeaders = () => {
     const token = localStorage.getItem("token");
 
     if (!token) {
-        window.location.href = "/login"; // Перенаправляем на страницу логина, если токена нет
+        window.location.href = "/"; // Перенаправляем на страницу логина, если токена нет
     }
 
     return {

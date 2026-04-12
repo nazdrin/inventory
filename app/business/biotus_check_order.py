@@ -12,7 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
-from app.models import EnterpriseSettings
+from app.models import EnterpriseSettings, DropshipEnterprise
+from app.services.master_business_settings_resolver import load_master_business_settings_snapshot
 from app.services.order_sender import send_orders_to_tabletki
 
 SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"
@@ -27,6 +28,9 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+_LAST_BIOTUS_SETTINGS_SIGNATURE: tuple[Any, ...] | None = None
 
 
 def _parse_salesdrive_dt(value: Any) -> Optional[datetime]:
@@ -44,6 +48,80 @@ def _parse_salesdrive_dt(value: Any) -> Optional[datetime]:
             except ValueError:
                 continue
     return None
+
+
+def _biotus_settings_signature(settings: Any) -> tuple[Any, ...]:
+    return (
+        settings.source,
+        settings.business_settings_exists,
+        settings.business_enterprise_code,
+        settings.biotus_enterprise_code_override,
+        settings.biotus_enterprise_code_effective,
+        settings.biotus_effective_enterprise_exists,
+        settings.biotus_inconsistency,
+    )
+
+
+def _log_biotus_settings_if_changed(settings: Any) -> None:
+    global _LAST_BIOTUS_SETTINGS_SIGNATURE
+    signature = _biotus_settings_signature(settings)
+    if signature == _LAST_BIOTUS_SETTINGS_SIGNATURE:
+        return
+
+    _LAST_BIOTUS_SETTINGS_SIGNATURE = signature
+    if settings.business_settings_exists:
+        logger.info(
+            "Biotus DB-first settings row found: primary=%s override=%s effective=%s",
+            settings.business_enterprise_code,
+            settings.biotus_enterprise_code_override,
+            settings.biotus_enterprise_code_effective,
+        )
+    else:
+        logger.info(
+            "Biotus settings fallback to env because business_settings row is missing: effective=%s",
+            settings.biotus_enterprise_code_effective,
+        )
+
+    if settings.biotus_enterprise_code_effective:
+        logger.info(
+            "Biotus effective enterprise resolved: %s",
+            settings.biotus_enterprise_code_effective,
+        )
+    if settings.biotus_inconsistency:
+        logger.warning("Biotus selector inconsistency: %s", settings.biotus_inconsistency)
+
+
+async def _resolve_biotus_enterprise_code(
+    explicit_enterprise: Optional[str] = None,
+    settings: Any | None = None,
+) -> Optional[str]:
+    explicit = str(explicit_enterprise or "").strip()
+    if explicit:
+        return explicit
+
+    resolved_settings = settings or await load_master_business_settings_snapshot()
+    _log_biotus_settings_if_changed(resolved_settings)
+
+    try:
+        enterprise_code = resolved_settings.resolve_biotus_enterprise()
+    except RuntimeError as exc:
+        logger.warning("Biotus selector inconsistency: %s", exc)
+        return None
+
+    if resolved_settings.business_settings_exists and not resolved_settings.biotus_effective_enterprise_exists:
+        logger.warning(
+            "Biotus selector inconsistency: enterprise not found for effective=%s",
+            enterprise_code,
+        )
+        return None
+
+    return enterprise_code
+
+
+async def _load_biotus_runtime_settings() -> Any:
+    settings = await load_master_business_settings_snapshot()
+    _log_biotus_settings_if_changed(settings)
+    return settings
 
 
 def _env_int(name: str, default: int) -> int:
@@ -149,6 +227,30 @@ def _resolve_allowed_supplier_ids(suppliers: Optional[str]) -> List[int]:
         "38;41",
     )
     return [38, 41]
+
+
+async def _load_biotus_enabled_supplier_ids(db: AsyncSession) -> List[int]:
+    result = await db.execute(
+        select(DropshipEnterprise.salesdrive_supplier_id)
+        .where(
+            DropshipEnterprise.biotus_orders_enabled.is_(True),
+            DropshipEnterprise.salesdrive_supplier_id.is_not(None),
+        )
+    )
+    values = result.scalars().all()
+    return [int(value) for value in values if value is not None]
+
+
+async def _load_np_fulfillment_supplier_ids(db: AsyncSession) -> List[int]:
+    result = await db.execute(
+        select(DropshipEnterprise.salesdrive_supplier_id)
+        .where(
+            DropshipEnterprise.np_fulfillment_enabled.is_(True),
+            DropshipEnterprise.salesdrive_supplier_id.is_not(None),
+        )
+    )
+    values = result.scalars().all()
+    return [int(value) for value in values if value is not None]
 
 
 def _seat_dimensions_cm(volume_m3: float) -> Tuple[int, int, int]:
@@ -792,11 +894,27 @@ async def process_biotus_orders(
     dry_run: bool = False,
     suppliers: Optional[str] = None,
 ) -> Dict[str, Any]:
+    settings = await _load_biotus_runtime_settings()
+
+    explicit_enterprise = str(enterprise_code or "").strip() or None
+    if explicit_enterprise:
+        enterprise_code = explicit_enterprise
+    else:
+        enterprise_code = await _resolve_biotus_enterprise_code(None, settings=settings)
     if not enterprise_code:
-        enterprise_code = _env_str("BIOTUS_ENTERPRISE_CODE", "2547")
+        logger.warning("Biotus run skipped: effective enterprise selector is not resolved")
+        return {
+            "status": "skipped",
+            "reason": "enterprise_not_resolved",
+        }
     async with get_async_db() as db:
         assert isinstance(db, AsyncSession)
         api_key = await _get_salesdrive_api_key(db, enterprise_code)
+        if suppliers is not None:
+            allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
+        else:
+            allowed_supplier_ids = await _load_biotus_enabled_supplier_ids(db)
+        fulfillment_supplier_ids = await _load_np_fulfillment_supplier_ids(db)
 
     tz_name = _env_str("BIOTUS_TZ", "Europe/Kyiv")
     kyiv_tz = ZoneInfo(tz_name)
@@ -809,17 +927,14 @@ async def process_biotus_orders(
     duplicate_marked = 0
     main_processed = 0
     np_api_key = _env_str("NP_API_KEY", "")
-    duplicate_status_id = _env_int("BIOTUS_DUPLICATE_STATUS_ID", DEFAULT_DUPLICATE_STATUS_ID)
-    fallback_enabled = _env_bool("BIOTUS_ENABLE_UNHANDLED_FALLBACK", True)
-    fallback_timeout_minutes = _env_int("BIOTUS_UNHANDLED_ORDER_TIMEOUT_MINUTES", 60)
-    fallback_additional_status_ids = _env_int_list(
-        "BIOTUS_FALLBACK_ADDITIONAL_STATUS_IDS",
-        DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS,
+    duplicate_status_id = int(settings.biotus_duplicate_status_id or DEFAULT_DUPLICATE_STATUS_ID)
+    fallback_enabled = bool(settings.biotus_enable_unhandled_fallback)
+    fallback_timeout_minutes = int(settings.biotus_unhandled_order_timeout_minutes)
+    fallback_additional_status_ids = list(
+        settings.biotus_fallback_additional_status_ids or DEFAULT_FALLBACK_ADDITIONAL_STATUS_IDS
     )
     tabletki_cancel_reason_default = _env_int("TABLETKI_CANCEL_REASON_DEFAULT", 18)
-    allowed_supplier_ids = _resolve_allowed_supplier_ids(suppliers)
     allowed_supplier_ids_set = set(allowed_supplier_ids)
-    fulfillment_supplier_ids = _env_comma_separated_ints("NP_FULFILLMENT_SUPPLIER_IDS")
     matched: List[Dict[str, Any]] = []
     unhandled_by_main: List[Dict[str, Any]] = []
     debug_samples: List[Dict[str, Any]] = []
@@ -1233,7 +1348,7 @@ def _parse_cli():
     p = argparse.ArgumentParser(description="Check orders in SalesDrive and update status")
     p.add_argument(
         "--enterprise-code",
-        default=_env_str("BIOTUS_ENTERPRISE_CODE", "2547"),
+        default=None,
         help="enterprise_code для token в EnterpriseSettings",
     )
     p.add_argument(

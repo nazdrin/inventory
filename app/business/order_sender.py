@@ -20,9 +20,9 @@ SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необх�
 # Импорт для cancelled-orders API
 from app.business.cancelled_orders_fetcher import get_cancelled_orders, acknowledge_cancelled_orders
 from app.business.supplier_identity import (
-    SUPPLIERLIST_MAP,
     get_supplier_display_name_by_code,
-    get_supplier_id_by_code,
+    resolve_supplier_id_by_code,
+    resolve_supplier_token_by_code,
 )
 
 # === Ваши модели (проверьте реальные имена/поля) ===
@@ -694,7 +694,7 @@ def _use_master_mapping_for_orders() -> bool:
 async def _fetch_sku_from_master_mapping(
     session: AsyncSession, goods_code: str, supplier_code: str
 ) -> Optional[str]:
-    supplier_id = get_supplier_id_by_code(supplier_code)
+    supplier_id = await resolve_supplier_id_by_code(session, supplier_code)
     if not supplier_id:
         return None
 
@@ -715,7 +715,7 @@ async def _fetch_sku_from_master_mapping(
 async def _fetch_barcode_and_supplier_code_master(
     session: AsyncSession, goods_code: str, supplier_code: str
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    supplier_id = get_supplier_id_by_code(supplier_code)
+    supplier_id = await resolve_supplier_id_by_code(session, supplier_code)
     if not supplier_id:
         return (None, None, None)
 
@@ -1356,7 +1356,7 @@ async def build_salesdrive_payload(
 
     supplierlist_val = ""
     if supplier_code:
-        supplierlist_val = SUPPLIERLIST_MAP.get(str(supplier_code), "")
+        supplierlist_val = (await resolve_supplier_token_by_code(session, str(supplier_code))) or ""
         if _is_d14_supplier(supplier_code):
             logger.info(
                 "SalesDrive supplier recognized as D14: supplier_code=%s supplierlist=%s",

@@ -1,48 +1,30 @@
 # Inventory Service
-# опотрные документы для рефакторинга ui
-  - docs/refactoring/22_ui_control_plane_refactor_plan.md
-  - docs/refactoring/23_settings_control_plane_matrix.md
-  - docs/refactoring/11_admin_settings_surface_audit.md
 
+Основной README для локальной разработки. Прод-операции вынесены в [README_PROD.md](/Users/dmitrijnazdrin/inventory_service_1/README_PROD.md).
 
+## Git workflow
 
-## Быстрые команды
+- Для commit и push в `develop`: `сделай git develop по правилам из AGENTS.md`
+- Для release merge `develop -> main`: `сделай merge main по правилам из AGENTS.md`
 
-- Выгрузка в `develop`:
- `сделай git develop по правилам из AGENTS.md`
-- Мердж в `main`: 
-`сделай merge main по правилам из AGENTS.md`
+Подробные правила вынесены в [AGENTS.md](/Users/dmitrijnazdrin/inventory_service_1/AGENTS.md) и [GIT_WORKFLOW.md](/Users/dmitrijnazdrin/inventory_service_1/GIT_WORKFLOW.md).
+
+## Project docs map
+
+- [AGENTS.md](/Users/dmitrijnazdrin/inventory_service_1/AGENTS.md): как агент должен работать в этом репозитории.
+- [GIT_WORKFLOW.md](/Users/dmitrijnazdrin/inventory_service_1/GIT_WORKFLOW.md): единственные допустимые git-сценарии.
+- [PROJECT_OVERVIEW.md](/Users/dmitrijnazdrin/inventory_service_1/PROJECT_OVERVIEW.md): архитектура, пайплайны, сущности и точки запуска.
+- [FILE_MAP.md](/Users/dmitrijnazdrin/inventory_service_1/FILE_MAP.md): карта критичных файлов и модулей.
+- [ENV_REFERENCE.md](/Users/dmitrijnazdrin/inventory_service_1/ENV_REFERENCE.md): справочник ключевых env-переменных без значений.
+- [CODEX_RULES.md](/Users/dmitrijnazdrin/inventory_service_1/CODEX_RULES.md): стиль архитектурного анализа и формат ответов.
+- [README_PROD.md](/Users/dmitrijnazdrin/inventory_service_1/README_PROD.md): продовый runbook.
 
 ## Локальный запуск
 
-### 1. Перейти в проект
-
 ```bash
 cd /Users/dmitrijnazdrin/inventory_service_1
-```
-
-### 2. Активировать виртуальное окружение
-
-```bash
 source .venv/bin/activate
-
-### Гит
-```
-git add .
-git commit -m "zoocompl"
-git push origin develop
-
-### 3. Установить зависимости Python
-
-```bash
 pip install -r requirements.txt
-```
-
-### 4. Запустить основные серверы
-
-Backend:
-
-```bash
 python3 -m uvicorn app.main:app --reload
 ```
 
@@ -52,7 +34,7 @@ Frontend:
 npm start
 ```
 
-## Фоновые сервисы и планировщики
+## Фоновые сервисы
 
 Запускать по необходимости:
 
@@ -62,28 +44,24 @@ python -m app.services.stock_scheduler_service
 python -m app.services.order_scheduler_service
 python -m app.services.competitor_price_scheduler
 python -m app.services.telegram_bot
-
 python app/services/biotus_check_order_scheduler.py
+python app/services/business_stock_scheduler.py
+python -m app.services.business_stock_scheduler.service
 ```
 
-## Работа с PostgreSQL
+## PostgreSQL
 
-Подключение к БД:
+Подключение:
 
 ```bash
 psql -U postgres -d inventory_db
 ```
 
-Полезные команды в `psql`:
+Полезные команды:
 
 ```sql
 \dt
 \q
-```
-
-## Полезные SQL-запросы
-
-```sql
 SELECT * FROM enterprise_settings;
 SELECT * FROM developer_settings;
 SELECT * FROM mapping_branch;
@@ -94,153 +72,8 @@ SELECT * FROM client_notifications;
 SELECT * FROM competitor_prices;
 ```
 
-## Строка подключения к БД
+## Примечания по проекту
 
-```python
-DATABASE_URL = "postgresql+asyncpg://postgres:your_password@localhost/inventory_db"
-
-
-# Biotus Pricing — Бизнес-памятка
-
-## 1. Опт (себестоимость)
-
-Формула:
-
-Опт = partner_price_usd × (RSP_UAH / RSP_USD) × (1 - profit_percent)
-
-Описание:
-- partner_price_usd — цена партнёра в USD
-- RSP_UAH / RSP_USD — курс Biotus
-- profit_percent — процент снижения (например 20% → коэффициент 0.8)
-
----
-
-## 2. Определение сегмента (band)
-
-Сегмент определяется по опту:
-
-- LOW — дешёвые товары
-- MID — средние
-- HIGH — дорогие
-
----
-
-## 3. Пороговая цена (минимально допустимая)
-
-Формула:
-
-threshold_price =
-    price_opt
-    + (price_opt × BASE_THR)
-    + THR_MULT_[band]
-    + min_markup_threshold
-
-Где:
-- BASE_THR — базовая маржа (%)
-- THR_MULT — фиксированная надбавка (грн!)
-- min_markup_threshold — дополнительная фиксированная надбавка
-
-Важно:
-THR_MULT — это НЕ процент, а фиксированная сумма в гривнах.
-
----
-
-## 4. Цена относительно конкурента
-
-Формула:
-
-under_competitor =
-    competitor_price - delta
-
-Где:
-
-delta = ограниченный процент:
-    delta = competitor_price × COMP_DISCOUNT_SHARE
-    затем ограничивается:
-        MIN_DELTA <= delta <= MAX_DELTA
-
----
-
-## 5. Финальная цена
-
-Главное правило:
-
-final_price = max(threshold_price, under_competitor)
-
----
-
-## 6. Логика работы
-
-1. Считается опт
-2. Формируется пороговая цена (с маржой и надбавками)
-3. Считается цена чуть ниже конкурента
-4. Выбирается:
-   - либо цена под конкурента
-   - либо порог (если ниже нельзя)
-
----
-
-## 7. Примеры
-
-### Кейc 1 — идём под конкурента
-
-Опт = 320  
-Порог = 406  
-Конкурент = 450  
-
-Результат:
-final_price = 430
-
----
-
-### Кейc 2 — держим порог
-
-Опт = 320  
-Порог = 406  
-Конкурент = 410  
-
-Результат:
-final_price = 406
-
----
-
-### Кейc 3 — дешёвый товар (LOW)
-
-Опт = 100  
-THR_MULT_LOW = 50  
-
-Порог ≈ 168  
-
-Даже при конкуренте 170 →  
-final_price ≈ 168
-
----
-
-### Кейc 4 — дорогой товар (HIGH)
-
-Опт = 600  
-THR_MULT_HIGH = 18  
-
-Порог ≈ 676  
-
-Конкурент = 760 →  
-final_price ≈ 740
-
----
-
-## 8. Ключевые правила
-
-1. THR_MULT — фиксированная надбавка (грн), а не %
-2. Чем дешевле товар — тем сильнее влияние THR_MULT
-3. Цена никогда не падает ниже порога
-4. Конкурент учитывается только если это не ломает маржу
-
----
-
-## 9. Коротко
-
-Цена = max(
-    Опт + % маржа + фикс. надбавка,
-    Конкурент - скидка
-)
-```
+- `competitors_min_price.py` и `salesdrive_catalog_uploader.py` вынесены в отдельные проекты и не должны возвращаться в этот репозиторий.
+- `state_cache/` считается runtime-кэшем и не должен попадать в git.
+- `catalog_mapping_d2_mismatch.xlsx` считается неиспользуемым файлом.

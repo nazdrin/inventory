@@ -21,7 +21,7 @@ from app.business.feed_zoohub import (
     _get_feed_url_by_code,
     _load_catalog_items_from_excel_url,
 )
-from app.business.order_sender import SUPPLIERLIST_MAP
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.database import get_async_db
 from app.models import RawSupplierFeedProduct
 
@@ -62,15 +62,12 @@ def _normalize_string(value: Any) -> Optional[str]:
     return text_value or None
 
 
-def _extract_supplier_id() -> int:
-    supplier_token = SUPPLIERLIST_MAP.get(D10_CODE_DEFAULT)
-    if not supplier_token:
-        raise RuntimeError("Не найден supplier mapping для D10")
-
-    match = re.search(r"(\d+)$", supplier_token)
-    if not match:
-        raise RuntimeError(f"Не удалось извлечь supplier_id из значения {supplier_token!r} для D10")
-    return int(match.group(1))
+async def _extract_supplier_id() -> int:
+    async with get_async_db(commit_on_exit=False) as session:
+        supplier_id = await resolve_supplier_id_by_code(session, D10_CODE_DEFAULT)
+    if supplier_id is None:
+        raise RuntimeError("Не найден supplier_id для D10")
+    return supplier_id
 
 
 def _normalize_barcode(value: Any) -> Optional[str]:
@@ -247,7 +244,7 @@ def _normalize_item(
 
 
 async def load_d10_raw_supplier_feed(limit: int = 0) -> Dict[str, Any]:
-    supplier_id = _extract_supplier_id()
+    supplier_id = await _extract_supplier_id()
     stats = LoaderStats(supplier_id=supplier_id)
     logger.info("Запуск D10 master feed loader для supplier_id=%s", supplier_id)
 

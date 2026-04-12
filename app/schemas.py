@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from decimal import Decimal
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
 
@@ -125,6 +126,186 @@ class EnterpriseDetailVM(BaseModel):
     show_runtime_block: bool = True
 
 
+class BusinessEnterpriseCandidateVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+
+
+class BusinessEnterpriseOptionVM(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    data_format: Optional[str] = None
+
+
+class BusinessSettingItemVM(BaseModel):
+    key: str
+    label: str
+    value: Any = None
+    source: str
+    group: Optional[str] = None
+    readonly: bool = True
+    help_text: Optional[str] = None
+
+
+class BusinessSectionVM(BaseModel):
+    key: str
+    title: str
+    description: Optional[str] = None
+    readonly: bool = True
+    items: List[BusinessSettingItemVM] = Field(default_factory=list)
+
+
+class BusinessSettingsVM(BaseModel):
+    resolution_status: str
+    resolution_message: str
+    resolved_enterprise_code: Optional[str] = None
+    resolved_enterprise_name: Optional[str] = None
+    token_present: bool = False
+    business_candidates: List[BusinessEnterpriseCandidateVM] = Field(default_factory=list)
+    enterprise_options: List[BusinessEnterpriseOptionVM] = Field(default_factory=list)
+    writable_supported: bool = False
+    deferred_write_reason: Optional[str] = None
+    planned_writable_keys: List[str] = Field(default_factory=list)
+    sections: List[BusinessSectionVM] = Field(default_factory=list)
+
+
+class BusinessSettingsUpdateSchema(BaseModel):
+    business_enterprise_code: str
+    daily_publish_enterprise_code_override: Optional[str] = None
+    weekly_salesdrive_enterprise_code_override: Optional[str] = None
+    business_stock_enabled: bool
+    business_stock_interval_seconds: int = Field(ge=1)
+    biotus_enable_unhandled_fallback: bool
+    biotus_unhandled_order_timeout_minutes: int = Field(ge=0)
+    biotus_fallback_additional_status_ids: List[int] = Field(min_length=1)
+    biotus_duplicate_status_id: int = Field(ge=1)
+    master_weekly_enabled: bool
+    master_weekly_day: Literal["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+    master_weekly_hour: int = Field(ge=0, le=23)
+    master_weekly_minute: int = Field(ge=0, le=59)
+    master_daily_publish_enabled: bool
+    master_daily_publish_hour: int = Field(ge=0, le=23)
+    master_daily_publish_minute: int = Field(ge=0, le=59)
+    master_daily_publish_limit: int = Field(ge=0)
+    master_archive_enabled: bool
+    master_archive_every_minutes: int = Field(ge=1)
+
+    @field_validator(
+        "business_enterprise_code",
+        "daily_publish_enterprise_code_override",
+        "weekly_salesdrive_enterprise_code_override",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_enterprise_code(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("business_enterprise_code")
+    @classmethod
+    def _require_primary_code(cls, value: Optional[str]) -> str:
+        if not value:
+            raise ValueError("business_enterprise_code is required")
+        return value
+
+    @field_validator("biotus_fallback_additional_status_ids", mode="before")
+    @classmethod
+    def _normalize_biotus_status_ids(cls, value: Any) -> List[int]:
+        if value is None:
+            raise ValueError("biotus_fallback_additional_status_ids is required")
+        if isinstance(value, str):
+            parts = [item.strip() for item in value.replace(";", ",").split(",")]
+            normalized = [int(item) for item in parts if item]
+        elif isinstance(value, (list, tuple, set)):
+            normalized = [int(item) for item in value]
+        else:
+            raise ValueError("biotus_fallback_additional_status_ids must be a list of integers")
+
+        if not normalized:
+            raise ValueError("biotus_fallback_additional_status_ids must not be empty")
+        if any(item < 1 for item in normalized):
+            raise ValueError("biotus_fallback_additional_status_ids must contain only positive integers")
+        return normalized
+
+    @field_validator("master_weekly_day", mode="before")
+    @classmethod
+    def _normalize_weekly_day(cls, value: Any) -> str:
+        normalized = str(value or "").strip().upper()
+        if not normalized:
+            raise ValueError("master_weekly_day is required")
+        return normalized
+
+class BusinessPricingSettingsUpdateSchema(BaseModel):
+    """Future bounded pricing write contract for Business Settings.
+
+    Phase 1 freeze only:
+    - not wired into routes yet
+    - not used by runtime yet
+    - intended to define the exact DB-backed pricing control-plane payload
+    """
+
+    pricing_base_thr: Decimal = Field(ge=0)
+    pricing_price_band_low_max: Decimal = Field(ge=0)
+    pricing_price_band_mid_max: Decimal = Field(ge=0)
+    pricing_thr_add_low_uah: Decimal = Field(ge=0)
+    pricing_thr_add_mid_uah: Decimal = Field(ge=0)
+    pricing_thr_add_high_uah: Decimal = Field(ge=0)
+    pricing_no_comp_add_low_uah: Decimal = Field(ge=0)
+    pricing_no_comp_add_mid_uah: Decimal = Field(ge=0)
+    pricing_no_comp_add_high_uah: Decimal = Field(ge=0)
+    pricing_comp_discount_share: Decimal = Field(ge=0)
+    pricing_comp_delta_min_uah: Decimal = Field(ge=0)
+    pricing_comp_delta_max_uah: Decimal = Field(ge=0)
+    pricing_jitter_enabled: bool
+    pricing_jitter_step_uah: Decimal = Field(gt=0)
+    pricing_jitter_min_uah: Decimal
+    pricing_jitter_max_uah: Decimal
+
+    @model_validator(mode="after")
+    def _validate_cross_field_constraints(self) -> "BusinessPricingSettingsUpdateSchema":
+        if self.pricing_price_band_mid_max < self.pricing_price_band_low_max:
+            raise ValueError("pricing_price_band_mid_max must be >= pricing_price_band_low_max")
+
+        if self.pricing_comp_discount_share >= Decimal("1"):
+            raise ValueError("pricing_comp_discount_share must be < 1")
+
+        if self.pricing_comp_delta_max_uah < self.pricing_comp_delta_min_uah:
+            raise ValueError("pricing_comp_delta_max_uah must be >= pricing_comp_delta_min_uah")
+
+        if self.pricing_jitter_max_uah < self.pricing_jitter_min_uah:
+            raise ValueError("pricing_jitter_max_uah must be >= pricing_jitter_min_uah")
+
+        return self
+
+class BusinessEnterpriseOperationalFieldsUpdateSchema(BaseModel):
+    branch_id: str
+    tabletki_login: Optional[str] = None
+    tabletki_password: Optional[str] = None
+    token: Optional[str] = None
+    order_fetcher: bool
+    auto_confirm: bool
+    stock_correction: bool
+
+    @field_validator("branch_id", mode="before")
+    @classmethod
+    def _normalize_branch_id(cls, value: Any) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("branch_id is required")
+        return normalized
+
+    @field_validator("tabletki_login", "tabletki_password", "token", mode="before")
+    @classmethod
+    def _normalize_optional_credentials(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+
 # Схема таблицы mapping
 class MappingBranchSchema(BaseModel):
     enterprise_code: str
@@ -209,6 +390,14 @@ class DropshipEnterpriseSchema(BaseModel):
     name: str
     feed_url: Optional[str] = None
     gdrive_folder: Optional[str] = None
+    salesdrive_supplier_id: Optional[int] = None
+    biotus_orders_enabled: Optional[bool] = False
+    np_fulfillment_enabled: Optional[bool] = False
+    schedule_enabled: Optional[bool] = False
+    block_start_day: Optional[int] = None
+    block_start_time: Optional[str] = None
+    block_end_day: Optional[int] = None
+    block_end_time: Optional[str] = None
 
     is_rrp: Optional[bool] = False
     is_wholesale: Optional[bool] = True
@@ -225,3 +414,49 @@ class DropshipEnterpriseSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SupplierSectionVM(BaseModel):
+    key: str
+    title: str
+    collapsible: bool = False
+    default_open: bool = True
+
+
+class SupplierListItemVM(BaseModel):
+    code: str
+    display_name: str
+    is_active: bool = True
+    cities_list: List[str] = Field(default_factory=list)
+    source_summary: str
+    pricing_summary: str
+    flags_summary: str
+
+
+class SupplierDetailVM(BaseModel):
+    code: str
+    display_name: str
+    name: str
+    is_active: bool = True
+    salesdrive_supplier_id: Optional[int] = None
+    biotus_orders_enabled: bool = False
+    np_fulfillment_enabled: bool = False
+    schedule_enabled: bool = False
+    block_start_day: Optional[int] = None
+    block_start_time: Optional[str] = None
+    block_end_day: Optional[int] = None
+    block_end_time: Optional[str] = None
+    cities_raw: Optional[str] = None
+    cities_list: List[str] = Field(default_factory=list)
+    feed_url: Optional[str] = None
+    gdrive_folder: Optional[str] = None
+    is_rrp: bool = False
+    profit_percent: Optional[float] = None
+    retail_markup: Optional[float] = None
+    min_markup_threshold: Optional[float] = None
+    priority: int = 5
+    use_feed_instead_of_gdrive: bool = False
+    source_summary: str
+    pricing_summary: str
+    flags_summary: str
+    sections: List[SupplierSectionVM] = Field(default_factory=list)

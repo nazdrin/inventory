@@ -278,9 +278,6 @@ const MappingBranchPage = () => {
                 <div style={{ ...cardStyle, padding: "18px 20px" }}>
                     <div style={{ display: "grid", gap: "12px" }}>
                         <h2 style={sectionTitleStyle}>Добавить маппинг</h2>
-                        <p style={mutedTextStyle}>
-                            Форма сохранена без изменений логики записи. Новая запись будет добавлена для выбранного предприятия.
-                        </p>
 
                         <div>
                             <label style={labelStyle}>Предприятие</label>

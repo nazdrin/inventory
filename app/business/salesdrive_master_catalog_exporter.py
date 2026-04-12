@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,10 @@ from sqlalchemy import select, text
 
 from app.database import get_async_db
 from app.models import CatalogCategory, MasterCatalog
+from app.services.master_business_settings_resolver import load_master_business_settings_snapshot
+
+
+logger = logging.getLogger("salesdrive_master_catalog_exporter")
 
 
 def _env_required(name: str) -> str:
@@ -21,12 +26,16 @@ def _env_required(name: str) -> str:
     return value
 
 
-def _resolve_enterprise_code(enterprise_code: str = "") -> str:
+async def _resolve_enterprise_code(enterprise_code: str = "") -> str:
     load_dotenv()
-    value = (enterprise_code or "").strip() or (os.getenv("MASTER_CATALOG_ENTERPRISE_CODE") or "").strip()
-    if not value:
-        raise RuntimeError("Не задан enterprise_code: передайте --enterprise или MASTER_CATALOG_ENTERPRISE_CODE")
-    return value
+    explicit = (enterprise_code or "").strip()
+    if explicit:
+        return explicit
+
+    settings = await load_master_business_settings_snapshot()
+    if settings.inconsistency:
+        logger.warning("SalesDrive master exporter enterprise inconsistency: %s", settings.inconsistency)
+    return settings.resolve_weekly_salesdrive_enterprise()
 
 
 async def _get_salesdrive_token(enterprise_code: str) -> str:
@@ -131,7 +140,7 @@ async def export_master_catalog_to_salesdrive(
     limit: int = 0,
 ) -> Dict[str, Any]:
     load_dotenv()
-    enterprise_code = _resolve_enterprise_code(enterprise_code)
+    enterprise_code = await _resolve_enterprise_code(enterprise_code)
     endpoint = _env_required("SALESDRIVE_PRODUCT_HANDLER_URL")
     token = await _get_salesdrive_token(enterprise_code)
 

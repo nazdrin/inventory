@@ -7,25 +7,6 @@ import argparse
 import os
 import random
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING, ROUND_FLOOR
-PRICE_BAND_LOW_MAX = Decimal(os.getenv("PRICE_BAND_LOW_MAX", "100"))
-PRICE_BAND_MID_MAX = Decimal(os.getenv("PRICE_BAND_MID_MAX", "400"))
-PRICE_BAND_HIGH_MAX = Decimal(os.getenv("PRICE_BAND_HIGH_MAX", "999999"))
-THR_MULT_LOW = Decimal(os.getenv("THR_MULT_LOW", "1.0"))
-THR_MULT_MID = Decimal(os.getenv("THR_MULT_MID", "1.0"))
-THR_MULT_HIGH = Decimal(os.getenv("THR_MULT_HIGH", "1.0"))
-THR_MULT_PREMIUM = Decimal(os.getenv("THR_MULT_PREMIUM", "1.0"))
-NO_COMP_MULT_LOW = Decimal(os.getenv("NO_COMP_MULT_LOW", "1.0"))
-NO_COMP_MULT_MID = Decimal(os.getenv("NO_COMP_MULT_MID", "1.0"))
-NO_COMP_MULT_HIGH = Decimal(os.getenv("NO_COMP_MULT_HIGH", "1.0"))
-NO_COMP_MULT_PREMIUM = Decimal(os.getenv("NO_COMP_MULT_PREMIUM", "1.0"))
-# --- Новый базовый порог (доля, например 0.08 = 8%) ---
-BASE_THR = Decimal(os.getenv("BASE_THR", "0.08"))
-# --- Competitor undercut behavior (env-controlled) ---
-# fixed discount share (default 1%)
-COMP_DISCOUNT_SHARE = Decimal(os.getenv("COMP_DISCOUNT_SHARE", "0.01"))
-# clamp undercut in UAH
-COMP_DELTA_MIN_UAH = Decimal(os.getenv("COMP_DELTA_MIN_UAH", "2"))
-COMP_DELTA_MAX_UAH = Decimal(os.getenv("COMP_DELTA_MAX_UAH", "15"))
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 import tempfile
@@ -155,7 +136,7 @@ from app.models import (
     Offer,
     OfferBlockRule,
 )  # CompetitorPrice: code, city, competitor_price
-from app.business.supplier_identity import get_supplier_id_by_code
+from app.business.supplier_identity import resolve_supplier_id_by_code
 from app.business.feed_biotus import parse_feed_stock_to_json
 from app.business.feed_dsn import parse_dsn_stock_to_json
 from app.business.feed_proteinplus import parse_feed_stock_to_json as parse_feed_D3
@@ -170,6 +151,10 @@ from app.business.feed_toros import parse_feed_stock_to_json as parse_feed_D11
 from app.business.feed_vetstar import parse_feed_stock_to_json as parse_feed_D12
 from app.business.feed_zoocomplex import parse_zoocomplex_stock_to_json as parse_feed_D13
 from app.business.feed_fulfillment_salesdrive import parse_fulfillment_salesdrive_stock_to_json
+from app.services.business_pricing_settings_resolver import (
+    BusinessPricingSettingsSnapshot,
+    load_business_pricing_settings_snapshot,
+)
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -269,43 +254,7 @@ def _cap_price_not_above_competitor(competitor_price: Decimal, supplier_code: st
         return comp.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return capped
 
-
-def _env_decimal(name: str, default: str) -> Decimal:
-    raw = (os.getenv(name, default) or default).strip()
-    try:
-        return Decimal(raw)
-    except Exception:
-        logging.getLogger("dropship").warning(
-            "Invalid decimal env %s=%r, fallback to %s", name, raw, default
-        )
-        return Decimal(default)
-
-
-def _env_optional_decimal(name: str) -> Decimal | None:
-    raw = os.getenv(name)
-    if raw is None:
-        return None
-    raw = raw.strip()
-    if not raw:
-        return None
-    try:
-        return Decimal(raw)
-    except Exception:
-        logging.getLogger("dropship").warning(
-            "Invalid decimal env %s=%r, ignored", name, raw
-        )
-        return None
-
-
-PRICE_JITTER_RANGE_UAH = _env_decimal("PRICE_JITTER_RANGE_UAH", "1.0")
-PRICE_JITTER_STEP_UAH = _env_decimal("PRICE_JITTER_STEP_UAH", "0.5")
-PRICE_JITTER_MIN_UAH = _env_optional_decimal("PRICE_JITTER_MIN_UAH")
-PRICE_JITTER_MAX_UAH = _env_optional_decimal("PRICE_JITTER_MAX_UAH")
 _PRICE_JITTER_WARNED: set[str] = set()
-
-
-def _price_jitter_enabled() -> bool:
-    return os.getenv("PRICE_JITTER_ENABLED", "0") == "1"
 
 
 def _warn_price_jitter_once(key: str, msg: str, *args: Any) -> None:
@@ -315,29 +264,25 @@ def _warn_price_jitter_once(key: str, msg: str, *args: Any) -> None:
     logger.warning(msg, *args)
 
 
-def _build_price_jitter_deltas() -> list[Decimal]:
-    jitter_step = _to_decimal(PRICE_JITTER_STEP_UAH)
+def _build_price_jitter_deltas(
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> list[Decimal]:
+    jitter_step = _to_decimal(pricing_snapshot.pricing_jitter_step_uah)
     if jitter_step <= 0:
         _warn_price_jitter_once(
             "step_non_positive",
-            "price jitter disabled: PRICE_JITTER_STEP_UAH must be > 0, got %s",
+            "price jitter disabled: pricing_jitter_step_uah must be > 0, got %s",
             jitter_step,
         )
         return []
 
-    jitter_min = PRICE_JITTER_MIN_UAH
-    jitter_max = PRICE_JITTER_MAX_UAH
-
-    # Backward compatibility: if MIN/MAX not fully set, use symmetric range [-R; +R].
-    if jitter_min is None or jitter_max is None:
-        jitter_range = abs(_to_decimal(PRICE_JITTER_RANGE_UAH))
-        jitter_min = -jitter_range
-        jitter_max = jitter_range
+    jitter_min = _to_decimal(pricing_snapshot.pricing_jitter_min_uah)
+    jitter_max = _to_decimal(pricing_snapshot.pricing_jitter_max_uah)
 
     if jitter_min > jitter_max:
         _warn_price_jitter_once(
             "invalid_min_max",
-            "price jitter disabled: PRICE_JITTER_MIN_UAH (%s) > PRICE_JITTER_MAX_UAH (%s)",
+            "price jitter disabled: pricing_jitter_min_uah (%s) > pricing_jitter_max_uah (%s)",
             jitter_min,
             jitter_max,
         )
@@ -351,12 +296,15 @@ def _build_price_jitter_deltas() -> list[Decimal]:
     return deltas
 
 
-def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
-    if not _price_jitter_enabled():
+def _apply_price_jitter(
+    price: Decimal,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> tuple[Decimal, Decimal]:
+    if not pricing_snapshot.pricing_jitter_enabled:
         return price, Decimal("0")
 
     p = _to_decimal(price)
-    deltas = _build_price_jitter_deltas()
+    deltas = _build_price_jitter_deltas(pricing_snapshot)
     if not deltas:
         return p, Decimal("0")
 
@@ -366,10 +314,13 @@ def _apply_price_jitter(price: Decimal) -> tuple[Decimal, Decimal]:
         return p, Decimal("0")
     return new_price, delta
 
-def resolve_price_band(base_price: Decimal) -> str:
-    if base_price <= PRICE_BAND_LOW_MAX:
+def resolve_price_band(
+    base_price: Decimal,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
+) -> str:
+    if base_price <= pricing_snapshot.pricing_price_band_low_max:
         return "LOW"
-    elif base_price <= PRICE_BAND_MID_MAX:
+    elif base_price <= pricing_snapshot.pricing_price_band_mid_max:
         return "MID"
     else:
         return "HIGH"
@@ -380,26 +331,39 @@ def _split_cities(city_field: str) -> List[str]:
     parts = re.split(r"[;,|]", city_field)
     return [p.strip() for p in parts if p.strip()]
 
-def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool:
-    # .env:
-    # SUPPLIER_SCHEDULE_ENABLED=true|false
-    # SUPPLIER_{CODE}_BLOCK_START_DAY=1..7, SUPPLIER_{CODE}_BLOCK_START_TIME=HH:MM
-    # SUPPLIER_{CODE}_BLOCK_END_DAY=1..7,   SUPPLIER_{CODE}_BLOCK_END_TIME=HH:MM
-    if os.getenv("SUPPLIER_SCHEDULE_ENABLED", "").strip().lower() != "true":
+def _supplier_schedule_has_value(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
+def _supplier_has_db_schedule_config(ent: DropshipEnterprise | None) -> bool:
+    if ent is None:
         return False
+    return bool(getattr(ent, "schedule_enabled", False)) or any(
+        _supplier_schedule_has_value(getattr(ent, field_name, None))
+        for field_name in ("block_start_day", "block_start_time", "block_end_day", "block_end_time")
+    )
 
-    code = (supplier_code or "").strip().upper()
-    prefix = f"SUPPLIER_{code}_BLOCK_"
-    start_day_raw = os.getenv(f"{prefix}START_DAY")
-    start_time_raw = os.getenv(f"{prefix}START_TIME")
-    end_day_raw = os.getenv(f"{prefix}END_DAY")
-    end_time_raw = os.getenv(f"{prefix}END_TIME")
 
-    # Неполный набор переменных для поставщика => блокировка не применяется.
-    if not all([start_day_raw, start_time_raw, end_day_raw, end_time_raw]):
-        return False
-
+def _parse_supplier_schedule_window(
+    *,
+    supplier_code: str,
+    source_label: str,
+    start_day_raw: Any,
+    start_time_raw: Any,
+    end_day_raw: Any,
+    end_time_raw: Any,
+) -> tuple[int, int, int, int] | None:
     warned = False
+    code = (supplier_code or "").strip().upper()
+
+    # Неполный набор значений => окно блокировки не применяется.
+    if not all([
+        _supplier_schedule_has_value(start_day_raw),
+        _supplier_schedule_has_value(start_time_raw),
+        _supplier_schedule_has_value(end_day_raw),
+        _supplier_schedule_has_value(end_time_raw),
+    ]):
+        return None
 
     def _warn_once(msg: str, *args: Any) -> None:
         nonlocal warned
@@ -413,14 +377,14 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
             day = int(raw)
         except Exception:
             _warn_once(
-                "Некорректный %s для поставщика %s: %r. Блокировка отключена для этого вызова.",
-                label, code, raw
+                "Некорректный %s для поставщика %s из %s: %r. Блокировка отключена для этого вызова.",
+                label, code, source_label, raw
             )
             return None
         if day < 1 or day > 7:
             _warn_once(
-                "Некорректный %s для поставщика %s: %r (ожидается 1..7). Блокировка отключена для этого вызова.",
-                label, code, raw
+                "Некорректный %s для поставщика %s из %s: %r (ожидается 1..7). Блокировка отключена для этого вызова.",
+                label, code, source_label, raw
             )
             return None
         return day
@@ -437,8 +401,8 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
             return hour * 60 + minute
         except Exception:
             _warn_once(
-                "Некорректный %s для поставщика %s: %r (ожидается HH:MM). Блокировка отключена для этого вызова.",
-                label, code, raw
+                "Некорректный %s для поставщика %s из %s: %r (ожидается HH:MM). Блокировка отключена для этого вызова.",
+                label, code, source_label, raw
             )
             return None
 
@@ -447,8 +411,49 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
     start_time = _parse_time_minutes(start_time_raw, "BLOCK_START_TIME")
     end_time = _parse_time_minutes(end_time_raw, "BLOCK_END_TIME")
     if None in (start_day, end_day, start_time, end_time):
-        return False
+        return None
+    return start_day, start_time, end_day, end_time
 
+
+def _resolve_schedule_window_from_model(
+    ent: DropshipEnterprise,
+    supplier_code: str,
+) -> tuple[int, int, int, int] | bool | None:
+    if not _supplier_has_db_schedule_config(ent):
+        return None
+    if not bool(getattr(ent, "schedule_enabled", False)):
+        return False
+    return _parse_supplier_schedule_window(
+        supplier_code=supplier_code,
+        source_label="DB",
+        start_day_raw=getattr(ent, "block_start_day", None),
+        start_time_raw=getattr(ent, "block_start_time", None),
+        end_day_raw=getattr(ent, "block_end_day", None),
+        end_time_raw=getattr(ent, "block_end_time", None),
+    )
+
+
+def _resolve_schedule_window_from_env(supplier_code: str) -> tuple[int, int, int, int] | None:
+    # Legacy .env:
+    # SUPPLIER_SCHEDULE_ENABLED=true|false
+    # SUPPLIER_{CODE}_BLOCK_START_DAY=1..7, SUPPLIER_{CODE}_BLOCK_START_TIME=HH:MM
+    # SUPPLIER_{CODE}_BLOCK_END_DAY=1..7,   SUPPLIER_{CODE}_BLOCK_END_TIME=HH:MM
+    if os.getenv("SUPPLIER_SCHEDULE_ENABLED", "").strip().lower() != "true":
+        return None
+
+    code = (supplier_code or "").strip().upper()
+    prefix = f"SUPPLIER_{code}_BLOCK_"
+    return _parse_supplier_schedule_window(
+        supplier_code=code,
+        source_label="env",
+        start_day_raw=os.getenv(f"{prefix}START_DAY"),
+        start_time_raw=os.getenv(f"{prefix}START_TIME"),
+        end_day_raw=os.getenv(f"{prefix}END_DAY"),
+        end_time_raw=os.getenv(f"{prefix}END_TIME"),
+    )
+
+
+def _schedule_now_in_minutes(now: datetime | None = None) -> int:
     schedule_tz: Optional[ZoneInfo] = None
     try:
         schedule_tz = ZoneInfo("Europe/Kiev")
@@ -469,14 +474,52 @@ def is_supplier_blocked(supplier_code: str, now: datetime | None = None) -> bool
                 current = current.astimezone(schedule_tz)
         elif current.tzinfo is not None and current.utcoffset() is not None:
             current = current.astimezone()
-    now_minutes = current.weekday() * 1440 + current.hour * 60 + current.minute
+    return current.weekday() * 1440 + current.hour * 60 + current.minute
 
+
+def _is_now_within_schedule_window(
+    schedule_window: tuple[int, int, int, int] | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not schedule_window:
+        return False
+    start_day, start_time, end_day, end_time = schedule_window
+    now_minutes = _schedule_now_in_minutes(now)
     start_minutes = (start_day - 1) * 1440 + start_time
     end_minutes = (end_day - 1) * 1440 + end_time
 
     if start_minutes <= end_minutes:
         return start_minutes <= now_minutes <= end_minutes
     return now_minutes >= start_minutes or now_minutes <= end_minutes
+
+
+async def is_supplier_blocked(
+    session: AsyncSession,
+    supplier_code: str,
+    *,
+    supplier: DropshipEnterprise | None = None,
+    now: datetime | None = None,
+) -> bool:
+    code = (supplier_code or "").strip().upper()
+    ent = supplier
+
+    if ent is None and code:
+        result = await session.execute(
+            select(DropshipEnterprise).where(DropshipEnterprise.code == code).limit(1)
+        )
+        ent = result.scalars().first()
+
+    db_window = _resolve_schedule_window_from_model(ent, code) if ent is not None else None
+    if db_window is False:
+        return False
+    if db_window is not None:
+        return _is_now_within_schedule_window(db_window, now=now)
+
+    env_window = _resolve_schedule_window_from_env(code)
+    if env_window is not None:
+        logger.debug("Supplier %s uses legacy env schedule fallback.", code)
+    return _is_now_within_schedule_window(env_window, now=now)
 
 # --------------------------------------------------------------------------------------
 # Реестр парсеров (подставьте свои реализации)
@@ -686,7 +729,7 @@ async def _map_supplier_codes_master(
 
     Архивные master_catalog.sku исключаются уже на этапе lookup.
     """
-    supplier_id = get_supplier_id_by_code(supplier_code)
+    supplier_id = await resolve_supplier_id_by_code(session, supplier_code)
     if supplier_id is None:
         logger.warning(
             "Supplier %s: numeric supplier_id not found in unified supplier map, fallback to legacy mapping backend",
@@ -1058,6 +1101,7 @@ def rule_porog_by_band(rules: list[dict], band_id: str) -> Optional[Decimal]:
 # --- Новая логика расчёта цены ---
 def _compute_price_for_item_with_source(
     *,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
     is_dumping: bool,
@@ -1107,12 +1151,12 @@ def _compute_price_for_item_with_source(
     # 4) Цена под конкурента (если есть конкурент)
     under_competitor: Optional[Decimal] = None
     if competitor_price is not None and competitor_price > 0:
-        candidate = competitor_price * (Decimal("1") - COMP_DISCOUNT_SHARE)
+        candidate = competitor_price * (Decimal("1") - pricing_snapshot.pricing_comp_discount_share)
         delta = competitor_price - candidate
-        if delta < COMP_DELTA_MIN_UAH:
-            candidate = competitor_price - COMP_DELTA_MIN_UAH
-        elif delta > COMP_DELTA_MAX_UAH:
-            candidate = competitor_price - COMP_DELTA_MAX_UAH
+        if delta < pricing_snapshot.pricing_comp_delta_min_uah:
+            candidate = competitor_price - pricing_snapshot.pricing_comp_delta_min_uah
+        elif delta > pricing_snapshot.pricing_comp_delta_max_uah:
+            candidate = competitor_price - pricing_snapshot.pricing_comp_delta_max_uah
         # safety: never above competitor
         if candidate > competitor_price:
             candidate = competitor_price
@@ -1154,6 +1198,7 @@ def _compute_price_for_item_with_source(
 
 def compute_price_for_item(
     *,
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
     competitor_price: Optional[Decimal],
     is_rrp: bool,
     is_dumping: bool,
@@ -1163,6 +1208,7 @@ def compute_price_for_item(
     threshold_percent_effective: Optional[float | Decimal],
 ) -> Decimal:
     price, _ = _compute_price_for_item_with_source(
+        pricing_snapshot=pricing_snapshot,
         competitor_price=competitor_price,
         is_rrp=is_rrp,
         is_dumping=is_dumping,
@@ -1350,6 +1396,7 @@ async def process_supplier(
     session: AsyncSession,
     ent: DropshipEnterprise,
     parser_registry: Dict[str, ParserFn],
+    pricing_snapshot: BusinessPricingSettingsSnapshot,
 ) -> None:
     code = ent.code
     parser = parser_registry.get(code, parse_feed_stock_to_json_template)
@@ -1406,6 +1453,10 @@ async def process_supplier(
 
     # 5.3 параметры ценообразования
     is_rrp = bool(ent.is_rrp)
+    # Future resolver integration point:
+    # load one pricing snapshot per pipeline run or per supplier call,
+    # then thread it into band resolution, threshold calculation,
+    # competitor logic and jitter logic without changing balancer flow.
 
     # Новый режим "демпинга" (временное поле): если включён, цена считается жёстко по формуле
     # price = price_opt * (1 + retail_markup)
@@ -1546,38 +1597,37 @@ async def process_supplier(
             competitor_dec = competitor if competitor is not None else Decimal("0")
 
             # Определяем band по себестоимости (по по_dec)
-            band = resolve_price_band(po_dec)
+            band = resolve_price_band(po_dec, pricing_snapshot)
 
             # supplier_add_uah — абсолютная надбавка из таблицы (min_markup_threshold)
             supplier_add_uah = supplier_threshold_percent
 
-            # Выбор абсолютной надбавки по бэнду
             if competitor_dec > 0:
                 if band == "LOW":
-                    band_add_uah = THR_MULT_LOW
+                    band_add_uah = pricing_snapshot.pricing_thr_add_low_uah
                 elif band == "MID":
-                    band_add_uah = THR_MULT_MID
+                    band_add_uah = pricing_snapshot.pricing_thr_add_mid_uah
                 elif band == "HIGH":
-                    band_add_uah = THR_MULT_HIGH
+                    band_add_uah = pricing_snapshot.pricing_thr_add_high_uah
                 else:
-                    band_add_uah = THR_MULT_PREMIUM
+                    band_add_uah = pricing_snapshot.pricing_thr_add_high_uah
             else:
                 if band == "LOW":
-                    band_add_uah = NO_COMP_MULT_LOW
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_low_uah
                 elif band == "MID":
-                    band_add_uah = NO_COMP_MULT_MID
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_mid_uah
                 elif band == "HIGH":
-                    band_add_uah = NO_COMP_MULT_HIGH
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_high_uah
                 else:
-                    band_add_uah = NO_COMP_MULT_PREMIUM
+                    band_add_uah = pricing_snapshot.pricing_no_comp_add_high_uah
 
-            # Расчёт thr_effective по Путь A
             if po_dec > 0:
-                thr_effective = BASE_THR + (band_add_uah + supplier_add_uah) / po_dec
+                thr_effective = pricing_snapshot.pricing_base_thr + (band_add_uah + supplier_add_uah) / po_dec
             else:
                 thr_effective = Decimal("0")
 
             price, price_source = _compute_price_for_item_with_source(
+                pricing_snapshot=pricing_snapshot,
                 competitor_price=competitor,
                 is_rrp=is_rrp,
                 is_dumping=is_dumping,
@@ -1587,9 +1637,9 @@ async def process_supplier(
                 threshold_percent_effective=thr_effective,
             )
             price = _round_price_export_for_supplier(price, code)
-            if _price_jitter_enabled():
+            if pricing_snapshot.pricing_jitter_enabled:
                 base_price = price
-                price, delta = _apply_price_jitter(price)
+                price, delta = _apply_price_jitter(price, pricing_snapshot)
                 price = _round_price_export_for_supplier(price, code)
                 if delta != 0:
                     logger.debug(
@@ -1829,6 +1879,16 @@ async def run_pipeline(
     file_type: Optional[str] = None,
 ) -> None:
     async with get_async_db() as session:
+        pricing_snapshot = await load_business_pricing_settings_snapshot(session)
+        if pricing_snapshot.inconsistency:
+            logger.warning(
+                "Pricing runtime source=%s fallback_reason=%s",
+                pricing_snapshot.source,
+                pricing_snapshot.inconsistency,
+            )
+        else:
+            logger.info("Pricing runtime source=%s", pricing_snapshot.source)
+
         # 0) Санитарная очистка: удаляем офферы по списку поставщиков, которых нужно очистить
         try:
             to_clear = await fetch_suppliers_to_clear(session)
@@ -1858,7 +1918,7 @@ async def run_pipeline(
             for ent in suppliers:
                 supplier_code = str(getattr(ent, "code", "") or "")
                 try:
-                    if is_supplier_blocked(supplier_code):
+                    if await is_supplier_blocked(session, supplier_code, supplier=ent):
                         logger.info(
                             "Поставщик %s заблокирован по расписанию. Удаляем старые offers.",
                             supplier_code,
@@ -1879,7 +1939,7 @@ async def run_pipeline(
                             )
                             await session.rollback()
                         continue
-                    await process_supplier(session, ent, PARSERS)
+                    await process_supplier(session, ent, PARSERS, pricing_snapshot)
                     await session.commit()
                 except Exception as exc:
                     logger.exception("Failed supplier %s: %s", supplier_code or "<unknown>", exc)
