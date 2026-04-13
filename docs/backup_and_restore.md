@@ -97,8 +97,22 @@ scp "${BACKUP_FILE}" "${BACKUP_REMOTE_HOST}:${BACKUP_REMOTE_PATH}/"
 
 - должен существовать файл `google_set/credentials.json`
 - должен быть задан `GOOGLE_DRIVE_BACKUP_FOLDER_ID`
+- `GOOGLE_DRIVE_BACKUP_RETENTION_COUNT` управляет количеством backup-файлов, которые нужно оставить в Google Drive, default `5`
 - используется service account credentials
 - scope: `https://www.googleapis.com/auth/drive.file`
+
+После успешного upload:
+
+- скрипт получает список файлов в Google Drive backup folder
+- учитывает только файлы формата `backup_YYYY-MM-DD_HH-MM-SS.sql.gz`
+- сортирует их по имени в порядке newest -> oldest
+- оставляет последние `N` файлов, где `N = GOOGLE_DRIVE_BACKUP_RETENTION_COUNT` или `5` по умолчанию
+- удаляет более старые cloud backup-файлы
+
+Важно:
+
+- cleanup выполняется только после успешного upload нового backup
+- не-backup файлы в той же папке не удаляются
 
 Operational note:
 
@@ -207,4 +221,5 @@ Production restore - high-risk operation.
 - Backup не покрывает application files, `.env`, runtime state или external services.
 - Offsite copy зависит от SSH/network availability.
 - Google Drive upload зависит от credentials и `GOOGLE_DRIVE_BACKUP_FOLDER_ID`.
+- Google Drive retention зависит от корректного `GOOGLE_DRIVE_BACKUP_RETENTION_COUNT`; при невалидном значении используется fallback `5`.
 - Failure в GDrive upload или notification не фейлит успешный local backup, поэтому эти шаги нужно проверять отдельно.
