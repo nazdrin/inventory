@@ -2276,6 +2276,34 @@ async def upload_stock(file: UploadFile, enterprise_code: str, db: AsyncSession 
     return {"message": "Stock data processed successfully."}
 # ⬇️ НОВЫЙ ПУБЛИЧНЫЙ ЭНДПОИНТ (БЕЗ verify_token)
 from app.business.salesdrive_webhook import process_salesdrive_webhook  # заглушка, см. ниже
+from app.salesdrive_simple.webhook import process_salesdrive_simple_webhook
+
+
+@router.post("/webhooks/salesdrive-simple/{branch}", summary="SalesDriveSimple Webhook (public)")
+async def salesdrive_simple_webhook(
+    branch: str,
+    request: Request,
+    background: BackgroundTasks,
+):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a JSON object.")
+
+    data = payload.get("data")
+    data_obj = data if isinstance(data, dict) else {}
+    sd_logger.info(
+        "SalesDriveSimple webhook accepted: branch=%s externalId=%s id=%s statusId=%s",
+        branch,
+        data_obj.get("externalId"),
+        data_obj.get("id"),
+        data_obj.get("statusId"),
+    )
+    background.add_task(process_salesdrive_simple_webhook, payload, branch)
+    return {"status": "accepted"}
 
 @router.post("/webhooks/salesdrive", summary="SalesDrive Webhook (public)")
 async def salesdrive_webhook(
