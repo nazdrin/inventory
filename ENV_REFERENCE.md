@@ -139,6 +139,14 @@
 - `TABLETKI_ORDER_RETRY_DELAY_SEC` - задержка между повторами.
 - `FALLBACK_ADDITIONAL_STATUS_IDS` - доп. статусы для fallback order logic.
 
+## Business stores foundation
+
+- `BUSINESS_STORES_ENABLED` - feature flag для будущего подключения нового store-layer в runtime.
+- `BUSINESS_STORE_DRY_RUN` - dry-run флаг для будущих store-aware export/import сценариев.
+- `BUSINESS_STORE_CODE_SALT` - соль для детерминированной генерации внешних кодов товаров per store.
+- `BUSINESS_STORE_CODE_LENGTH` - длина opaque-части внешнего кода товара.
+- `BUSINESS_STORE_FAIL_ON_MISSING_CODE` - будущий runtime-флаг строгого поведения при отсутствии mapping-а кода.
+
 ## Master catalog scheduler
 
 - `MASTER_CATALOG_ENTERPRISE_CODE` - enterprise для master catalog сценариев.

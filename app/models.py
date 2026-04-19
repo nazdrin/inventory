@@ -298,6 +298,101 @@ class BusinessSettings(Base, TimestampMixin):
         ),
     )
 
+
+class BusinessStore(Base):
+    __tablename__ = "business_stores"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_code = Column(String(255), nullable=False)
+    store_name = Column(String(500), nullable=False)
+    legal_entity_name = Column(String(500), nullable=True)
+    tax_identifier = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    is_legacy_default = Column(Boolean, nullable=False, server_default=text("false"))
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
+    legacy_scope_key = Column(String(255), nullable=True)
+    tabletki_enterprise_code = Column(String(255), nullable=True)
+    tabletki_branch = Column(String(255), nullable=True)
+    salesdrive_enterprise_code = Column(String(255), nullable=True)
+    salesdrive_store_name = Column(String(500), nullable=True)
+    catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    orders_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    catalog_only_in_stock = Column(Boolean, nullable=False, server_default=text("true"))
+    code_strategy = Column(String(64), nullable=False, server_default=text("'opaque_mapping'"))
+    code_prefix = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("store_code", name="uq_business_stores_store_code"),
+        Index("ix_business_stores_enterprise_code", "enterprise_code"),
+        Index("ix_business_stores_legacy_scope_key", "legacy_scope_key"),
+        Index("ix_business_stores_is_active", "is_active"),
+        Index("ix_business_stores_salesdrive_enterprise_code", "salesdrive_enterprise_code"),
+        Index(
+            "uq_business_stores_tabletki_identity",
+            "tabletki_enterprise_code",
+            "tabletki_branch",
+            unique=True,
+            postgresql_where=text(
+                "tabletki_enterprise_code IS NOT NULL AND tabletki_branch IS NOT NULL"
+            ),
+        ),
+        CheckConstraint(
+            "code_strategy IN ('opaque_mapping', 'legacy_same', 'prefix_mapping')",
+            name="ck_business_stores_code_strategy",
+        ),
+    )
+
+
+class BusinessStoreProductCode(Base):
+    __tablename__ = "business_store_product_codes"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_code = Column(String(255), nullable=False)
+    code_source = Column(String(64), nullable=False, server_default=text("'generated'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "internal_product_code",
+            name="uq_business_store_product_codes_store_internal",
+        ),
+        UniqueConstraint(
+            "store_id",
+            "external_product_code",
+            name="uq_business_store_product_codes_store_external",
+        ),
+        Index("ix_business_store_product_codes_internal_product_code", "internal_product_code"),
+        Index("ix_business_store_product_codes_external_product_code", "external_product_code"),
+        Index("ix_business_store_product_codes_is_active", "is_active"),
+        CheckConstraint(
+            "code_source IN ('generated', 'legacy_same', 'prefix_mapping')",
+            name="ck_business_store_product_codes_code_source",
+        ),
+    )
+
+
 # Сопоставление аптек 
 class MappingBranch(Base):
     __tablename__ = "mapping_branch"
