@@ -309,11 +309,14 @@ class BusinessStore(Base):
     tax_identifier = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default=text("true"))
     is_legacy_default = Column(Boolean, nullable=False, server_default=text("false"))
+    takes_over_legacy_scope = Column(Boolean, nullable=False, server_default=text("false"))
+    migration_status = Column(String(64), nullable=False, server_default=text("'draft'"))
     enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
     legacy_scope_key = Column(String(255), nullable=True)
     tabletki_enterprise_code = Column(String(255), nullable=True)
     tabletki_branch = Column(String(255), nullable=True)
     salesdrive_enterprise_code = Column(String(255), nullable=True)
+    salesdrive_enterprise_id = Column(Integer, nullable=True)
     salesdrive_store_name = Column(String(500), nullable=True)
     catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
@@ -334,7 +337,10 @@ class BusinessStore(Base):
         Index("ix_business_stores_enterprise_code", "enterprise_code"),
         Index("ix_business_stores_legacy_scope_key", "legacy_scope_key"),
         Index("ix_business_stores_is_active", "is_active"),
+        Index("ix_business_stores_takes_over_legacy_scope", "takes_over_legacy_scope"),
+        Index("ix_business_stores_migration_status", "migration_status"),
         Index("ix_business_stores_salesdrive_enterprise_code", "salesdrive_enterprise_code"),
+        Index("ix_business_stores_salesdrive_enterprise_id", "salesdrive_enterprise_id"),
         Index(
             "uq_business_stores_tabletki_identity",
             "tabletki_enterprise_code",
@@ -347,6 +353,10 @@ class BusinessStore(Base):
         CheckConstraint(
             "code_strategy IN ('opaque_mapping', 'legacy_same', 'prefix_mapping')",
             name="ck_business_stores_code_strategy",
+        ),
+        CheckConstraint(
+            "migration_status IN ('draft', 'dry_run', 'stock_live', 'catalog_stock_live', 'orders_live', 'disabled')",
+            name="ck_business_stores_migration_status",
         ),
     )
 
