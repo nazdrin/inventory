@@ -12,6 +12,7 @@ from app.services.order_sender import send_single_order_status_2
 from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
 from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
 from app.business.order_sender import process_and_send_order
+from app.salesdrive_simple.salesdrive_simple_sender import send_order_to_salesdrive_simple
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
     "ComboKeyCRM": send_order_to_key_crm,
     "Business": process_and_send_order,
-    # Добавишь сюда новые форматы позже
+    "SalesDriveSimple": send_order_to_salesdrive_simple,
 }
 ORDER_STATUS_CHECKERS = {
     "KeyCRM": check_statuses_key_crm,
@@ -150,18 +151,28 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                         if status == 0:
                                             # TODO: передача заказов продавцу
                                             processor = ORDER_SEND_PROCESSORS.get(enterprise.data_format)
+                                            processor_ok = True
                                             if processor:
-                                                await processor(order, enterprise_code, branch)
+                                                result = await processor(order, enterprise_code, branch)
+                                                if enterprise.data_format == "SalesDriveSimple":
+                                                    processor_ok = bool(result)
                                             else:
                                                 logger.warning("No order send processor for data_format=%s", enterprise.data_format)
-                                            # Отправка на Tabletki.ua со статусом 2.0
-                                            order["statusID"] = 2.0
-                                            await send_single_order_status_2(
-                                                session=session,
-                                                order=order,
-                                                tabletki_login=enterprise.tabletki_login,
-                                                tabletki_password=enterprise.tabletki_password
-                                            )
+                                            if processor_ok:
+                                                # Отправка на Tabletki.ua со статусом 2.0
+                                                order["statusID"] = 2.0
+                                                await send_single_order_status_2(
+                                                    session=session,
+                                                    order=order,
+                                                    tabletki_login=enterprise.tabletki_login,
+                                                    tabletki_password=enterprise.tabletki_password
+                                                )
+                                            else:
+                                                logger.warning(
+                                                    "Skip Tabletki status 2.0 because outbound send failed: data_format=%s order_id=%s",
+                                                    enterprise.data_format,
+                                                    order.get("id"),
+                                                )
                                         elif status in [2, 4, 4.1]:
                                             # TODO: передача статуса продавцу
                                             # Отправка актуального статуса продавцу через соответствующий обработчик

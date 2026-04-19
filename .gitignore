@@ -31,6 +31,7 @@ alembic.ini
 /alembic.ini
 temp/
 /temp
+backups/
 exports/
 state_cache/
 feed.xml
@@ -45,6 +46,10 @@ input_raw/272/raw_catalog.json
 input_raw/272/raw_stock.json
 # raw inputs
 input_raw/**
+app/services/temp/
+app/services/state_cache/
+app/services/input_raw/
+app/services/exports/
 .gitattributes
 monsterlab_export.py
 offers_export.py

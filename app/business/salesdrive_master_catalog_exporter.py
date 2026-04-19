@@ -11,6 +11,7 @@ import httpx
 from dotenv import load_dotenv
 from sqlalchemy import select, text
 
+from app.core.paths import BASE_DIR
 from app.database import get_async_db
 from app.models import CatalogCategory, MasterCatalog
 from app.services.master_business_settings_resolver import load_master_business_settings_snapshot
@@ -82,7 +83,8 @@ async def _post_with_retry(
 
 
 def _cache_path(enterprise_code: str) -> str:
-    return os.path.join(os.getcwd(), f".salesdrive_master_catalog_cache_{enterprise_code}.json")
+    # Use repo root to avoid cwd-dependent cache placement.
+    return str(BASE_DIR / f".salesdrive_master_catalog_cache_{enterprise_code}.json")
 
 
 def _load_cache(path: str) -> Dict[str, str]:

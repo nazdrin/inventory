@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +14,43 @@ from googleapiclient.http import MediaFileUpload
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CREDENTIALS_PATH = ROOT_DIR / "google_set" / "credentials.json"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+BACKUP_NAME_RE = re.compile(r"^backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.sql\.gz$")
+
+
+def _get_retention_count() -> int:
+    raw_value = os.getenv("GOOGLE_DRIVE_BACKUP_RETENTION_COUNT", "5").strip()
+    try:
+        retention_count = int(raw_value)
+    except ValueError:
+        print(f"Invalid GOOGLE_DRIVE_BACKUP_RETENTION_COUNT='{raw_value}', fallback to 5")
+        return 5
+    return max(retention_count, 1)
+
+
+def _cleanup_old_backups(service, folder_id: str, retention_count: int) -> None:
+    response = service.files().list(
+        q=f"'{folder_id}' in parents and trashed=false",
+        fields="files(id,name)",
+        pageSize=1000,
+    ).execute()
+
+    backup_files = [
+        file_info
+        for file_info in response.get("files", [])
+        if BACKUP_NAME_RE.match(str(file_info.get("name", "")))
+    ]
+    backup_files.sort(key=lambda item: item["name"], reverse=True)
+
+    files_to_keep = backup_files[:retention_count]
+    files_to_delete = backup_files[retention_count:]
+
+    print(
+        f"GDrive retention: found={len(backup_files)} keep={len(files_to_keep)} delete={len(files_to_delete)}"
+    )
+
+    for file_info in files_to_delete:
+        service.files().delete(fileId=file_info["id"]).execute()
+        print(f"GDrive retention deleted: {file_info['name']}")
 
 
 def main() -> int:
@@ -24,6 +62,7 @@ def main() -> int:
 
     file_path = Path(sys.argv[1]).resolve()
     folder_id = os.getenv("GOOGLE_DRIVE_BACKUP_FOLDER_ID")
+    retention_count = _get_retention_count()
 
     if not file_path.exists():
         print(f"ERROR: file not found: {file_path}")
@@ -57,6 +96,7 @@ def main() -> int:
         ).execute()
 
         print(f"Upload OK: {created.get('name')} ({created.get('id')})")
+        _cleanup_old_backups(service, folder_id, retention_count)
         return 0
     except Exception as exc:
         print(f"Upload FAILED: {exc}")

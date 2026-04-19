@@ -1,0 +1,18 @@
+# NOTE: this is production snapshot from server
+# DO NOT APPLY DIRECTLY WITHOUT REVIEW
+
+[Unit]
+Description=Catalog Scheduler Service
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/inventory/app/services
+Environment="PYTHONPATH=/root/inventory"
+EnvironmentFile=/root/inventory/.env
+# normalized to python -m for consistent runtime behavior
+ExecStart=/root/inventory/.venv/bin/python -m app.services.catalog_scheduler_service
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

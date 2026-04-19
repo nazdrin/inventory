@@ -107,6 +107,8 @@ chmod +x scripts/backup/backup_db.sh
 
 Если заданы `BACKUP_REMOTE_HOST` и `BACKUP_REMOTE_PATH`, после локального backup будет выполнен offsite copy через `scp`.
 
+Если задан `GOOGLE_DRIVE_BACKUP_FOLDER_ID`, backup дополнительно загружается в Google Drive. Cloud retention управляется через `GOOGLE_DRIVE_BACKUP_RETENTION_COUNT` и по умолчанию оставляет последние `5` backup-файлов в Google Drive.
+
 ## Restore
 
 Предупреждение:

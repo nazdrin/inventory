@@ -1,0 +1,17 @@
+# NOTE: this is production snapshot from server
+# DO NOT APPLY DIRECTLY WITHOUT REVIEW
+
+[Unit]
+Description=FastAPI application
+After=network.target
+
+[Service]
+User=root
+Group=root
+EnvironmentFile=/root/inventory/.env
+WorkingDirectory=/root/inventory
+ExecStart=/root/inventory/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

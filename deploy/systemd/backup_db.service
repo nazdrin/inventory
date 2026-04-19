@@ -1,0 +1,13 @@
+# NOTE: this is production snapshot from server
+# DO NOT APPLY DIRECTLY WITHOUT REVIEW
+# NOTE: the live server unit also defines a server-local PGPASSWORD environment line
+# NOTE: it is intentionally not hardcoded here
+
+[Unit]
+Description=Backup PostgreSQL database
+After=network.target
+
+[Service]
+User=root
+EnvironmentFile=/root/inventory/.env
+ExecStart=/root/inventory/scripts/backup/backup_db.sh
