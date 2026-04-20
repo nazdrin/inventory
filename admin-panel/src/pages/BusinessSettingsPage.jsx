@@ -6,6 +6,10 @@ import {
     updateBusinessSettingsPricingScope,
 } from "../api/businessSettingsApi";
 
+// TODO: после переноса enterprise-owned полей на Business Stores / Enterprise Settings
+// убрать отсюда дублирующиеся enterprise_settings blocks (`branch_id`, credentials,
+// `order_fetcher`, `auto_confirm`, `stock_correction`) и оставить только control-plane / pricing.
+
 const pageStyle = {
     padding: "24px",
     display: "grid",

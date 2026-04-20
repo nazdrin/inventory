@@ -324,6 +324,16 @@ class BusinessStore(Base):
     catalog_only_in_stock = Column(Boolean, nullable=False, server_default=text("true"))
     code_strategy = Column(String(64), nullable=False, server_default=text("'opaque_mapping'"))
     code_prefix = Column(String(255), nullable=True)
+    name_strategy = Column(String(64), nullable=False, server_default=text("'base'"))
+    extra_markup_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    extra_markup_mode = Column(String(32), nullable=False, server_default=text("'percent'"))
+    extra_markup_min = Column(Numeric(12, 2), nullable=True)
+    extra_markup_max = Column(Numeric(12, 2), nullable=True)
+    extra_markup_strategy = Column(
+        String(32),
+        nullable=False,
+        server_default=text("'stable_per_product'"),
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -341,6 +351,8 @@ class BusinessStore(Base):
         Index("ix_business_stores_migration_status", "migration_status"),
         Index("ix_business_stores_salesdrive_enterprise_code", "salesdrive_enterprise_code"),
         Index("ix_business_stores_salesdrive_enterprise_id", "salesdrive_enterprise_id"),
+        Index("ix_business_stores_name_strategy", "name_strategy"),
+        Index("ix_business_stores_extra_markup_enabled", "extra_markup_enabled"),
         Index(
             "uq_business_stores_tabletki_identity",
             "tabletki_enterprise_code",
@@ -353,6 +365,30 @@ class BusinessStore(Base):
         CheckConstraint(
             "code_strategy IN ('opaque_mapping', 'legacy_same', 'prefix_mapping')",
             name="ck_business_stores_code_strategy",
+        ),
+        CheckConstraint(
+            "name_strategy IN ('base', 'supplier_random')",
+            name="ck_business_stores_name_strategy",
+        ),
+        CheckConstraint(
+            "extra_markup_mode IN ('percent')",
+            name="ck_business_stores_extra_markup_mode",
+        ),
+        CheckConstraint(
+            "extra_markup_strategy IN ('stable_per_product')",
+            name="ck_business_stores_extra_markup_strategy",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_min >= 0)",
+            name="ck_business_stores_extra_markup_min_non_negative",
+        ),
+        CheckConstraint(
+            "(extra_markup_max IS NULL) OR (extra_markup_max >= 0)",
+            name="ck_business_stores_extra_markup_max_non_negative",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_max IS NULL) OR (extra_markup_max >= extra_markup_min)",
+            name="ck_business_stores_extra_markup_max_ge_min",
         ),
         CheckConstraint(
             "migration_status IN ('draft', 'dry_run', 'stock_live', 'catalog_stock_live', 'orders_live', 'disabled')",
@@ -399,6 +435,100 @@ class BusinessStoreProductCode(Base):
         CheckConstraint(
             "code_source IN ('generated', 'legacy_same', 'prefix_mapping')",
             name="ck_business_store_product_codes_code_source",
+        ),
+    )
+
+
+class BusinessStoreProductName(Base):
+    __tablename__ = "business_store_product_names"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_name = Column(String(500), nullable=False)
+    name_source = Column(String(64), nullable=False, server_default=text("'catalog_supplier_mapping'"))
+    source_supplier_id = Column(BigInteger, nullable=True)
+    source_supplier_code = Column(String(255), nullable=True)
+    source_supplier_product_id = Column(String(255), nullable=True)
+    source_supplier_product_name_raw = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "internal_product_code",
+            name="uq_business_store_product_names_store_internal",
+        ),
+        Index("ix_bspn_store_id", "store_id"),
+        Index("ix_bspn_internal_code", "internal_product_code"),
+        Index(
+            "ix_bspn_source_supplier",
+            "source_supplier_id",
+            "source_supplier_code",
+        ),
+        Index("ix_bspn_is_active", "is_active"),
+        CheckConstraint(
+            "name_source IN ('catalog_supplier_mapping', 'manual', 'cleaned')",
+            name="ck_business_store_product_names_name_source",
+        ),
+    )
+
+
+class BusinessStoreProductPriceAdjustment(Base):
+    __tablename__ = "business_store_product_price_adjustments"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    markup_percent = Column(Numeric(12, 4), nullable=False)
+    strategy = Column(String(32), nullable=False, server_default=text("'stable_per_product'"))
+    source = Column(String(64), nullable=False, server_default=text("'generated'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "internal_product_code",
+            name="uq_business_store_product_price_adjustments_store_internal",
+        ),
+        Index("ix_bspa_store_id", "store_id"),
+        Index(
+            "ix_bspa_internal_code",
+            "internal_product_code",
+        ),
+        Index(
+            "ix_bspa_is_active",
+            "is_active",
+        ),
+        CheckConstraint(
+            "markup_percent >= 0",
+            name="ck_business_store_product_price_adjustments_markup_non_negative",
+        ),
+        CheckConstraint(
+            "strategy IN ('stable_per_product')",
+            name="ck_business_store_product_price_adjustments_strategy",
         ),
     )
 

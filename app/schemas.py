@@ -356,6 +356,221 @@ class MappingBranchConstrainedUpdateSchema(BaseModel):
     google_folder_id: Optional[str] = None
 
 
+class BusinessStoreBase(BaseModel):
+    store_name: str
+    legal_entity_name: Optional[str] = None
+    tax_identifier: Optional[str] = None
+    is_active: bool = True
+    is_legacy_default: bool = False
+    enterprise_code: Optional[str] = None
+    legacy_scope_key: Optional[str] = None
+    tabletki_enterprise_code: Optional[str] = None
+    tabletki_branch: Optional[str] = None
+    salesdrive_enterprise_code: Optional[str] = None
+    salesdrive_enterprise_id: Optional[int] = None
+    salesdrive_store_name: Optional[str] = None
+    catalog_enabled: bool = False
+    stock_enabled: bool = False
+    orders_enabled: bool = False
+    catalog_only_in_stock: bool = True
+    code_strategy: Literal["legacy_same", "opaque_mapping", "prefix_mapping"] = "opaque_mapping"
+    code_prefix: Optional[str] = None
+    name_strategy: Literal["base", "supplier_random"] = "base"
+    extra_markup_enabled: bool = False
+    extra_markup_mode: Literal["percent"] = "percent"
+    extra_markup_min: Optional[Decimal] = None
+    extra_markup_max: Optional[Decimal] = None
+    extra_markup_strategy: Literal["stable_per_product"] = "stable_per_product"
+    takes_over_legacy_scope: bool = False
+    migration_status: Literal[
+        "draft",
+        "dry_run",
+        "stock_live",
+        "catalog_stock_live",
+        "orders_live",
+        "disabled",
+    ] = "draft"
+
+    @field_validator(
+        "store_name",
+        "legal_entity_name",
+        "tax_identifier",
+        "enterprise_code",
+        "legacy_scope_key",
+        "tabletki_enterprise_code",
+        "tabletki_branch",
+        "salesdrive_enterprise_code",
+        "salesdrive_store_name",
+        "code_prefix",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("store_name")
+    @classmethod
+    def _require_store_name(cls, value: Optional[str]) -> str:
+        if not value:
+            raise ValueError("store_name is required")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_extra_markup(self) -> "BusinessStoreBase":
+        if self.extra_markup_enabled:
+            if self.extra_markup_min is None or self.extra_markup_max is None:
+                raise ValueError("extra_markup_min and extra_markup_max are required when extra_markup_enabled=true")
+            if self.extra_markup_min < 0 or self.extra_markup_max < 0:
+                raise ValueError("extra_markup_min and extra_markup_max must be >= 0")
+            if self.extra_markup_max < self.extra_markup_min:
+                raise ValueError("extra_markup_max must be >= extra_markup_min")
+            if self.extra_markup_max > Decimal("100"):
+                raise ValueError("extra_markup_max must be <= 100")
+        elif self.extra_markup_min is not None and self.extra_markup_max is not None:
+            if self.extra_markup_min < 0 or self.extra_markup_max < 0:
+                raise ValueError("extra_markup_min and extra_markup_max must be >= 0")
+            if self.extra_markup_max < self.extra_markup_min:
+                raise ValueError("extra_markup_max must be >= extra_markup_min")
+        return self
+
+
+class BusinessStoreCreate(BusinessStoreBase):
+    store_code: str
+
+    @field_validator("store_code", mode="before")
+    @classmethod
+    def _normalize_store_code(cls, value: Any) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("store_code is required")
+        return normalized
+
+
+class BusinessStoreUpdate(BaseModel):
+    store_name: Optional[str] = None
+    legal_entity_name: Optional[str] = None
+    tax_identifier: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_legacy_default: Optional[bool] = None
+    enterprise_code: Optional[str] = None
+    legacy_scope_key: Optional[str] = None
+    tabletki_enterprise_code: Optional[str] = None
+    tabletki_branch: Optional[str] = None
+    salesdrive_enterprise_code: Optional[str] = None
+    salesdrive_enterprise_id: Optional[int] = None
+    salesdrive_store_name: Optional[str] = None
+    catalog_enabled: Optional[bool] = None
+    stock_enabled: Optional[bool] = None
+    orders_enabled: Optional[bool] = None
+    catalog_only_in_stock: Optional[bool] = None
+    code_strategy: Optional[Literal["legacy_same", "opaque_mapping", "prefix_mapping"]] = None
+    code_prefix: Optional[str] = None
+    name_strategy: Optional[Literal["base", "supplier_random"]] = None
+    extra_markup_enabled: Optional[bool] = None
+    extra_markup_mode: Optional[Literal["percent"]] = None
+    extra_markup_min: Optional[Decimal] = None
+    extra_markup_max: Optional[Decimal] = None
+    extra_markup_strategy: Optional[Literal["stable_per_product"]] = None
+    takes_over_legacy_scope: Optional[bool] = None
+    migration_status: Optional[
+        Literal[
+            "draft",
+            "dry_run",
+            "stock_live",
+            "catalog_stock_live",
+            "orders_live",
+            "disabled",
+        ]
+    ] = None
+
+    @field_validator(
+        "store_name",
+        "legal_entity_name",
+        "tax_identifier",
+        "enterprise_code",
+        "legacy_scope_key",
+        "tabletki_enterprise_code",
+        "tabletki_branch",
+        "salesdrive_enterprise_code",
+        "salesdrive_store_name",
+        "code_prefix",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_update_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def _validate_update_extra_markup(self) -> "BusinessStoreUpdate":
+        if self.extra_markup_min is not None and self.extra_markup_min < 0:
+            raise ValueError("extra_markup_min must be >= 0")
+        if self.extra_markup_max is not None and self.extra_markup_max < 0:
+            raise ValueError("extra_markup_max must be >= 0")
+        if self.extra_markup_min is not None and self.extra_markup_max is not None:
+            if self.extra_markup_max < self.extra_markup_min:
+                raise ValueError("extra_markup_max must be >= extra_markup_min")
+            if self.extra_markup_max > Decimal("100"):
+                raise ValueError("extra_markup_max must be <= 100")
+        return self
+
+
+class BusinessStoreOut(BaseModel):
+    id: int
+    store_code: str
+    store_name: str
+    legal_entity_name: Optional[str] = None
+    tax_identifier: Optional[str] = None
+    is_active: bool
+    is_legacy_default: bool
+    enterprise_code: Optional[str] = None
+    legacy_scope_key: Optional[str] = None
+    tabletki_enterprise_code: Optional[str] = None
+    tabletki_branch: Optional[str] = None
+    salesdrive_enterprise_code: Optional[str] = None
+    salesdrive_enterprise_id: Optional[int] = None
+    salesdrive_store_name: Optional[str] = None
+    catalog_enabled: bool
+    stock_enabled: bool
+    orders_enabled: bool
+    catalog_only_in_stock: bool
+    code_strategy: str
+    code_prefix: Optional[str] = None
+    name_strategy: str
+    extra_markup_enabled: bool
+    extra_markup_mode: str
+    extra_markup_min: Optional[Decimal] = None
+    extra_markup_max: Optional[Decimal] = None
+    extra_markup_strategy: str
+    takes_over_legacy_scope: bool
+    migration_status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LegacyScopeOut(BaseModel):
+    legacy_scope_key: str
+    rows_count: int
+    products_count: int
+
+
+class BusinessEnterpriseOptionOut(BaseModel):
+    enterprise_code: str
+    enterprise_name: str
+    branch_id: Optional[str] = None
+    catalog_enabled: bool
+    stock_enabled: bool
+    order_fetcher: bool
+
+
 # Схема для глобальных настроек системы
 class DeveloperSettingsSchema(BaseModel):
     developer_login: str

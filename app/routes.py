@@ -1,8 +1,9 @@
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, Request, Security
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, Request, Security, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from fastapi.security import HTTPBearer
 from typing import List, Any
 import os
@@ -20,6 +21,8 @@ from app.schemas import (
     SupplierSectionVM, BusinessSettingsVM, BusinessSectionVM, BusinessSettingItemVM,
     BusinessEnterpriseCandidateVM, BusinessEnterpriseOptionVM, BusinessSettingsUpdateSchema,
     BusinessEnterpriseOperationalFieldsUpdateSchema, BusinessPricingSettingsUpdateSchema,
+    BusinessStoreCreate, BusinessStoreUpdate, BusinessStoreOut, LegacyScopeOut,
+    BusinessEnterpriseOptionOut,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -51,13 +54,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.auth import verify_token  # как у enterprise
-from app.models import DropshipEnterprise, BusinessSettings
+from app.models import (
+    DropshipEnterprise,
+    BusinessSettings,
+    BusinessStore,
+    Offer,
+    BusinessStoreProductCode,
+    BusinessStoreProductName,
+    BusinessStoreProductPriceAdjustment,
+)
 from app.schemas import DropshipEnterpriseSchema
+from app.business.business_store_name_generator import cleanup_store_product_names
 from app.services.business_pricing_settings_resolver import (
     BUSINESS_PRICING_FIELD_SPECS,
     BUSINESS_PRICING_GROUP_SPECS,
     BusinessPricingSettingsSnapshot,
     load_business_pricing_settings_snapshot,
+)
+from app.business.business_store_export_dry_run import (
+    build_store_catalog_dry_run,
+    build_store_stock_dry_run,
 )
 
 
@@ -2253,6 +2269,513 @@ async def update_mapping_branch(
     await db.refresh(mapping_entry)
 
     return await _build_branch_mapping_detail_response(db, branch)
+
+
+def _normalize_optional_query_string(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+async def _get_business_store_or_404(db: AsyncSession, store_id: int) -> BusinessStore:
+    result = await db.execute(select(BusinessStore).where(BusinessStore.id == int(store_id)))
+    store = result.scalar_one_or_none()
+    if store is None:
+        raise HTTPException(status_code=404, detail="BusinessStore not found.")
+    return store
+
+
+@router.get(
+    "/business-stores",
+    response_model=List[BusinessStoreOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_stores(
+    enterprise_code: str | None = Query(default=None),
+    migration_status: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+    legacy_scope_key: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(BusinessStore).order_by(BusinessStore.store_name.asc(), BusinessStore.store_code.asc())
+
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    normalized_migration_status = _normalize_optional_query_string(migration_status)
+    normalized_legacy_scope_key = _normalize_optional_query_string(legacy_scope_key)
+
+    if normalized_enterprise_code:
+        stmt = stmt.where(BusinessStore.enterprise_code == normalized_enterprise_code)
+    if normalized_migration_status:
+        stmt = stmt.where(BusinessStore.migration_status == normalized_migration_status)
+    if is_active is not None:
+        stmt = stmt.where(BusinessStore.is_active.is_(bool(is_active)))
+    if normalized_legacy_scope_key:
+        stmt = stmt.where(BusinessStore.legacy_scope_key == normalized_legacy_scope_key)
+
+    result = await db.execute(stmt)
+    return [BusinessStoreOut.model_validate(row, from_attributes=True) for row in result.scalars().all()]
+
+
+@router.get(
+    "/business-stores/meta/legacy-scopes",
+    response_model=List[LegacyScopeOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_legacy_scopes(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(
+            Offer.city.label("legacy_scope_key"),
+            func.count(Offer.id).label("rows_count"),
+            func.count(func.distinct(Offer.product_code)).label("products_count"),
+        )
+        .group_by(Offer.city)
+        .order_by(Offer.city.asc())
+    )
+    rows = result.fetchall()
+    return [
+        LegacyScopeOut(
+            legacy_scope_key=str(row.legacy_scope_key),
+            rows_count=int(row.rows_count or 0),
+            products_count=int(row.products_count or 0),
+        )
+        for row in rows
+        if str(row.legacy_scope_key or "").strip()
+    ]
+
+
+@router.get(
+    "/business-stores/meta/business-enterprises",
+    response_model=List[BusinessEnterpriseOptionOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_business_enterprises(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(EnterpriseSettings)
+        .where(func.lower(func.coalesce(EnterpriseSettings.data_format, "")) == "business")
+        .order_by(EnterpriseSettings.enterprise_name.asc(), EnterpriseSettings.enterprise_code.asc())
+    )
+    rows = result.scalars().all()
+    return [
+        BusinessEnterpriseOptionOut(
+            enterprise_code=row.enterprise_code,
+            enterprise_name=row.enterprise_name,
+            branch_id=row.branch_id,
+            catalog_enabled=bool(row.catalog_enabled),
+            stock_enabled=bool(row.stock_enabled),
+            order_fetcher=bool(row.order_fetcher),
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/business-stores/{store_id}",
+    response_model=BusinessStoreOut,
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store(store_id: int, db: AsyncSession = Depends(get_db)):
+    store = await _get_business_store_or_404(db, store_id)
+    return BusinessStoreOut.model_validate(store, from_attributes=True)
+
+
+@router.post(
+    "/business-stores",
+    response_model=BusinessStoreOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(
+        select(BusinessStore).where(BusinessStore.store_code == payload.store_code)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail="BusinessStore with this store_code already exists.")
+
+    obj = BusinessStore(
+        store_code=payload.store_code,
+        store_name=payload.store_name,
+        legal_entity_name=payload.legal_entity_name,
+        tax_identifier=payload.tax_identifier,
+        is_active=payload.is_active,
+        is_legacy_default=payload.is_legacy_default,
+        enterprise_code=payload.enterprise_code,
+        legacy_scope_key=payload.legacy_scope_key,
+        tabletki_enterprise_code=payload.tabletki_enterprise_code,
+        tabletki_branch=payload.tabletki_branch,
+        salesdrive_enterprise_code=payload.salesdrive_enterprise_code,
+        salesdrive_enterprise_id=payload.salesdrive_enterprise_id,
+        salesdrive_store_name=payload.salesdrive_store_name,
+        catalog_enabled=payload.catalog_enabled,
+        stock_enabled=payload.stock_enabled,
+        orders_enabled=payload.orders_enabled,
+        catalog_only_in_stock=payload.catalog_only_in_stock,
+        code_strategy=payload.code_strategy,
+        code_prefix=payload.code_prefix,
+        name_strategy=payload.name_strategy,
+        extra_markup_enabled=payload.extra_markup_enabled,
+        extra_markup_mode=payload.extra_markup_mode,
+        extra_markup_min=payload.extra_markup_min,
+        extra_markup_max=payload.extra_markup_max,
+        extra_markup_strategy=payload.extra_markup_strategy,
+        takes_over_legacy_scope=payload.takes_over_legacy_scope,
+        migration_status=payload.migration_status,
+    )
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessStoreOut.model_validate(obj, from_attributes=True)
+
+
+@router.put(
+    "/business-stores/{store_id}",
+    response_model=BusinessStoreOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_store(
+    store_id: int,
+    payload: BusinessStoreUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    store = await _get_business_store_or_404(db, store_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(store, key, value)
+
+    await db.commit()
+    await db.refresh(store)
+    return BusinessStoreOut.model_validate(store, from_attributes=True)
+
+
+@router.post(
+    "/business-stores/{store_id}/dry-run",
+    dependencies=[Depends(verify_token)],
+)
+async def dry_run_business_store(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    auto_generate_missing_codes = bool(payload.get("auto_generate_missing_codes", False))
+    auto_generate_missing_names = bool(payload.get("auto_generate_missing_names", False))
+    auto_generate_missing_price_adjustments = bool(
+        payload.get("auto_generate_missing_price_adjustments", False)
+    )
+    stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=auto_generate_missing_codes,
+        auto_generate_missing_price_adjustments=auto_generate_missing_price_adjustments,
+    )
+    catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=auto_generate_missing_codes,
+        auto_generate_missing_names=auto_generate_missing_names,
+    )
+    warnings = list(stock.get("warnings") or []) + list(catalog.get("warnings") or [])
+    return {
+        "store_id": int(store_id),
+        "auto_generate_missing_codes": auto_generate_missing_codes,
+        "auto_generate_missing_names": auto_generate_missing_names,
+        "auto_generate_missing_price_adjustments": auto_generate_missing_price_adjustments,
+        "stock": {
+            "status": stock.get("status"),
+            "total_offer_rows": stock.get("total_offer_rows"),
+            "unique_internal_products": stock.get("unique_internal_products"),
+            "products_with_mapping": stock.get("products_with_mapping"),
+            "products_missing_mapping": stock.get("products_missing_mapping"),
+            "extra_markup_enabled": stock.get("extra_markup_enabled"),
+            "extra_markup_mode": stock.get("extra_markup_mode"),
+            "extra_markup_min": stock.get("extra_markup_min"),
+            "extra_markup_max": stock.get("extra_markup_max"),
+            "products_with_price_adjustment": stock.get("products_with_price_adjustment"),
+            "products_missing_price_adjustment": stock.get("products_missing_price_adjustment"),
+            "sample_items": stock.get("sample_items") or [],
+            "missing_mapping_samples": stock.get("missing_mapping_samples") or [],
+            "missing_price_adjustment_samples": stock.get("missing_price_adjustment_samples") or [],
+        },
+        "catalog": {
+            "status": catalog.get("status"),
+            "catalog_source": catalog.get("catalog_source"),
+            "code_strategy": catalog.get("code_strategy"),
+            "name_strategy": catalog.get("name_strategy"),
+            "master_catalog_total": catalog.get("master_catalog_total"),
+            "catalog_products_to_export": catalog.get("catalog_products_to_export"),
+            "products_with_mapping": catalog.get("products_with_mapping"),
+            "products_missing_mapping": catalog.get("products_missing_mapping"),
+            "products_with_name_mapping": catalog.get("products_with_name_mapping"),
+            "products_missing_name_mapping": catalog.get("products_missing_name_mapping"),
+            "sample_items": catalog.get("sample_items") or [],
+            "missing_mapping_samples": catalog.get("missing_mapping_samples") or [],
+            "missing_name_samples": catalog.get("missing_name_samples") or [],
+        },
+        "warnings": warnings,
+    }
+
+
+@router.post(
+    "/business-stores/{store_id}/generate-missing-codes",
+    dependencies=[Depends(verify_token)],
+)
+async def generate_business_store_missing_codes(store_id: int, db: AsyncSession = Depends(get_db)):
+    await _get_business_store_or_404(db, store_id)
+
+    before_stock = await build_store_stock_dry_run(db, int(store_id), auto_generate_missing_codes=False)
+    before_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+    before_count_result = await db.execute(
+        select(func.count(BusinessStoreProductCode.id)).where(BusinessStoreProductCode.store_id == int(store_id))
+    )
+    before_count = int(before_count_result.scalar_one() or 0)
+
+    await build_store_stock_dry_run(db, int(store_id), auto_generate_missing_codes=True)
+    await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=True,
+        auto_generate_missing_names=False,
+    )
+    await db.commit()
+
+    after_count_result = await db.execute(
+        select(func.count(BusinessStoreProductCode.id)).where(BusinessStoreProductCode.store_id == int(store_id))
+    )
+    after_count = int(after_count_result.scalar_one() or 0)
+
+    stock = await build_store_stock_dry_run(db, int(store_id), auto_generate_missing_codes=False)
+    catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+
+    return {
+        "store_id": int(store_id),
+        "generated_codes": max(0, after_count - before_count),
+        "before": {
+            "stock_missing_mappings": before_stock.get("products_missing_mapping"),
+            "catalog_missing_mappings": before_catalog.get("products_missing_mapping"),
+        },
+        "after": {
+            "stock_missing_mappings": stock.get("products_missing_mapping"),
+            "catalog_missing_mappings": catalog.get("products_missing_mapping"),
+        },
+        "stock": {
+            "status": stock.get("status"),
+            "total_offer_rows": stock.get("total_offer_rows"),
+            "unique_internal_products": stock.get("unique_internal_products"),
+            "products_with_mapping": stock.get("products_with_mapping"),
+            "products_missing_mapping": stock.get("products_missing_mapping"),
+            "sample_items": stock.get("sample_items") or [],
+            "missing_mapping_samples": stock.get("missing_mapping_samples") or [],
+        },
+        "catalog": {
+            "status": catalog.get("status"),
+            "catalog_source": catalog.get("catalog_source"),
+            "name_strategy": catalog.get("name_strategy"),
+            "master_catalog_total": catalog.get("master_catalog_total"),
+            "catalog_products_to_export": catalog.get("catalog_products_to_export"),
+            "products_with_mapping": catalog.get("products_with_mapping"),
+            "products_missing_mapping": catalog.get("products_missing_mapping"),
+            "products_with_name_mapping": catalog.get("products_with_name_mapping"),
+            "products_missing_name_mapping": catalog.get("products_missing_name_mapping"),
+            "sample_items": catalog.get("sample_items") or [],
+            "missing_mapping_samples": catalog.get("missing_mapping_samples") or [],
+            "missing_name_samples": catalog.get("missing_name_samples") or [],
+        },
+        "warnings": list(stock.get("warnings") or []) + list(catalog.get("warnings") or []),
+    }
+
+
+@router.post(
+    "/business-stores/{store_id}/generate-missing-names",
+    dependencies=[Depends(verify_token)],
+)
+async def generate_business_store_missing_names(store_id: int, db: AsyncSession = Depends(get_db)):
+    store = await _get_business_store_or_404(db, store_id)
+
+    before_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+    before_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductName.id)).where(
+                    BusinessStoreProductName.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    generated_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=True,
+    )
+    await db.commit()
+
+    after_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductName.id)).where(
+                    BusinessStoreProductName.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    after_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+
+    return {
+        "store_id": int(store_id),
+        "store_code": store.store_code,
+        "generated_names": max(0, after_count - before_count),
+        "summary": {
+            "generated_count": max(0, after_count - before_count),
+            "missing_count_after": after_catalog.get("products_missing_name_mapping"),
+            "generated_preview_samples": [
+                item
+                for item in (generated_catalog.get("sample_items") or [])
+                if item.get("name_mapping_generated")
+            ][:20],
+        },
+        "before": {
+            "catalog_missing_name_mappings": before_catalog.get("products_missing_name_mapping"),
+        },
+        "after": {
+            "catalog_missing_name_mappings": after_catalog.get("products_missing_name_mapping"),
+        },
+        "catalog": {
+            "status": after_catalog.get("status"),
+            "catalog_source": after_catalog.get("catalog_source"),
+            "name_strategy": after_catalog.get("name_strategy"),
+            "catalog_products_to_export": after_catalog.get("catalog_products_to_export"),
+            "products_with_name_mapping": after_catalog.get("products_with_name_mapping"),
+            "products_missing_name_mapping": after_catalog.get("products_missing_name_mapping"),
+            "sample_items": after_catalog.get("sample_items") or [],
+            "missing_name_samples": after_catalog.get("missing_name_samples") or [],
+        },
+    }
+
+
+@router.post(
+    "/business-stores/{store_id}/cleanup-product-names",
+    dependencies=[Depends(verify_token)],
+)
+async def cleanup_business_store_product_names(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    if not bool(payload.get("confirm")):
+        raise HTTPException(status_code=400, detail="confirm=true is required for cleanup-product-names.")
+
+    result = await cleanup_store_product_names(
+        db,
+        int(store_id),
+        mode=str(payload.get("mode") or "deactivate"),
+    )
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/business-stores/{store_id}/generate-missing-price-adjustments",
+    dependencies=[Depends(verify_token)],
+)
+async def generate_business_store_missing_price_adjustments(
+    store_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    store = await _get_business_store_or_404(db, store_id)
+
+    before_stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_price_adjustments=False,
+    )
+    before_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductPriceAdjustment.id)).where(
+                    BusinessStoreProductPriceAdjustment.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    generated_stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_price_adjustments=True,
+    )
+    await db.commit()
+
+    after_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductPriceAdjustment.id)).where(
+                    BusinessStoreProductPriceAdjustment.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    after_stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_price_adjustments=False,
+    )
+
+    return {
+        "store_id": int(store_id),
+        "store_code": store.store_code,
+        "generated_price_adjustments": max(0, after_count - before_count),
+        "summary": {
+            "generated_count": max(0, after_count - before_count),
+            "missing_count_after": after_stock.get("products_missing_price_adjustment"),
+            "generated_preview_samples": [
+                item
+                for item in (generated_stock.get("sample_items") or [])
+                if item.get("price_adjustment_generated")
+            ][:20],
+        },
+        "before": {
+            "stock_missing_price_adjustments": before_stock.get("products_missing_price_adjustment"),
+        },
+        "after": {
+            "stock_missing_price_adjustments": after_stock.get("products_missing_price_adjustment"),
+        },
+        "stock": {
+            "status": after_stock.get("status"),
+            "extra_markup_enabled": after_stock.get("extra_markup_enabled"),
+            "extra_markup_mode": after_stock.get("extra_markup_mode"),
+            "extra_markup_min": after_stock.get("extra_markup_min"),
+            "extra_markup_max": after_stock.get("extra_markup_max"),
+            "products_with_price_adjustment": after_stock.get("products_with_price_adjustment"),
+            "products_missing_price_adjustment": after_stock.get("products_missing_price_adjustment"),
+            "sample_items": after_stock.get("sample_items") or [],
+            "missing_price_adjustment_samples": after_stock.get("missing_price_adjustment_samples") or [],
+        },
+    }
 
 # 🟢 Публичные эндпоинты
 @router.post("/unipro/data")

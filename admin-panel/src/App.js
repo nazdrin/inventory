@@ -8,6 +8,7 @@ import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
 import FormatsPage from "./pages/FormatsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import BusinessSettingsPage from "./pages/BusinessSettingsPage";
+import BusinessStoresPage from "./pages/BusinessStoresPage";
 
 import Login from "./pages/Login";
 
@@ -161,6 +162,20 @@ const App = () => {
                         >
                             Business Settings
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/business-stores")}
+                        >
+                            Business-продавцы
+                        </button>
                     </>
                 )}
             </div>
@@ -194,6 +209,10 @@ const App = () => {
                 <Route
                     path="/business"
                     element={<PrivateRoute element={<BusinessSettingsPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/business-stores"
+                    element={<PrivateRoute element={<BusinessStoresPage authUser={authUser} />} />}
                 />
             </Routes>
         </div>
