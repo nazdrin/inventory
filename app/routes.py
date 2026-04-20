@@ -75,6 +75,8 @@ from app.business.business_store_export_dry_run import (
     build_store_catalog_dry_run,
     build_store_stock_dry_run,
 )
+from app.business.business_store_catalog_preview import build_store_catalog_payload_preview
+from app.business.business_store_stock_preview import build_store_stock_payload_preview
 
 
 def _mapping_semantic_store_label(data_format: str | None) -> str:
@@ -2588,6 +2590,62 @@ async def generate_business_store_missing_codes(store_id: int, db: AsyncSession 
         },
         "warnings": list(stock.get("warnings") or []) + list(catalog.get("warnings") or []),
     }
+
+
+@router.post(
+    "/business-stores/{store_id}/catalog-preview",
+    dependencies=[Depends(verify_token)],
+)
+async def preview_business_store_catalog(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    limit_raw = payload.get("limit", 100)
+    try:
+        limit = None if limit_raw is None else int(limit_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="limit must be an integer or null.") from exc
+    if limit is not None and limit < 0:
+        raise HTTPException(status_code=400, detail="limit must be >= 0 or null.")
+
+    try:
+        return await build_store_catalog_payload_preview(
+            db,
+            int(store_id),
+            limit=limit,
+            include_not_exportable=bool(payload.get("include_not_exportable", True)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/business-stores/{store_id}/stock-preview",
+    dependencies=[Depends(verify_token)],
+)
+async def preview_business_store_stock(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    limit_raw = payload.get("limit", 100)
+    try:
+        limit = None if limit_raw is None else int(limit_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="limit must be an integer or null.") from exc
+    if limit is not None and limit < 0:
+        raise HTTPException(status_code=400, detail="limit must be >= 0 or null.")
+
+    try:
+        return await build_store_stock_payload_preview(
+            db,
+            int(store_id),
+            limit=limit,
+            include_not_exportable=bool(payload.get("include_not_exportable", True)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post(

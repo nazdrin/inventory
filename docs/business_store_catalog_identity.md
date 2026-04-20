@@ -29,6 +29,7 @@ Foundation for this layer is now implemented in code for:
 - `business_store_product_names`
 - `business_store_product_price_adjustments`
 - dry-run preview for names and extra markup
+- store-aware catalog payload preview
 - UI/API actions for generate/cleanup preparation flows
 
 Still explicitly not implemented:
@@ -38,6 +39,40 @@ Still explicitly not implemented:
 - runtime pricing changes
 - scheduler changes
 - order runtime changes
+
+## 1.2 Catalog payload preview
+
+Read-only catalog payload preview is now implemented as a separate preparation layer:
+
+- builder: `app/business/business_store_catalog_preview.py`
+- endpoint: `POST /developer_panel/business-stores/{store_id}/catalog-preview`
+- UI action: `Catalog preview`
+
+This layer:
+
+- reads `MasterCatalog` plus existing `BusinessStoreProductCode` and `BusinessStoreProductName`;
+- applies `catalog_only_in_stock`, `code_strategy`, and `name_strategy`;
+- marks rows as `exportable` or `not exportable`;
+- never creates missing mappings;
+- never writes files;
+- never calls Tabletki API;
+- does not modify `tabletki_master_catalog_exporter`.
+
+Read-only stock payload preview is also now implemented:
+
+- builder: `app/business/business_store_stock_preview.py`
+- endpoint: `POST /developer_panel/business-stores/{store_id}/stock-preview`
+- UI action: `Stock preview`
+
+This layer:
+
+- reads `Offer` plus existing `BusinessStoreProductCode` and `BusinessStoreProductPriceAdjustment`;
+- uses local best-offer approximation for preview only;
+- applies store-level markup only to previewed price output;
+- never creates missing mappings or price adjustments;
+- never changes `offers.price`;
+- never calls Tabletki API;
+- does not modify `dropship_pipeline` or stock scheduler runtime.
 
 ## 2. Что проверено
 
@@ -152,6 +187,7 @@ Store dry-run:
 
 - с точки зрения модели ассортимент уже почти покрыт;
 - для будущего UI и API не нужен второй взаимоисключающий boolean вроде `catalog_all_products`.
+- preview layer теперь показывает итоговый candidate/exportable catalog payload без live publish.
 
 ### 5.2 Рекомендация по полю
 
@@ -186,6 +222,7 @@ UI abstraction допустима:
 - `business_store_product_codes` уже хранит стабильный mapping `store_id + internal_product_code -> external_product_code`;
 - generator не перезаписывает существующую запись;
 - dry-run умеет показывать missing mappings и генерировать отсутствующие codes.
+- catalog payload preview читает эти mappings и помечает товар как `not exportable`, если mapping отсутствует.
 
 ### 6.2 Рекомендация
 
@@ -562,6 +599,80 @@ Constraints:
 - `generate-missing-names`
 
 Но только после появления mapping table.
+
+### 12.4 Что показывает catalog payload preview
+
+Preview now returns:
+
+- target routing fields:
+  - `tabletki_enterprise_code`
+  - `tabletki_branch`
+  - `legacy_scope_key`
+- summary:
+  - `master_catalog_total`
+  - `candidate_products`
+  - `exportable_products`
+  - `not_exportable_products`
+  - `missing_code_mapping`
+  - `missing_name_mapping`
+  - `catalog_source`
+- preview rows:
+  - `internal_product_code`
+  - `external_product_code`
+  - `base_name`
+  - `external_product_name`
+  - `barcode`
+  - `manufacturer`
+  - `brand`
+  - `exportable`
+  - `reasons`
+
+Rules:
+
+- preview is read-only and does not create missing mappings;
+- missing code mapping marks the row as `not exportable`;
+- missing name mapping at `supplier_random` marks the row as `not exportable`;
+- preview is outside the current master publish path and does not call Tabletki.
+
+### 12.5 Что показывает stock payload preview
+
+Preview now returns:
+
+- target routing fields:
+  - `tabletki_enterprise_code`
+  - `tabletki_branch`
+  - `legacy_scope_key`
+- summary:
+  - `offer_rows_total`
+  - `candidate_products`
+  - `exportable_products`
+  - `not_exportable_products`
+  - `missing_code_mapping`
+  - `missing_price_adjustment`
+  - `markup_applied_products`
+  - `stock_source`
+- preview rows:
+  - `internal_product_code`
+  - `external_product_code`
+  - `supplier_code`
+  - `qty`
+  - `base_price`
+  - `markup_percent`
+  - `final_store_price_preview`
+  - `tabletki_enterprise_code`
+  - `tabletki_branch`
+  - `exportable`
+  - `reasons`
+
+Rules:
+
+- preview is read-only and does not create code mappings or price adjustments;
+- missing code mapping marks the row as `not exportable`;
+- missing price adjustment at enabled markup marks the row as `not exportable`;
+- markup is applied only to preview output;
+- `final_store_price_preview` is rounded to a whole number with standard half-up rounding;
+- `offers.price` is not modified;
+- preview is outside the current stock runtime path and does not call Tabletki.
 
 ## 13. UI Impact
 

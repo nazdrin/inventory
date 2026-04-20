@@ -18,6 +18,8 @@ Store-level catalog identity and price markup target model is documented separat
 Current status after the latest foundation step:
 
 - DB/API/UI/dry-run support for store-level names and stable extra markup exists;
+- read-only store-aware catalog payload preview exists;
+- read-only store-aware stock payload preview exists;
 - these overlays are still preparation-only and dry-run-only;
 - current master publish/runtime/scheduler flows remain unchanged.
 
@@ -28,6 +30,23 @@ Explicitly out of scope in this step:
 - no changes in `app/business/dropship_pipeline.py`;
 - no changes in order fetch/import/order sender runtime;
 - no DB schema changes or migrations.
+
+Catalog preview clarification:
+
+- `POST /developer_panel/business-stores/{store_id}/catalog-preview` builds a hypothetical store-aware catalog payload;
+- it reads `master_catalog` plus store mappings only;
+- it does not call `tabletki_master_catalog_exporter`;
+- it does not send data to Tabletki;
+- it does not modify runtime or scheduler behavior.
+
+Stock preview clarification:
+
+- `POST /developer_panel/business-stores/{store_id}/stock-preview` builds a hypothetical store-aware stock payload;
+- it reads `offers` plus store code mappings and store price adjustment mappings only;
+- it does not call `dropship_pipeline` or `business_stock_scheduler_service`;
+- it does not send data to Tabletki;
+- it does not modify `offers.price`;
+- it does not modify runtime or scheduler behavior.
 
 ## 2. What Was Checked
 

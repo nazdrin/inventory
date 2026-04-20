@@ -11,6 +11,8 @@
 - `Business Stores` уже хранит `name_strategy` и `extra_markup_*`;
 - UI уже умеет сохранять эти поля;
 - dry-run уже показывает missing names и stable markup preview;
+- UI также показывает read-only `Catalog preview`;
+- UI также показывает read-only `Stock preview`;
 - live export/runtime по-прежнему не подключён.
 
 Этот handoff теперь трактует страницу `Business-продавцы` только как UI для store-level overlay.
@@ -46,6 +48,8 @@
 - code strategy;
 - migration state;
 - dry-run and missing-code actions.
+- catalog payload preview.
+- stock payload preview.
 
 На этой странице не должны редактироваться enterprise-owned runtime fields:
 
@@ -77,6 +81,31 @@
 Допустимый укороченный вариант:
 
 - `Создать overlay для выбранного предприятия`
+
+Дополнительная read-only action:
+
+- `Catalog preview`
+- `Stock preview`
+
+Она должна:
+
+- вызывать backend preview endpoint;
+- показывать target `tabletki_enterprise_code` / `tabletki_branch` / `legacy_scope_key`;
+- показывать summary по candidate/exportable товарам;
+- показывать preview table по store-aware codes and names;
+- не генерировать mappings;
+- не отправлять catalog наружу.
+
+`Stock preview` должна:
+
+- вызывать backend stock preview endpoint;
+- показывать target `tabletki_enterprise_code` / `tabletki_branch` / `legacy_scope_key`;
+- показывать summary по offer rows / candidate products / exportable products;
+- показывать preview table по store-aware external codes, qty, base price, markup %, final store price;
+- показывать `final store price` уже округлённой до целого;
+- не генерировать mappings;
+- не генерировать price adjustments;
+- не отправлять stock наружу.
 
 ## Что подтягивается по умолчанию из EnterpriseSettings
 

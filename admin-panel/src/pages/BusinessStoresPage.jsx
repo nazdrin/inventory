@@ -1,20 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { getEnterpriseByCode, updateEnterprise } from "../api/enterpriseApi";
+import { getAuthHeaders, handleAuthError } from "../api/developerApi";
 import { API_BASE_URL } from "../config";
-
-const getAuthHeaders = () => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-        window.location.href = "/";
-    }
-    return {
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-        },
-    };
-};
 
 const pageStyle = {
     padding: "24px",
@@ -183,6 +171,35 @@ const badgeStyle = {
 };
 
 const emptyValue = "—";
+
+const formatApiError = (error, fallbackMessage) => {
+    const detail = error?.response?.data?.detail;
+    if (typeof detail === "string" && detail.trim()) {
+        return detail;
+    }
+    if (Array.isArray(detail) && detail.length) {
+        return detail
+            .map((item) => {
+                if (typeof item === "string") {
+                    return item;
+                }
+                if (item && typeof item === "object") {
+                    const location = Array.isArray(item.loc) ? item.loc.join(".") : "";
+                    const message = typeof item.msg === "string" ? item.msg : JSON.stringify(item);
+                    return location ? `${location}: ${message}` : message;
+                }
+                return String(item);
+            })
+            .join(" | ");
+    }
+    if (detail && typeof detail === "object") {
+        return JSON.stringify(detail);
+    }
+    if (typeof error?.message === "string" && error.message.trim()) {
+        return error.message;
+    }
+    return fallbackMessage;
+};
 
 const initialEnterpriseDraft = {
     enterprise_code: "",
@@ -468,6 +485,8 @@ const BusinessStoresPage = () => {
     const [storeError, setStoreError] = useState("");
     const [storeSuccess, setStoreSuccess] = useState("");
     const [dryRunResult, setDryRunResult] = useState(null);
+    const [catalogPreviewResult, setCatalogPreviewResult] = useState(null);
+    const [stockPreviewResult, setStockPreviewResult] = useState(null);
 
     const loadBusinessEnterprises = useCallback(async () => {
         const response = await axios.get(
@@ -515,8 +534,9 @@ const BusinessStoresPage = () => {
                     setSelectedEnterpriseCode(String(enterpriseRows[0].enterprise_code || ""));
                 }
             } catch (error) {
+                handleAuthError(error);
                 console.error("Error loading Business Stores page:", error);
-                setPageError("Не удалось загрузить Business-продавцы.");
+                setPageError(formatApiError(error, "Не удалось загрузить Business-продавцы."));
             } finally {
                 setPageLoading(false);
             }
@@ -558,6 +578,8 @@ const BusinessStoresPage = () => {
                 setSelectedStoreId(null);
                 setIsCreatingOverlay(false);
                 setDryRunResult(null);
+                setCatalogPreviewResult(null);
+                setStockPreviewResult(null);
                 return;
             }
 
@@ -583,8 +605,9 @@ const BusinessStoresPage = () => {
                     setIsCreatingOverlay(false);
                 }
             } catch (error) {
+                handleAuthError(error);
                 console.error("Error loading selected Business enterprise:", error);
-                setPageError("Не удалось загрузить данные выбранного Business-предприятия.");
+                setPageError(formatApiError(error, "Не удалось загрузить данные выбранного Business-предприятия."));
             }
         }
 
@@ -607,6 +630,8 @@ const BusinessStoresPage = () => {
         setStoreError("");
         setStoreSuccess("");
         setDryRunResult(null);
+        setCatalogPreviewResult(null);
+        setStockPreviewResult(null);
         setSelectedStoreId(null);
         setIsCreatingOverlay(true);
         setStoreDraft(buildStoreDraftFromEnterprise(enterpriseDraft, storesForSelectedEnterprise));
@@ -616,6 +641,8 @@ const BusinessStoresPage = () => {
         setStoreError("");
         setStoreSuccess("");
         setDryRunResult(null);
+        setCatalogPreviewResult(null);
+        setStockPreviewResult(null);
         setSelectedStoreId(store.id);
         setIsCreatingOverlay(false);
         setStoreDraft(buildStoreDraftFromStore(store));
@@ -640,8 +667,9 @@ const BusinessStoresPage = () => {
             }));
             setEnterpriseSuccess("Настройки предприятия сохранены.");
         } catch (error) {
+            handleAuthError(error);
             console.error("Error saving enterprise settings:", error);
-            setEnterpriseError(error?.response?.data?.detail || error.message || "Не удалось сохранить предприятие.");
+            setEnterpriseError(formatApiError(error, "Не удалось сохранить предприятие."));
         } finally {
             setEnterpriseSaving(false);
         }
@@ -671,12 +699,15 @@ const BusinessStoresPage = () => {
             setSelectedStoreId(savedStore.id);
             setIsCreatingOverlay(false);
             setStoreDraft(buildStoreDraftFromStore(savedStore));
+            setCatalogPreviewResult(null);
+            setStockPreviewResult(null);
             setStoreSuccess(isCreatingOverlay || !selectedStoreId
                 ? "Настройки магазина созданы."
                 : "Настройки магазина сохранены.");
         } catch (error) {
+            handleAuthError(error);
             console.error("Error saving Business Store:", error);
-            setStoreError(error?.response?.data?.detail || error.message || "Не удалось сохранить настройки магазина.");
+            setStoreError(formatApiError(error, "Не удалось сохранить настройки магазина."));
         } finally {
             setStoreSaving(false);
         }
@@ -698,8 +729,10 @@ const BusinessStoresPage = () => {
             setDryRunResult(response.data);
             setStoreSuccess("Dry-run выполнен.");
         } catch (error) {
+            handleAuthError(error);
             console.error("Error running Business Store dry-run:", error);
-            setStoreError(error?.response?.data?.detail || "Не удалось выполнить dry-run.");
+            setDryRunResult(null);
+            setStoreError(formatApiError(error, "Не удалось выполнить dry-run."));
         } finally {
             setActionLoading(false);
         }
@@ -724,8 +757,60 @@ const BusinessStoresPage = () => {
             setDryRunResult(response.data);
             setStoreSuccess("Missing codes сгенерированы.");
         } catch (error) {
+            handleAuthError(error);
             console.error("Error generating missing codes:", error);
-            setStoreError(error?.response?.data?.detail || "Не удалось сгенерировать missing codes.");
+            setDryRunResult(null);
+            setStoreError(formatApiError(error, "Не удалось сгенерировать missing codes."));
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const loadCatalogPreview = async (storeId = selectedStoreId) => {
+        if (!storeId) {
+            return;
+        }
+        setActionLoading(true);
+        setStoreError("");
+        setStoreSuccess("");
+        try {
+            const response = await axios.post(
+                `${API_BASE_URL}/business-stores/${storeId}/catalog-preview`,
+                { limit: 100, include_not_exportable: true },
+                getAuthHeaders(),
+            );
+            setCatalogPreviewResult(response.data);
+            setStoreSuccess("Catalog preview построен.");
+        } catch (error) {
+            handleAuthError(error);
+            console.error("Error building catalog preview:", error);
+            setCatalogPreviewResult(null);
+            setStoreError(formatApiError(error, "Не удалось построить catalog preview."));
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const loadStockPreview = async (storeId = selectedStoreId) => {
+        if (!storeId) {
+            return;
+        }
+        setActionLoading(true);
+        setStoreError("");
+        setStoreSuccess("");
+        try {
+            const response = await axios.post(
+                `${API_BASE_URL}/business-stores/${storeId}/stock-preview`,
+                { limit: 100, include_not_exportable: true },
+                getAuthHeaders(),
+            );
+            setStockPreviewResult(response.data);
+            setStoreSuccess("Stock preview построен.");
+        } catch (error) {
+            handleAuthError(error);
+            console.error("Error building stock preview:", error);
+            setStockPreviewResult(null);
+            setStoreError(formatApiError(error, "Не удалось построить stock preview."));
         } finally {
             setActionLoading(false);
         }
@@ -750,8 +835,10 @@ const BusinessStoresPage = () => {
             setDryRunResult(response.data);
             setStoreSuccess("Missing names сгенерированы.");
         } catch (error) {
+            handleAuthError(error);
             console.error("Error generating missing names:", error);
-            setStoreError(error?.response?.data?.detail || "Не удалось сгенерировать missing names.");
+            setDryRunResult(null);
+            setStoreError(formatApiError(error, "Не удалось сгенерировать missing names."));
         } finally {
             setActionLoading(false);
         }
@@ -776,8 +863,10 @@ const BusinessStoresPage = () => {
             setStoreSuccess(`Names mapping очищен: ${response.data.affected_count || 0}.`);
             await runDryRun(selectedStoreId);
         } catch (error) {
+            handleAuthError(error);
             console.error("Error cleaning product names:", error);
-            setStoreError(error?.response?.data?.detail || "Не удалось очистить names mapping.");
+            setDryRunResult(null);
+            setStoreError(formatApiError(error, "Не удалось очистить names mapping."));
         } finally {
             setActionLoading(false);
         }
@@ -802,8 +891,10 @@ const BusinessStoresPage = () => {
             setDryRunResult(response.data);
             setStoreSuccess("Missing price adjustments сгенерированы.");
         } catch (error) {
+            handleAuthError(error);
             console.error("Error generating missing price adjustments:", error);
-            setStoreError(error?.response?.data?.detail || "Не удалось сгенерировать missing price adjustments.");
+            setDryRunResult(null);
+            setStoreError(formatApiError(error, "Не удалось сгенерировать missing price adjustments."));
         } finally {
             setActionLoading(false);
         }
@@ -885,6 +976,7 @@ const BusinessStoresPage = () => {
                                 setSelectedStoreId(null);
                                 setIsCreatingOverlay(false);
                                 setDryRunResult(null);
+                                setCatalogPreviewResult(null);
                                 setEnterpriseError("");
                                 setEnterpriseSuccess("");
                                 setStoreError("");
@@ -1391,6 +1483,22 @@ const BusinessStoresPage = () => {
                                 </button>
                                 <button
                                     type="button"
+                                    style={secondaryButtonStyle}
+                                    onClick={() => loadCatalogPreview(selectedStoreId)}
+                                    disabled={!selectedStoreId || actionLoading}
+                                >
+                                    Catalog preview
+                                </button>
+                                <button
+                                    type="button"
+                                    style={secondaryButtonStyle}
+                                    onClick={() => loadStockPreview(selectedStoreId)}
+                                    disabled={!selectedStoreId || actionLoading}
+                                >
+                                    Stock preview
+                                </button>
+                                <button
+                                    type="button"
                                     style={dangerButtonStyle}
                                     onClick={cleanupProductNames}
                                     disabled={!selectedStoreId || actionLoading}
@@ -1463,6 +1571,18 @@ const BusinessStoresPage = () => {
                                                     }}>
                                                         Dry-run
                                                     </button>
+                                                    <button type="button" style={secondaryButtonStyle} onClick={() => {
+                                                        selectOverlay(item);
+                                                        loadCatalogPreview(item.id);
+                                                    }}>
+                                                        Catalog preview
+                                                    </button>
+                                                    <button type="button" style={secondaryButtonStyle} onClick={() => {
+                                                        selectOverlay(item);
+                                                        loadStockPreview(item.id);
+                                                    }}>
+                                                        Stock preview
+                                                    </button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -1504,6 +1624,144 @@ const BusinessStoresPage = () => {
                             ) : null}
                             {renderSummaryBlock("Stock", dryRunResult.stock)}
                             {renderSummaryBlock("Catalog", dryRunResult.catalog)}
+                        </Section>
+                    ) : null}
+
+                    {catalogPreviewResult ? (
+                        <Section title="Catalog payload preview" description="Preview only: payload строится поверх master_catalog и store mappings, но не отправляется в Tabletki.">
+                            {catalogPreviewResult.warnings?.length ? (
+                                <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
+                                    {JSON.stringify(catalogPreviewResult.warnings, null, 2)}
+                                </pre>
+                            ) : null}
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
+                                <InfoItem label="Tabletki enterprise" value={catalogPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
+                                <InfoItem label="Tabletki branch" value={catalogPreviewResult.store?.tabletki_branch || emptyValue} />
+                                <InfoItem label="Legacy scope" value={catalogPreviewResult.store?.legacy_scope_key || emptyValue} />
+                                <InfoItem label="Catalog source" value={catalogPreviewResult.summary?.catalog_source || emptyValue} />
+                                <InfoItem label="Candidate products" value={catalogPreviewResult.summary?.candidate_products ?? emptyValue} />
+                                <InfoItem label="Exportable products" value={catalogPreviewResult.summary?.exportable_products ?? emptyValue} />
+                                <InfoItem label="Missing code mapping" value={catalogPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
+                                <InfoItem label="Missing name mapping" value={catalogPreviewResult.summary?.missing_name_mapping ?? emptyValue} />
+                            </div>
+                            {catalogPreviewResult.not_exportable_samples?.length ? (
+                                <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
+                                    {JSON.stringify(catalogPreviewResult.not_exportable_samples, null, 2)}
+                                </pre>
+                            ) : null}
+                            <div style={{ overflow: "auto", maxHeight: "520px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
+                                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1320px" }}>
+                                    <thead>
+                                        <tr>
+                                            {[
+                                                "Internal code",
+                                                "External code",
+                                                "Base name",
+                                                "External name",
+                                                "Barcode",
+                                                "Manufacturer",
+                                                "Brand",
+                                                "Exportable",
+                                                "Reasons",
+                                            ].map((header) => (
+                                                <th key={header} style={tableHeaderStyle}>{header}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(catalogPreviewResult.payload_preview || []).map((item) => (
+                                            <tr key={`${item.internal_product_code}:${item.external_product_code || "missing"}`}>
+                                                <td style={tableCellStyle}>{item.internal_product_code || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.external_product_code || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.base_name || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.external_product_name || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.barcode || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.manufacturer || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.brand || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.exportable ? "Yes" : "No"}</td>
+                                                <td style={tableCellStyle}>{(item.reasons || []).join(", ") || emptyValue}</td>
+                                            </tr>
+                                        ))}
+                                        {!catalogPreviewResult.payload_preview?.length ? (
+                                            <tr>
+                                                <td colSpan={9} style={{ ...tableCellStyle, textAlign: "center" }}>
+                                                    Preview rows отсутствуют.
+                                                </td>
+                                            </tr>
+                                        ) : null}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Section>
+                    ) : null}
+
+                    {stockPreviewResult ? (
+                        <Section title="Stock payload preview" description="Preview only: stock payload строится поверх offers, code mappings и price adjustments, но не отправляется в Tabletki.">
+                            {stockPreviewResult.warnings?.length ? (
+                                <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
+                                    {JSON.stringify(stockPreviewResult.warnings, null, 2)}
+                                </pre>
+                            ) : null}
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
+                                <InfoItem label="Tabletki enterprise" value={stockPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
+                                <InfoItem label="Tabletki branch" value={stockPreviewResult.store?.tabletki_branch || emptyValue} />
+                                <InfoItem label="Legacy scope" value={stockPreviewResult.store?.legacy_scope_key || emptyValue} />
+                                <InfoItem label="Stock source" value={stockPreviewResult.summary?.stock_source || emptyValue} />
+                                <InfoItem label="Offer rows total" value={stockPreviewResult.summary?.offer_rows_total ?? emptyValue} />
+                                <InfoItem label="Candidate products" value={stockPreviewResult.summary?.candidate_products ?? emptyValue} />
+                                <InfoItem label="Exportable products" value={stockPreviewResult.summary?.exportable_products ?? emptyValue} />
+                                <InfoItem label="Missing code mapping" value={stockPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
+                                <InfoItem label="Missing price adjustment" value={stockPreviewResult.summary?.missing_price_adjustment ?? emptyValue} />
+                                <InfoItem label="Markup applied products" value={stockPreviewResult.summary?.markup_applied_products ?? emptyValue} />
+                            </div>
+                            {stockPreviewResult.not_exportable_samples?.length ? (
+                                <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
+                                    {JSON.stringify(stockPreviewResult.not_exportable_samples, null, 2)}
+                                </pre>
+                            ) : null}
+                            <div style={{ overflow: "auto", maxHeight: "520px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
+                                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1400px" }}>
+                                    <thead>
+                                        <tr>
+                                            {[
+                                                "Internal code",
+                                                "External code",
+                                                "Supplier",
+                                                "Qty",
+                                                "Base price",
+                                                "Markup %",
+                                                "Final store price",
+                                                "Exportable",
+                                                "Reasons",
+                                            ].map((header) => (
+                                                <th key={header} style={tableHeaderStyle}>{header}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(stockPreviewResult.payload_preview || []).map((item) => (
+                                            <tr key={`${item.internal_product_code}:${item.external_product_code || "missing"}:${item.supplier_code || "nosupplier"}`}>
+                                                <td style={tableCellStyle}>{item.internal_product_code || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.external_product_code || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.supplier_code || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.qty ?? emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.base_price || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.markup_percent || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.final_store_price_preview || emptyValue}</td>
+                                                <td style={tableCellStyle}>{item.exportable ? "Yes" : "No"}</td>
+                                                <td style={tableCellStyle}>{(item.reasons || []).join(", ") || emptyValue}</td>
+                                            </tr>
+                                        ))}
+                                        {!stockPreviewResult.payload_preview?.length ? (
+                                            <tr>
+                                                <td colSpan={9} style={{ ...tableCellStyle, textAlign: "center" }}>
+                                                    Preview rows отсутствуют.
+                                                </td>
+                                            </tr>
+                                        ) : null}
+                                    </tbody>
+                                </table>
+                            </div>
                         </Section>
                     ) : null}
                 </>
