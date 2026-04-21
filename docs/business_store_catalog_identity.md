@@ -74,6 +74,25 @@ This layer:
 - never calls Tabletki API;
 - does not modify `dropship_pipeline` or stock scheduler runtime.
 
+Manual store-aware catalog export is now also implemented as a separate operator-only path:
+
+- builder/exporter: `app/business/business_store_catalog_exporter.py`
+- CLI: `python -m app.scripts.business_store_catalog_export`
+
+Rules:
+
+- source for export is `build_store_catalog_payload_preview(...)`;
+- only rows with `exportable=true` are sent;
+- missing mappings are not created during export;
+- default mode is dry-run;
+- live send requires explicit `--send --confirm`;
+- scheduler integration is not added;
+- current master publish path is not modified.
+
+Separate legacy stock audit and target manual stock exporter plan:
+
+- [docs/business_store_stock_export_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_stock_export_audit.md)
+
 ## 2. Что проверено
 
 Проверены:

@@ -146,6 +146,7 @@
 - `BUSINESS_STORE_CODE_SALT` - соль для детерминированной генерации внешних кодов товаров per store.
 - `BUSINESS_STORE_CODE_LENGTH` - длина opaque-части внешнего кода товара.
 - `BUSINESS_STORE_FAIL_ON_MISSING_CODE` - будущий runtime-флаг строгого поведения при отсутствии mapping-а кода.
+- `BUSINESS_STORE_ORDER_MAPPING_ENABLED` - включает store-aware reverse mapping в `order_fetcher`; default safe mode is disabled, and when enabled store-aware orders bypass legacy `auto_confirm`.
 - `enterprise_settings` остаётся текущим runtime/control-plane профилем Business-контура.
 - `business_stores` является store-level overlay поверх `enterprise_settings`, а не заменой старого runtime контура.
 - `takes_over_legacy_scope` позже будет использоваться для поэтапного выключения legacy export по конкретному `legacy_scope_key`, без глобального переключения.

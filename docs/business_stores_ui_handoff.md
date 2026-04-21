@@ -6,6 +6,10 @@
 
 Следующий слой store-level catalog identity и extra markup зафиксирован в [docs/business_store_catalog_identity.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_catalog_identity.md).
 
+Legacy stock export audit and manual store-aware stock exporter plan are documented in [docs/business_store_stock_export_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_stock_export_audit.md).
+
+Store-aware orders / reverse mapping audit is documented in [docs/business_store_order_reverse_mapping_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_order_reverse_mapping_audit.md).
+
 Текущий статус после foundation-реализации:
 
 - `Business Stores` уже хранит `name_strategy` и `extra_markup_*`;
@@ -14,6 +18,12 @@
 - UI также показывает read-only `Catalog preview`;
 - UI также показывает read-only `Stock preview`;
 - live export/runtime по-прежнему не подключён.
+
+Дополнительное уточнение:
+
+- manual store-aware catalog live send реализован только через CLI;
+- manual store-aware stock live send реализован только через CLI;
+- live send button в UI не добавляется на этом этапе.
 
 Этот handoff теперь трактует страницу `Business-продавцы` только как UI для store-level overlay.
 
@@ -106,6 +116,19 @@
 - не генерировать mappings;
 - не генерировать price adjustments;
 - не отправлять stock наружу.
+
+Manual catalog export на этом этапе:
+
+- не добавляется как live button в `Business Stores` UI;
+- оператор использует отдельный CLI;
+- UI остаётся safe/read-only для preview сценариев.
+
+Manual stock export на этом этапе:
+
+- не добавляется как live button в `Business Stores` UI;
+- оператор использует отдельный CLI;
+- source для live send — существующий `Stock preview` payload model;
+- UI остаётся safe/read-only для preview сценариев.
 
 ## Что подтягивается по умолчанию из EnterpriseSettings
 

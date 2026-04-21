@@ -14,6 +14,9 @@ It is intentionally limited to architecture, ownership, UI/API boundaries, and f
 Store-level catalog identity and price markup target model is documented separately in:
 
 - [docs/business_store_catalog_identity.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_catalog_identity.md)
+- [docs/business_store_stock_export_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_stock_export_audit.md)
+- [docs/business_store_order_reverse_mapping_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_order_reverse_mapping_audit.md)
+- [docs/business_store_order_autoconfirm_strategy.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_order_autoconfirm_strategy.md)
 
 Current status after the latest foundation step:
 
@@ -47,6 +50,41 @@ Stock preview clarification:
 - it does not send data to Tabletki;
 - it does not modify `offers.price`;
 - it does not modify runtime or scheduler behavior.
+
+Manual store-aware catalog export clarification:
+
+- a separate CLI-only path exists for one explicit `BusinessStore`;
+- it is implemented outside `master_catalog_orchestrator` and outside `tabletki_master_catalog_exporter`;
+- it uses store-aware catalog preview as the export source;
+- it sends only exportable rows;
+- it targets `BusinessStore.tabletki_branch`, not `EnterpriseSettings.branch_id`;
+- default mode is dry-run;
+- live send requires explicit CLI confirmation;
+- scheduler behavior remains unchanged.
+
+Manual store-aware stock export clarification:
+
+- a separate CLI-only path exists for one explicit `BusinessStore`;
+- it is implemented outside `business_stock_scheduler_service`, `dropship_pipeline`, and `process_database_service`;
+- it uses store-aware stock preview as the export source;
+- it sends only exportable rows;
+- it targets `BusinessStore.tabletki_branch`, not `mapping_branch.branch`;
+- `Price` and `PriceReserve` are taken from store-aware `final_store_price_preview`;
+- default mode is dry-run;
+- live send requires explicit CLI confirmation;
+- scheduler behavior remains unchanged.
+
+Store-aware order reverse mapping clarification:
+
+- an isolated read-only helper exists in `app/business/business_store_order_mapper.py`;
+- a read-only integration simulator also exists in `app/business/business_store_order_integration_simulator.py`;
+- runtime wiring in `app/services/order_fetcher.py` also exists behind `BUSINESS_STORE_ORDER_MAPPING_ENABLED`;
+- it resolves `BusinessStore` and maps external store codes back to internal product codes;
+- it preserves the original external `goodsCode` in normalized payload output;
+- it can also verify downstream readiness in legacy order read paths without runtime integration;
+- legacy orders keep old behavior by default;
+- store-aware orders currently bypass legacy `auto_confirm` when the feature flag is enabled;
+- dedicated store-aware availability checker is still a later step.
 
 ## 2. What Was Checked
 
