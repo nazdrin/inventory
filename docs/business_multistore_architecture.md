@@ -537,11 +537,19 @@ Future publishing model:
   - receive catalog with external codes from `BusinessStoreProductCode`
 - `catalog_only_in_stock`
   - filters assortment at store export stage
+- future scheduler-owned store publish
+  - should be implemented as a separate service over `business_store_catalog_exporter`
+  - should be connected behind dedicated feature flags
+  - should not be embedded into `tabletki_master_catalog_exporter`
+  - standalone service and CLI are now implemented
+  - post-daily-publish scheduler hook is now wired behind default-off flags
+  - legacy master publish still remains the primary path
 
 Important separation:
 
 - legacy Business catalog flow and master publish flow must remain distinct concepts;
 - do not overload `business_enterprise_code` and daily publish override with store-level routing.
+- see `docs/business_store_catalog_scheduler_audit.md` for the staged scheduler plan.
 
 ## 10. Stock Future Architecture
 

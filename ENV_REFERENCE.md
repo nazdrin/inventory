@@ -175,6 +175,8 @@
 - `MASTER_ARCHIVE_ENABLED` - включает периодический archive import.
 - `MASTER_ARCHIVE_EVERY_MINUTES` - интервал archive import.
 - `DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER` - отключает legacy Business catalog scheduler.
+- `BUSINESS_STORE_CATALOG_SCHEDULER_ENABLED` - включает отдельный post-daily-publish hook для store-aware catalog publish; по умолчанию `false`.
+- `BUSINESS_STORE_CATALOG_SCHEDULER_DRY_RUN` - переводит store-aware catalog scheduler hook в dry-run/live режим; по умолчанию `true`, то есть без внешней отправки.
 
 ## Balancer
 

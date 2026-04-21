@@ -14,6 +14,10 @@ from zoneinfo import ZoneInfo
 
 from app.business.master_catalog_orchestrator import run_master_catalog_orchestrator
 from app.core.paths import STATE_CACHE_DIR
+from app.database import get_async_db
+from app.services.business_store_catalog_publish_service import (
+    publish_enabled_business_store_catalogs,
+)
 from app.services.master_business_settings_resolver import (
     MasterBusinessSettingsSnapshot,
     load_master_business_settings_snapshot,
@@ -123,6 +127,72 @@ def _extract_job_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         summary["steps_count"] = len(steps)
         summary["step_messages"] = [step.get("message") for step in steps if step.get("message")]
     return summary
+
+
+def _store_catalog_scheduler_enabled() -> bool:
+    return _env_bool("BUSINESS_STORE_CATALOG_SCHEDULER_ENABLED", "0")
+
+
+def _store_catalog_scheduler_dry_run() -> bool:
+    return _env_bool("BUSINESS_STORE_CATALOG_SCHEDULER_DRY_RUN", "1")
+
+
+def _summarize_store_publish_report(report: Dict[str, Any]) -> None:
+    logger.info(
+        (
+            "Store-aware catalog publish summary: dry_run=%s total=%s eligible=%s "
+            "skipped=%s published=%s failed=%s status=%s"
+        ),
+        report.get("dry_run"),
+        report.get("total_stores_found"),
+        report.get("eligible_stores"),
+        report.get("skipped_stores"),
+        report.get("published_stores"),
+        report.get("failed_stores"),
+        report.get("status"),
+    )
+    for store in report.get("stores", []):
+        logger.info(
+            (
+                "Store-aware catalog store result: store_code=%s branch=%s status=%s "
+                "exportable=%s sent=%s skip_reason=%s"
+            ),
+            store.get("store_code"),
+            store.get("tabletki_branch"),
+            store.get("status"),
+            store.get("exportable_products"),
+            store.get("sent_products"),
+            store.get("skip_reason"),
+        )
+
+    for warning in report.get("warnings", []):
+        logger.warning("Store-aware catalog publish warning: %s", warning)
+    for error in report.get("errors", []):
+        logger.error("Store-aware catalog publish error: %s", error)
+
+
+async def _run_store_catalog_publish_hook() -> None:
+    if not _store_catalog_scheduler_enabled():
+        logger.info("Store-aware catalog scheduler hook is disabled")
+        return
+
+    dry_run = _store_catalog_scheduler_dry_run()
+    logger.info(
+        "Store-aware catalog scheduler %s started",
+        "dry-run" if dry_run else "live publish",
+    )
+
+    try:
+        async with get_async_db(commit_on_exit=False) as session:
+            report = await publish_enabled_business_store_catalogs(
+                session,
+                dry_run=dry_run,
+                require_confirm=False,
+                confirm=not dry_run,
+            )
+        _summarize_store_publish_report(report)
+    except Exception:
+        logger.exception("Store-aware catalog scheduler hook failed")
 
 
 async def _run_orchestrator_job(name: str, **kwargs: Any) -> JobResult:
@@ -277,6 +347,19 @@ async def _run_daily_publish(settings: MasterBusinessSettingsSnapshot) -> JobRes
     )
 
 
+async def _run_daily_publish_with_store_hook(settings: MasterBusinessSettingsSnapshot) -> JobResult:
+    result = await _run_daily_publish(settings)
+    if result.status != "ok":
+        logger.info(
+            "Store-aware catalog scheduler hook skipped because legacy daily publish failed: status=%s",
+            result.status,
+        )
+        return result
+
+    await _run_store_catalog_publish_hook()
+    return result
+
+
 async def _run_hourly_archive() -> JobResult:
     return await _run_orchestrator_job(
         "hourly_archive",
@@ -330,7 +413,7 @@ async def _maybe_run_daily_publish(
     if state.get("daily_publish") == slot:
         return None
 
-    result = await _run_daily_publish(settings)
+    result = await _run_daily_publish_with_store_hook(settings)
     if result.status == "ok":
         state["daily_publish"] = slot
         _save_state(state)

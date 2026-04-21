@@ -138,6 +138,7 @@ Separate legacy stock audit and target manual stock exporter plan:
 
 - текущая daily publish модель single-enterprise;
 - store-level live export надо делать отдельным маршрутом позже, без подмены текущего publish path.
+- staged scheduler connection for that future route is described in `docs/business_store_catalog_scheduler_audit.md`.
 
 ### 4.2 Где берётся master catalog
 
