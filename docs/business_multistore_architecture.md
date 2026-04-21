@@ -15,6 +15,7 @@ Store-level catalog identity and price markup target model is documented separat
 
 - [docs/business_store_catalog_identity.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_catalog_identity.md)
 - [docs/business_store_stock_export_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_stock_export_audit.md)
+- [docs/business_store_offers_refresh_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_offers_refresh_audit.md)
 - [docs/business_store_order_reverse_mapping_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_order_reverse_mapping_audit.md)
 - [docs/business_store_order_autoconfirm_strategy.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_order_autoconfirm_strategy.md)
 
@@ -73,6 +74,18 @@ Manual store-aware stock export clarification:
 - default mode is dry-run;
 - live send requires explicit CLI confirmation;
 - scheduler behavior remains unchanged.
+
+Refresh-only offers clarification:
+
+- a separate refresh-only helper now exists in `app/business/dropship_pipeline.py`;
+- a separate manual CLI exists in `app/scripts/business_offers_refresh.py`;
+- this path updates `offers` only;
+- it does not call `process_database_service("stock", ...)`;
+- it does not write `InventoryStock`;
+- it does not send stock to Tabletki;
+- current legacy `run_pipeline(..., "stock")` still keeps its previous behavior by running refresh first and stock export second.
+- the separate store-aware stock scheduler can now optionally run refresh-before-publish behind dedicated env flags;
+- default scheduler mode still remains publish-only and dry-run-safe.
 
 Store-aware order reverse mapping clarification:
 
@@ -586,6 +599,10 @@ Therefore:
 - do not break `build_stock_payload()`;
 - do not replace `mapping_branch` consumption in legacy path;
 - add store-aware stock export as a new branch of runtime later.
+- standalone multi-store stock publish service and CLI are now implemented;
+- separate store-aware stock scheduler service is now implemented;
+- it remains isolated from legacy `business_stock_scheduler_service`;
+- see `docs/business_store_stock_scheduler_audit.md` for the recommended separate scheduler strategy and offers-freshness constraints.
 
 ## 11. Orders Future Architecture
 

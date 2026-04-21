@@ -177,6 +177,12 @@
 - `DISABLE_OLD_BUSINESS_CATALOG_SCHEDULER` - отключает legacy Business catalog scheduler.
 - `BUSINESS_STORE_CATALOG_SCHEDULER_ENABLED` - включает отдельный post-daily-publish hook для store-aware catalog publish; по умолчанию `false`.
 - `BUSINESS_STORE_CATALOG_SCHEDULER_DRY_RUN` - переводит store-aware catalog scheduler hook в dry-run/live режим; по умолчанию `true`, то есть без внешней отправки.
+- `BUSINESS_STORE_STOCK_SCHEDULER_ENABLED` - включает отдельный store-aware stock scheduler; по умолчанию `false`.
+- `BUSINESS_STORE_STOCK_SCHEDULER_DRY_RUN` - переводит store-aware stock scheduler в dry-run/live режим; по умолчанию `true`, то есть без внешней отправки.
+- `BUSINESS_STORE_STOCK_SCHEDULER_INTERVAL_SECONDS` - интервал цикла отдельного store-aware stock scheduler; рекомендуемый default `300`, с защитным minimum `30`.
+- `BUSINESS_STORE_STOCK_REFRESH_OFFERS_BEFORE_PUBLISH` - включает optional refresh `offers` перед каждым циклом store-aware stock publish; по умолчанию `false`.
+- `BUSINESS_STORE_STOCK_REFRESH_ENTERPRISE_CODE` - optional enterprise selector для refresh-before-publish; если пусто, selector берётся из `BusinessSettings.business_enterprise_code` или fallback-логики refresh service.
+- `BUSINESS_STORE_STOCK_REFRESH_ALLOW_PARTIAL` - разрешает publish после refresh со статусом `partial`; по умолчанию `false`, то есть partial refresh останавливает publish cycle.
 
 ## Balancer
 

@@ -182,6 +182,189 @@ _LOG_LEVEL = os.getenv("DROPSHIP_LOG_LEVEL", "INFO").upper()
 logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
 VERBOSE_ITEM_LOGS = os.getenv("DROPSHIP_VERBOSE_ITEM_LOGS", "0") == "1"
 
+
+async def _collect_offers_refresh_summary(session: AsyncSession) -> tuple[int, list[str]]:
+    offers_rows_after = int(
+        (
+            await session.execute(
+                select(func.count()).select_from(Offer)
+            )
+        ).scalar_one()
+        or 0
+    )
+    city_rows = await session.execute(
+        select(Offer.city)
+        .where(Offer.city.is_not(None))
+        .distinct()
+        .order_by(Offer.city.asc())
+    )
+    cities = [str(city).strip() for city in city_rows.scalars().all() if str(city or "").strip()]
+    return offers_rows_after, cities
+
+
+def _finalize_offers_refresh_report(report: dict[str, Any], finished_at: datetime) -> dict[str, Any]:
+    report["finished_at"] = finished_at.astimezone(timezone.utc).isoformat()
+    duration = finished_at - report["_started_at_dt"]
+    report["duration_sec"] = round(max(duration.total_seconds(), 0.0), 3)
+
+    suppliers_processed = int(report.get("suppliers_processed", 0) or 0)
+    suppliers_blocked = int(report.get("suppliers_blocked", 0) or 0)
+    suppliers_failed = int(report.get("suppliers_failed", 0) or 0)
+    suppliers_cleared = int(report.get("suppliers_cleared", 0) or 0)
+
+    if suppliers_failed <= 0:
+        report["status"] = "ok"
+    elif suppliers_processed > 0 or suppliers_blocked > 0 or suppliers_cleared > 0:
+        report["status"] = "partial"
+    else:
+        report["status"] = "error"
+
+    report.pop("_started_at_dt", None)
+    report.pop("_cleared_suppliers", None)
+    return report
+
+
+async def _refresh_business_offers_in_session(
+    session: AsyncSession,
+    *,
+    enterprise_code: Optional[str] = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    report: dict[str, Any] = {
+        "status": "ok",
+        "enterprise_code": str(enterprise_code).strip() if enterprise_code is not None else None,
+        "suppliers_total": 0,
+        "suppliers_processed": 0,
+        "suppliers_blocked": 0,
+        "suppliers_failed": 0,
+        "suppliers_cleared": 0,
+        "offers_rows_after": 0,
+        "cities": [],
+        "started_at": started_at.astimezone(timezone.utc).isoformat(),
+        "finished_at": None,
+        "duration_sec": 0.0,
+        "warnings": [],
+        "errors": [],
+        "_started_at_dt": started_at,
+        "_cleared_suppliers": set(),
+    }
+
+    pricing_snapshot = await load_business_pricing_settings_snapshot(session)
+    if pricing_snapshot.inconsistency:
+        logger.warning(
+            "Pricing runtime source=%s fallback_reason=%s",
+            pricing_snapshot.source,
+            pricing_snapshot.inconsistency,
+        )
+        report["warnings"].append(
+            f"Pricing runtime inconsistency: {pricing_snapshot.inconsistency}"
+        )
+    else:
+        logger.info("Pricing runtime source=%s", pricing_snapshot.source)
+
+    try:
+        to_clear = await fetch_suppliers_to_clear(session)
+        total_deleted = 0
+        for scode in to_clear:
+            total_deleted += await clear_offers_for_supplier(session, scode)
+            if str(scode or "").strip():
+                report["_cleared_suppliers"].add(str(scode).strip())
+        if total_deleted:
+            logger.info(
+                "Удалены офферы неактивных/отсутствующих поставщиков: %d (поставщиков: %d)",
+                total_deleted,
+                len(to_clear),
+            )
+        await session.commit()
+    except Exception as exc:
+        logger.exception("Очистка офферов неактивных/удалённых поставщиков завершилась ошибкой: %s", exc)
+        await session.rollback()
+        report["warnings"].append(
+            f"Sanitary cleanup failed before supplier loop: {exc}"
+        )
+
+    suppliers = await fetch_active_enterprises(session)
+    report["suppliers_total"] = len(suppliers)
+
+    if enterprise_code:
+        for ent in suppliers:
+            setattr(ent, "_pipeline_enterprise_code", enterprise_code)
+
+    if not suppliers:
+        logger.info("No active dropship enterprises.")
+    else:
+        for ent in suppliers:
+            supplier_code = str(getattr(ent, "code", "") or "")
+            try:
+                if await is_supplier_blocked(session, supplier_code, supplier=ent):
+                    logger.info(
+                        "Поставщик %s заблокирован по расписанию. Удаляем старые offers.",
+                        supplier_code,
+                    )
+                    try:
+                        deleted = await clear_offers_for_supplier(session, supplier_code)
+                        if supplier_code:
+                            report["_cleared_suppliers"].add(supplier_code)
+                        logger.info(
+                            "Для заблокированного поставщика %s удалено %s offers.",
+                            supplier_code,
+                            deleted,
+                        )
+                        await session.commit()
+                        report["suppliers_blocked"] += 1
+                    except Exception as exc:
+                        logger.exception(
+                            "Не удалось удалить offers для заблокированного поставщика %s: %s",
+                            supplier_code,
+                            exc,
+                        )
+                        await session.rollback()
+                        report["suppliers_failed"] += 1
+                        report["errors"].append(
+                            {
+                                "supplier_code": supplier_code or "<unknown>",
+                                "message": f"Blocked supplier cleanup failed: {exc}",
+                            }
+                        )
+                    continue
+
+                if supplier_code:
+                    report["_cleared_suppliers"].add(supplier_code)
+                await process_supplier(session, ent, PARSERS, pricing_snapshot)
+                await session.commit()
+                report["suppliers_processed"] += 1
+            except Exception as exc:
+                logger.exception("Failed supplier %s: %s", supplier_code or "<unknown>", exc)
+                await session.rollback()
+                report["suppliers_failed"] += 1
+                report["errors"].append(
+                    {
+                        "supplier_code": supplier_code or "<unknown>",
+                        "message": str(exc),
+                    }
+                )
+
+    offers_rows_after, cities = await _collect_offers_refresh_summary(session)
+    report["offers_rows_after"] = offers_rows_after
+    report["cities"] = cities
+    report["suppliers_cleared"] = len(report["_cleared_suppliers"])
+    return _finalize_offers_refresh_report(report, datetime.now(timezone.utc))
+
+
+async def refresh_business_offers(
+    enterprise_code: Optional[str] = None,
+    *,
+    return_report: bool = True,
+) -> dict[str, Any]:
+    async with get_async_db(commit_on_exit=False) as session:
+        report = await _refresh_business_offers_in_session(
+            session,
+            enterprise_code=enterprise_code,
+        )
+    if return_report:
+        return report
+    return report
+
 # --------------------------------------------------------------------------------------
 # Утилиты
 # --------------------------------------------------------------------------------------
@@ -1879,71 +2062,22 @@ async def run_pipeline(
     file_type: Optional[str] = None,
 ) -> None:
     async with get_async_db() as session:
-        pricing_snapshot = await load_business_pricing_settings_snapshot(session)
-        if pricing_snapshot.inconsistency:
-            logger.warning(
-                "Pricing runtime source=%s fallback_reason=%s",
-                pricing_snapshot.source,
-                pricing_snapshot.inconsistency,
-            )
-        else:
-            logger.info("Pricing runtime source=%s", pricing_snapshot.source)
-
-        # 0) Санитарная очистка: удаляем офферы по списку поставщиков, которых нужно очистить
-        try:
-            to_clear = await fetch_suppliers_to_clear(session)
-            total_deleted = 0
-            for scode in to_clear:
-                total_deleted += await clear_offers_for_supplier(session, scode)
-            if total_deleted:
-                logger.info(
-                    "Удалены офферы неактивных/отсутствующих поставщиков: %d (поставщиков: %d)",
-                    total_deleted, len(to_clear)
-                )
-            await session.commit()
-        except Exception as exc:
-            logger.exception("Очистка офферов неактивных/удалённых поставщиков завершилась ошибкой: %s", exc)
-            await session.rollback()
-
-        # 1) Обновляем offers по всем активным поставщикам
-        suppliers = await fetch_active_enterprises(session)
-        # Пробрасываем enterprise_code пайплайна в ent, чтобы process_supplier мог читать enterprise_settings по нему
-        # (enterprise_code — код предприятия, НЕ код поставщика)
-        if enterprise_code:
-            for ent in suppliers:
-                setattr(ent, "_pipeline_enterprise_code", enterprise_code)
-        if not suppliers:
-            logger.info("No active dropship enterprises.")
-        else:
-            for ent in suppliers:
-                supplier_code = str(getattr(ent, "code", "") or "")
-                try:
-                    if await is_supplier_blocked(session, supplier_code, supplier=ent):
-                        logger.info(
-                            "Поставщик %s заблокирован по расписанию. Удаляем старые offers.",
-                            supplier_code,
-                        )
-                        try:
-                            deleted = await clear_offers_for_supplier(session, supplier_code)
-                            logger.info(
-                                "Для заблокированного поставщика %s удалено %s offers.",
-                                supplier_code,
-                                deleted,
-                            )
-                            await session.commit()
-                        except Exception as exc:
-                            logger.exception(
-                                "Не удалось удалить offers для заблокированного поставщика %s: %s",
-                                supplier_code,
-                                exc,
-                            )
-                            await session.rollback()
-                        continue
-                    await process_supplier(session, ent, PARSERS, pricing_snapshot)
-                    await session.commit()
-                except Exception as exc:
-                    logger.exception("Failed supplier %s: %s", supplier_code or "<unknown>", exc)
-                    await session.rollback()
+        refresh_report = await _refresh_business_offers_in_session(
+            session,
+            enterprise_code=enterprise_code,
+        )
+        logger.info(
+            "Business offers refresh summary: status=%s suppliers_total=%s processed=%s blocked=%s failed=%s cleared=%s offers_rows_after=%s cities=%s duration_sec=%s",
+            refresh_report.get("status"),
+            refresh_report.get("suppliers_total"),
+            refresh_report.get("suppliers_processed"),
+            refresh_report.get("suppliers_blocked"),
+            refresh_report.get("suppliers_failed"),
+            refresh_report.get("suppliers_cleared"),
+            refresh_report.get("offers_rows_after"),
+            len(refresh_report.get("cities") or []),
+            refresh_report.get("duration_sec"),
+        )
 
         # 2) Если нужно, формируем и отправляем пакет
         if enterprise_code and file_type:

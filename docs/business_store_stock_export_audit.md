@@ -33,6 +33,10 @@
 - `docs/business_store_catalog_identity.md`
 - `docs/business_stores_ui_handoff.md`
 
+Связанный анализ refresh-only boundary:
+
+- [docs/business_store_offers_refresh_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_offers_refresh_audit.md)
+
 ## 3. Legacy Stock Scheduler Flow
 
 ### 3.1 Кто запускает stock export
@@ -588,3 +592,16 @@ Store-aware manual stock export should therefore be implemented as a separate ex
 - no scheduler
 - no DB side effects
 - no `mapping_branch` target resolution
+
+Separate future scheduler strategy for this store-aware stock path is documented in:
+
+- `docs/business_store_stock_scheduler_audit.md`
+
+Standalone multi-store publish layer for this path is now implemented via:
+
+- `app/services/business_store_stock_publish_service.py`
+- `app/scripts/business_store_stock_publish.py`
+
+Separate scheduler layer for the same path is now implemented via:
+
+- `app/services/business_store_stock_scheduler_service.py`
