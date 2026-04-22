@@ -147,6 +147,8 @@
 - `BUSINESS_STORE_CODE_LENGTH` - длина opaque-части внешнего кода товара.
 - `BUSINESS_STORE_FAIL_ON_MISSING_CODE` - будущий runtime-флаг строгого поведения при отсутствии mapping-а кода.
 - `BUSINESS_STORE_ORDER_MAPPING_ENABLED` - включает store-aware reverse mapping в `order_fetcher`; default safe mode is disabled, and when enabled store-aware orders bypass legacy `auto_confirm`.
+- `BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED` - включает отдельную отправку Tabletki status `2` после успешной обработки store-aware normalized order; default `false`; для Tabletki-facing payload восстанавливает `goodsCode` из `originalGoodsCodeExternal`, если поле есть.
+- `BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED` - включает store-aware outbound code mapping только в основном SalesDrive webhook `/webhooks/salesdrive`; default `false`; при `true` перед отправкой статусов в Tabletki преобразует `products[].parameter` и `products[].sku` из internal code во внешний store code по `BusinessStore.tabletki_branch`; `mapping_error` блокирует automatic outbound send для конкретного webhook event.
 - `enterprise_settings` остаётся текущим runtime/control-plane профилем Business-контура.
 - `business_stores` является store-level overlay поверх `enterprise_settings`, а не заменой старого runtime контура.
 - `takes_over_legacy_scope` позже будет использоваться для поэтапного выключения legacy export по конкретному `legacy_scope_key`, без глобального переключения.

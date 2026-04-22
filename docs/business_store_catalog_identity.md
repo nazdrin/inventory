@@ -1,5 +1,12 @@
 # Business Store Catalog Identity
 
+Status note:
+
+- this document describes the current and previously planned store-level catalog identity model;
+- a newer migration audit now defines the next target architecture where catalog identity becomes enterprise-level;
+- use it as the primary reference before changing schema or runtime readers:
+  - [docs/business_enterprise_catalog_identity_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_enterprise_catalog_identity_audit.md)
+
 ## 1. Scope
 
 Этот документ фиксирует target architecture для следующего слоя Business multistore:

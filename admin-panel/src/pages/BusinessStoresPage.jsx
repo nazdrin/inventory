@@ -238,7 +238,7 @@ const initialStoreDraft = {
     catalog_only_in_stock: true,
     code_strategy: "opaque_mapping",
     code_prefix: "",
-    name_strategy: "base",
+    name_strategy: "supplier_random",
     extra_markup_enabled: false,
     extra_markup_mode: "percent",
     extra_markup_min: "",
@@ -252,17 +252,17 @@ const codeStrategyOptions = [
     {
         value: "legacy_same",
         label: "legacy_same",
-        help: "Внешний код = внутренний product_code. Для базового продавца.",
+        help: "Внешний код = внутренний product_code. Для базового магазина.",
     },
     {
         value: "opaque_mapping",
         label: "opaque_mapping",
-        help: "Создаются отдельные внешние коды. Для новых продавцов.",
+        help: "Создаются отдельные внешние коды. Для новых магазинов.",
     },
     {
         value: "prefix_mapping",
         label: "prefix_mapping",
-        help: "Режим с префиксом. Использовать только осознанно.",
+        help: "Коды с префиксом. Использовать только осознанно.",
     },
 ];
 
@@ -270,14 +270,34 @@ const nameStrategyOptions = [
     {
         value: "base",
         label: "base",
-        help: "Использовать базовые названия из master_catalog.",
+        help: "Использовать название из master_catalog.",
     },
     {
         value: "supplier_random",
         label: "supplier_random",
-        help: "Один раз выбрать supplier name и сохранить стабильно per store + product.",
+        help: "Один раз выбрать supplier name и сохранить для store + product.",
     },
 ];
+
+const migrationStatusOptions = [
+    { value: "draft", label: "draft", help: "Черновик. Не участвует в live-выгрузках." },
+    { value: "dry_run", label: "dry_run", help: "Тест. Можно смотреть preview и dry-run." },
+    { value: "stock_live", label: "stock_live", help: "Промежуточный этап запуска остатков." },
+    { value: "catalog_stock_live", label: "catalog_stock_live", help: "Каталог и остатки live." },
+    { value: "orders_live", label: "orders_live", help: "Каталог, остатки и заказы live." },
+    { value: "disabled", label: "disabled", help: "Магазин выключен из нового контура." },
+];
+
+const boolOnOff = (value) => (value ? "Включено" : "Выключено");
+const boolShort = (value) => (value ? "Вкл" : "Выкл");
+
+const formatMigrationStatusLabel = (value) => {
+    const option = migrationStatusOptions.find((item) => item.value === value);
+    if (!option) {
+        return value || emptyValue;
+    }
+    return `${option.value} · ${option.help}`;
+};
 
 const normalizeOptionalText = (value) => {
     const normalized = String(value ?? "").trim();
@@ -356,8 +376,6 @@ const buildStoreDraftFromEnterprise = (enterprise, existingStores = []) => ({
     enterprise_code: String(enterprise?.enterprise_code || "").trim(),
     tabletki_enterprise_code: String(enterprise?.enterprise_code || "").trim(),
     tabletki_branch: String(enterprise?.branch_id || "").trim(),
-    catalog_enabled: Boolean(enterprise?.catalog_enabled),
-    stock_enabled: Boolean(enterprise?.stock_enabled),
 });
 
 const buildStoreDraftFromStore = (store) => ({
@@ -472,7 +490,6 @@ const BusinessStoresPage = () => {
     const [legacyScopes, setLegacyScopes] = useState([]);
     const [selectedEnterpriseCode, setSelectedEnterpriseCode] = useState("");
     const [selectedStoreId, setSelectedStoreId] = useState(null);
-    const [isCreatingOverlay, setIsCreatingOverlay] = useState(false);
     const [enterpriseDraft, setEnterpriseDraft] = useState(initialEnterpriseDraft);
     const [storeDraft, setStoreDraft] = useState(initialStoreDraft);
     const [enterpriseSaving, setEnterpriseSaving] = useState(false);
@@ -536,7 +553,7 @@ const BusinessStoresPage = () => {
             } catch (error) {
                 handleAuthError(error);
                 console.error("Error loading Business Stores page:", error);
-                setPageError(formatApiError(error, "Не удалось загрузить Business-продавцы."));
+                setPageError(formatApiError(error, "Не удалось загрузить Business-магазины."));
             } finally {
                 setPageLoading(false);
             }
@@ -570,13 +587,19 @@ const BusinessStoresPage = () => {
         [storeDraft.name_strategy],
     );
 
+    const selectedMigrationStatus = useMemo(
+        () => migrationStatusOptions.find((item) => item.value === storeDraft.migration_status) || migrationStatusOptions[0],
+        [storeDraft.migration_status],
+    );
+
+    const isNewStoreDraft = !selectedStoreId;
+
     useEffect(() => {
         async function loadEnterpriseContext() {
             if (!selectedEnterpriseCode) {
                 setEnterpriseDraft(initialEnterpriseDraft);
                 setStoreDraft(initialStoreDraft);
                 setSelectedStoreId(null);
-                setIsCreatingOverlay(false);
                 setDryRunResult(null);
                 setCatalogPreviewResult(null);
                 setStockPreviewResult(null);
@@ -593,16 +616,13 @@ const BusinessStoresPage = () => {
 
                 if (storeForSelection) {
                     setStoreDraft(buildStoreDraftFromStore(storeForSelection));
-                    setIsCreatingOverlay(false);
                 } else if (storesForSelectedEnterprise.length > 0) {
                     const firstStore = storesForSelectedEnterprise[0];
                     setSelectedStoreId(firstStore.id);
                     setStoreDraft(buildStoreDraftFromStore(firstStore));
-                    setIsCreatingOverlay(false);
                 } else {
                     setSelectedStoreId(null);
                     setStoreDraft(buildStoreDraftFromEnterprise(enterprise, storesForSelectedEnterprise));
-                    setIsCreatingOverlay(false);
                 }
             } catch (error) {
                 handleAuthError(error);
@@ -622,21 +642,6 @@ const BusinessStoresPage = () => {
         setStoreDraft((prev) => ({ ...prev, [key]: value }));
     };
 
-    const startCreateOverlay = () => {
-        if (!selectedEnterpriseCode) {
-            setStoreError("Сначала выберите Business-предприятие.");
-            return;
-        }
-        setStoreError("");
-        setStoreSuccess("");
-        setDryRunResult(null);
-        setCatalogPreviewResult(null);
-        setStockPreviewResult(null);
-        setSelectedStoreId(null);
-        setIsCreatingOverlay(true);
-        setStoreDraft(buildStoreDraftFromEnterprise(enterpriseDraft, storesForSelectedEnterprise));
-    };
-
     const selectOverlay = (store) => {
         setStoreError("");
         setStoreSuccess("");
@@ -644,7 +649,6 @@ const BusinessStoresPage = () => {
         setCatalogPreviewResult(null);
         setStockPreviewResult(null);
         setSelectedStoreId(store.id);
-        setIsCreatingOverlay(false);
         setStoreDraft(buildStoreDraftFromStore(store));
     };
 
@@ -682,7 +686,7 @@ const BusinessStoresPage = () => {
         try {
             const payload = buildStorePayload(storeDraft, selectedEnterpriseCode);
             let response;
-            if (isCreatingOverlay || !selectedStoreId) {
+            if (!selectedStoreId) {
                 response = await axios.post(`${API_BASE_URL}/business-stores`, payload, getAuthHeaders());
             } else {
                 const updatePayload = { ...payload };
@@ -697,13 +701,12 @@ const BusinessStoresPage = () => {
             const savedStore = response.data;
             await loadStores();
             setSelectedStoreId(savedStore.id);
-            setIsCreatingOverlay(false);
             setStoreDraft(buildStoreDraftFromStore(savedStore));
             setCatalogPreviewResult(null);
             setStockPreviewResult(null);
-            setStoreSuccess(isCreatingOverlay || !selectedStoreId
-                ? "Настройки магазина созданы."
-                : "Настройки магазина сохранены.");
+            setStoreSuccess(!selectedStoreId
+                ? "Магазин создан."
+                : "Изменения магазина сохранены.");
         } catch (error) {
             handleAuthError(error);
             console.error("Error saving Business Store:", error);
@@ -742,7 +745,7 @@ const BusinessStoresPage = () => {
         if (!selectedStoreId) {
             return;
         }
-        if (!window.confirm("Сгенерировать missing product codes для выбранного магазина?")) {
+        if (!window.confirm("Сгенерировать недостающие коды товаров для выбранного магазина?")) {
             return;
         }
         setActionLoading(true);
@@ -755,12 +758,12 @@ const BusinessStoresPage = () => {
                 getAuthHeaders(),
             );
             setDryRunResult(response.data);
-            setStoreSuccess("Missing codes сгенерированы.");
+            setStoreSuccess("Недостающие коды сгенерированы.");
         } catch (error) {
             handleAuthError(error);
             console.error("Error generating missing codes:", error);
             setDryRunResult(null);
-            setStoreError(formatApiError(error, "Не удалось сгенерировать missing codes."));
+            setStoreError(formatApiError(error, "Не удалось сгенерировать недостающие коды."));
         } finally {
             setActionLoading(false);
         }
@@ -780,12 +783,12 @@ const BusinessStoresPage = () => {
                 getAuthHeaders(),
             );
             setCatalogPreviewResult(response.data);
-            setStoreSuccess("Catalog preview построен.");
+            setStoreSuccess("Preview каталога построен.");
         } catch (error) {
             handleAuthError(error);
             console.error("Error building catalog preview:", error);
             setCatalogPreviewResult(null);
-            setStoreError(formatApiError(error, "Не удалось построить catalog preview."));
+            setStoreError(formatApiError(error, "Не удалось построить preview каталога."));
         } finally {
             setActionLoading(false);
         }
@@ -805,12 +808,12 @@ const BusinessStoresPage = () => {
                 getAuthHeaders(),
             );
             setStockPreviewResult(response.data);
-            setStoreSuccess("Stock preview построен.");
+            setStoreSuccess("Preview остатков построен.");
         } catch (error) {
             handleAuthError(error);
             console.error("Error building stock preview:", error);
             setStockPreviewResult(null);
-            setStoreError(formatApiError(error, "Не удалось построить stock preview."));
+            setStoreError(formatApiError(error, "Не удалось построить preview остатков."));
         } finally {
             setActionLoading(false);
         }
@@ -945,26 +948,17 @@ const BusinessStoresPage = () => {
     return (
         <div style={pageStyle}>
             <div style={{ ...cardStyle, padding: "20px 24px", display: "grid", gap: "10px" }}>
-                <h1 style={{ margin: 0, fontSize: "28px", color: "#111827" }}>Business-продавцы</h1>
+                <h1 style={{ margin: 0, fontSize: "28px", color: "#111827" }}>Business-магазины</h1>
                 <p style={mutedTextStyle}>
-                    Страница настраивает выбранное Business-предприятие и его multi-store overlay без изменения live runtime.
+                    Настройка магазинов Business-контура: каталог, остатки, заказы, внешние коды и наценки.
                 </p>
             </div>
 
             {pageError ? <div style={redWarningCardStyle}>{pageError}</div> : null}
 
             <Section
-                title="Business-предприятие"
-                description="Предприятие создаётся в Настройках предприятия. Здесь добавляются настройки multi-store Business-контура."
-                actions={selectedEnterpriseCode ? (
-                    <button
-                        type="button"
-                        style={secondaryButtonStyle}
-                        onClick={startCreateOverlay}
-                    >
-                        Создать настройки магазина для выбранного предприятия
-                    </button>
-                ) : null}
+                title="1. Предприятие"
+                description="Выберите Business-предприятие. Ниже редактируются его базовые настройки и список магазинов."
             >
                 <div style={{ ...formGridStyle, gridTemplateColumns: "minmax(320px, 480px) 1fr" }}>
                     <Field label="Business-предприятие">
@@ -974,9 +968,9 @@ const BusinessStoresPage = () => {
                             onChange={(event) => {
                                 setSelectedEnterpriseCode(event.target.value);
                                 setSelectedStoreId(null);
-                                setIsCreatingOverlay(false);
                                 setDryRunResult(null);
                                 setCatalogPreviewResult(null);
+                                setStockPreviewResult(null);
                                 setEnterpriseError("");
                                 setEnterpriseSuccess("");
                                 setStoreError("");
@@ -993,17 +987,20 @@ const BusinessStoresPage = () => {
                         </select>
                     </Field>
                     <InfoItem
-                        label="Модель страницы"
-                        value="Сначала редактируется enterprise profile, ниже — store overlay для multi-store."
+                        label="Порядок работы"
+                        value="Сначала настраивается предприятие, затем — конкретные магазины."
                     />
                 </div>
 
                 {selectedEnterpriseMeta ? (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-                        <InfoItem label="Enterprise code" value={selectedEnterpriseMeta.enterprise_code} />
-                        <InfoItem label="Enterprise name" value={selectedEnterpriseMeta.enterprise_name} />
-                        <InfoItem label="Global Catalog" value={selectedEnterpriseMeta.catalog_enabled ? "ON" : "OFF"} />
-                        <InfoItem label="Global Stock / Orders" value={`stock ${selectedEnterpriseMeta.stock_enabled ? "ON" : "OFF"} / orders ${selectedEnterpriseMeta.order_fetcher ? "ON" : "OFF"}`} />
+                        <InfoItem label="Код предприятия" value={selectedEnterpriseMeta.enterprise_code} />
+                        <InfoItem label="Название" value={selectedEnterpriseMeta.enterprise_name} />
+                        <InfoItem label="Каталог предприятия" value={boolOnOff(selectedEnterpriseMeta.catalog_enabled)} />
+                        <InfoItem
+                            label="Остатки / заказы предприятия"
+                            value={`остатки: ${boolOnOff(selectedEnterpriseMeta.stock_enabled)} / заказы: ${boolOnOff(selectedEnterpriseMeta.order_fetcher)}`}
+                        />
                     </div>
                 ) : null}
 
@@ -1018,8 +1015,8 @@ const BusinessStoresPage = () => {
                     {enterpriseSuccess ? <div style={successCardStyle}>{enterpriseSuccess}</div> : null}
 
                     <Section
-                        title="A. Основные данные предприятия"
-                        description="Источник данных: enterprise_settings."
+                        title="2. Основные настройки предприятия"
+                        description="Источник: enterprise_settings. Эти параметры относятся ко всему предприятию."
                         actions={(
                             <button
                                 type="button"
@@ -1032,27 +1029,27 @@ const BusinessStoresPage = () => {
                         )}
                     >
                         <div style={formGridStyle}>
-                            <Field label="enterprise_code">
+                            <Field label="Код предприятия">
                                 <input style={readonlyInputStyle} value={enterpriseDraft.enterprise_code} readOnly />
                             </Field>
-                            <Field label="enterprise_name">
+                            <Field label="Название предприятия">
                                 <input
                                     style={inputStyle}
                                     value={enterpriseDraft.enterprise_name}
                                     onChange={(event) => onEnterpriseChange("enterprise_name", event.target.value)}
                                 />
                             </Field>
-                            <Field label="branch_id">
+                            <Field label="Основной branch">
                                 <input
                                     style={inputStyle}
                                     value={enterpriseDraft.branch_id}
                                     onChange={(event) => onEnterpriseChange("branch_id", event.target.value)}
                                 />
                             </Field>
-                            <Field label="data_format">
+                            <Field label="Формат данных">
                                 <input style={readonlyInputStyle} value={enterpriseDraft.data_format || emptyValue} disabled />
                             </Field>
-                            <Field label="stock_upload_frequency">
+                            <Field label="Частота остатков">
                                 <input
                                     type="number"
                                     style={inputStyle}
@@ -1060,7 +1057,7 @@ const BusinessStoresPage = () => {
                                     onChange={(event) => onEnterpriseChange("stock_upload_frequency", event.target.value)}
                                 />
                             </Field>
-                            <Field label="catalog_upload_frequency">
+                            <Field label="Частота каталога">
                                 <input
                                     type="number"
                                     style={inputStyle}
@@ -1069,52 +1066,49 @@ const BusinessStoresPage = () => {
                                 />
                             </Field>
                         </div>
-                    </Section>
-
-                    <Section
-                        title="B. Интеграция и доступ Tabletki"
-                        description="Источник данных: enterprise_settings."
-                    >
-                        <div style={formGridStyle}>
-                            <Field label="tabletki_login">
+                        <div style={{ display: "grid", gap: "16px" }}>
+                            <h3 style={subSectionTitleStyle}>Доступы и интеграция</h3>
+                            <div style={formGridStyle}>
+                                <Field label="Логин Tabletki">
                                 <input
                                     style={inputStyle}
                                     value={enterpriseDraft.tabletki_login}
                                     onChange={(event) => onEnterpriseChange("tabletki_login", event.target.value)}
                                 />
-                            </Field>
-                            <Field label="tabletki_password">
+                                </Field>
+                                <Field label="Пароль Tabletki">
                                 <input
                                     type="password"
                                     style={inputStyle}
                                     value={enterpriseDraft.tabletki_password}
                                     onChange={(event) => onEnterpriseChange("tabletki_password", event.target.value)}
                                 />
-                            </Field>
-                            <Field label="token">
+                                </Field>
+                                <Field label="Token">
                                 <input
                                     type="password"
                                     style={inputStyle}
                                     value={enterpriseDraft.token}
                                     onChange={(event) => onEnterpriseChange("token", event.target.value)}
                                 />
-                            </Field>
+                                </Field>
+                            </div>
                         </div>
                     </Section>
 
                     <Section
-                        title="C. Глобальные runtime-флаги предприятия"
-                        description="Источник данных: enterprise_settings. Эти флаги уже влияют на текущий runtime предприятия."
+                        title="3. Разрешения предприятия"
+                        description="Эти флаги включают или выключают процессы на уровне предприятия. Для нового Business-магазина также должны быть включены флаги самого магазина ниже."
                     >
                         <div style={warningCardStyle}>
-                            Эти флаги сразу меняют enterprise-level runtime поведение. Store-level флаги ниже пока live runtime не запускают.
+                            Не путать с флагами магазина. Эти настройки разрешают работу предприятия в целом.
                         </div>
                         <div style={formGridStyle}>
                             {[
-                                ["catalog_enabled", "Catalog runtime включён"],
-                                ["stock_enabled", "Stock runtime включён"],
-                                ["order_fetcher", "Получение заказов включено"],
-                                ["auto_confirm", "Автоматическое бронирование"],
+                                ["catalog_enabled", "Разрешить каталог предприятия"],
+                                ["stock_enabled", "Разрешить остатки предприятия"],
+                                ["order_fetcher", "Получать заказы предприятия"],
+                                ["auto_confirm", "Автоподтверждение по старому контуру"],
                                 ["stock_correction", "Коррекция остатков"],
                             ].map(([key, label]) => (
                                 <label key={key} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
@@ -1134,70 +1128,96 @@ const BusinessStoresPage = () => {
                     {storeSuccess ? <div style={successCardStyle}>{storeSuccess}</div> : null}
 
                     <Section
-                        title="Overlay-настройки магазина"
-                        description="BusinessStore — это overlay для выбранного enterprise. Он не создаёт новое предприятие."
+                        title={isNewStoreDraft ? "4. Новый магазин Business-контура" : "4. Магазин Business-контура"}
+                        description={isNewStoreDraft
+                            ? "Магазин ещё не сохранён. Он будет создан после нажатия «Сохранить магазин»."
+                            : `Редактируется магазин: ${storeDraft.store_code || emptyValue}`}
                         actions={(
                             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                                <button
-                                    type="button"
-                                    style={secondaryButtonStyle}
-                                    onClick={startCreateOverlay}
-                                >
-                                    Создать overlay-настройки магазина
-                                </button>
                                 <button
                                     type="button"
                                     style={primaryButtonStyle}
                                     onClick={handleSaveStore}
                                     disabled={storeSaving}
                                 >
-                                    {storeSaving ? "Сохранение..." : "Сохранить настройки магазина"}
+                                    {storeSaving ? "Сохранение..." : (isNewStoreDraft ? "Сохранить магазин" : "Сохранить изменения")}
                                 </button>
                             </div>
                         )}
                     >
-                        {!storesForSelectedEnterprise.length && !isCreatingOverlay ? (
-                            <div style={warningCardStyle}>
-                                Для выбранного предприятия overlay ещё не создан. Нажмите кнопку создания настроек магазина.
-                            </div>
-                        ) : null}
-
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>D. Overlay-настройки магазина</h3>
+                            <h3 style={subSectionTitleStyle}>Идентификация магазина</h3>
                             <p style={mutedTextStyle}>
-                                Эти поля относятся к multi-store overlay и будущему store-aware export.
+                                Здесь редактируются параметры конкретного магазина внутри Business-контура.
                             </p>
                             <div style={formGridStyle}>
-                                <Field label="store_code">
+                                <Field label="Код магазина">
                                     <input
-                                        style={isCreatingOverlay ? inputStyle : readonlyInputStyle}
+                                        style={isNewStoreDraft ? inputStyle : readonlyInputStyle}
                                         value={storeDraft.store_code}
                                         onChange={(event) => onStoreChange("store_code", event.target.value)}
-                                        readOnly={!isCreatingOverlay}
+                                        readOnly={!isNewStoreDraft}
                                     />
                                 </Field>
-                                <Field label="store_name">
+                                <Field label="Название магазина">
                                     <input
                                         style={inputStyle}
                                         value={storeDraft.store_name}
                                         onChange={(event) => onStoreChange("store_name", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="legal_entity_name">
+                                <Field label="Юрлицо / ФОП">
                                     <input
                                         style={inputStyle}
                                         value={storeDraft.legal_entity_name}
                                         onChange={(event) => onStoreChange("legal_entity_name", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="tax_identifier">
+                                <Field label="ЕДРПОУ / РНОКПП">
                                     <input
                                         style={inputStyle}
                                         value={storeDraft.tax_identifier}
                                         onChange={(event) => onStoreChange("tax_identifier", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="legacy_scope_key">
+                                <Field label="Этап запуска" helpText={selectedMigrationStatus.help}>
+                                    <select
+                                        style={inputStyle}
+                                        value={storeDraft.migration_status}
+                                        onChange={(event) => onStoreChange("migration_status", event.target.value)}
+                                    >
+                                        {migrationStatusOptions.map((item) => (
+                                            <option key={item.value} value={item.value}>
+                                                {item.value} — {item.help}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                    <input
+                                        type="checkbox"
+                                        style={checkboxStyle}
+                                        checked={Boolean(storeDraft.is_active)}
+                                        onChange={(event) => onStoreChange("is_active", event.target.checked)}
+                                    />
+                                    Магазин активен
+                                </label>
+                            </div>
+
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
+                                <InfoItem label="Юрлицо / ФОП" value={storeDraft.legal_entity_name || emptyValue} />
+                                <InfoItem label="ЕДРПОУ / РНОКПП" value={storeDraft.tax_identifier || emptyValue} />
+                                <InfoItem label="Этап запуска" value={formatMigrationStatusLabel(storeDraft.migration_status)} />
+                            </div>
+                        </div>
+
+                        <div style={{ display: "grid", gap: "16px" }}>
+                            <h3 style={subSectionTitleStyle}>Привязка к Tabletki</h3>
+                            <p style={mutedTextStyle}>
+                                Branch Tabletki должен совпадать с branch в mapping_branch для этого магазина.
+                            </p>
+                            <div style={formGridStyle}>
+                                <Field label="Город / scope остатков">
                                     <select
                                         style={inputStyle}
                                         value={storeDraft.legacy_scope_key}
@@ -1211,21 +1231,21 @@ const BusinessStoresPage = () => {
                                         ))}
                                     </select>
                                 </Field>
-                                <Field label="tabletki_enterprise_code">
+                                <Field label="Код предприятия Tabletki">
                                     <input
                                         style={inputStyle}
                                         value={storeDraft.tabletki_enterprise_code}
                                         onChange={(event) => onStoreChange("tabletki_enterprise_code", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="tabletki_branch">
+                                <Field label="Branch Tabletki">
                                     <input
                                         style={inputStyle}
                                         value={storeDraft.tabletki_branch}
                                         onChange={(event) => onStoreChange("tabletki_branch", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="salesdrive_enterprise_id">
+                                <Field label="SalesDrive ID">
                                     <input
                                         type="number"
                                         style={inputStyle}
@@ -1233,39 +1253,18 @@ const BusinessStoresPage = () => {
                                         onChange={(event) => onStoreChange("salesdrive_enterprise_id", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="migration_status">
-                                    <select
-                                        style={inputStyle}
-                                        value={storeDraft.migration_status}
-                                        onChange={(event) => onStoreChange("migration_status", event.target.value)}
-                                    >
-                                        {["draft", "dry_run", "stock_live", "catalog_stock_live", "orders_live", "disabled"].map((item) => (
-                                            <option key={item} value={item}>{item}</option>
-                                        ))}
-                                    </select>
-                                </Field>
-                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input
-                                        type="checkbox"
-                                        style={checkboxStyle}
-                                        checked={Boolean(storeDraft.is_active)}
-                                        onChange={(event) => onStoreChange("is_active", event.target.checked)}
-                                    />
-                                    is_active
-                                </label>
                             </div>
-
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Юрлицо" value={storeDraft.legal_entity_name || emptyValue} />
-                                <InfoItem label="ЄДРПОУ / РНОКПП" value={storeDraft.tax_identifier || emptyValue} />
-                                <InfoItem label="Выбранный legacy scope" value={selectedLegacyScopeOption ? `${selectedLegacyScopeOption.legacy_scope_key} — ${selectedLegacyScopeOption.rows_count} rows / ${selectedLegacyScopeOption.products_count} products` : emptyValue} />
+                                <InfoItem label="Scope остатков" value={selectedLegacyScopeOption ? `${selectedLegacyScopeOption.legacy_scope_key} — ${selectedLegacyScopeOption.rows_count} rows / ${selectedLegacyScopeOption.products_count} products` : emptyValue} />
+                                <InfoItem label="Код предприятия Tabletki" value={storeDraft.tabletki_enterprise_code || emptyValue} />
+                                <InfoItem label="Branch Tabletki" value={storeDraft.tabletki_branch || emptyValue} />
                             </div>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>E. Коды товаров</h3>
+                            <h3 style={subSectionTitleStyle}>Коды товаров</h3>
                             <div style={formGridStyle}>
-                                <Field label="code_strategy">
+                                <Field label="Стратегия кодов">
                                     <select
                                         style={inputStyle}
                                         value={storeDraft.code_strategy}
@@ -1277,7 +1276,7 @@ const BusinessStoresPage = () => {
                                     </select>
                                 </Field>
                                 {storeDraft.code_strategy === "prefix_mapping" ? (
-                                    <Field label="code_prefix">
+                                    <Field label="Префикс кода">
                                         <input
                                             style={inputStyle}
                                             value={storeDraft.code_prefix}
@@ -1292,56 +1291,41 @@ const BusinessStoresPage = () => {
                                         checked={Boolean(storeDraft.is_legacy_default)}
                                         onChange={(event) => onStoreChange("is_legacy_default", event.target.checked)}
                                     />
-                                    is_legacy_default
+                                    Базовый legacy-магазин
                                 </label>
                             </div>
                             <div style={infoCardStyle}>
-                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Микроинструкция</div>
+                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Текущая стратегия</div>
                                 <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedCodeStrategy.label}</div>
                                 <div style={{ fontSize: "14px", color: "#475569" }}>{selectedCodeStrategy.help}</div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    legacy_same: внешний код = внутренний product_code. Для базового продавца.
-                                </div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    opaque_mapping: создаются отдельные внешние коды. Для новых продавцов.
-                                </div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    prefix_mapping: режим с префиксом, использовать только осознанно.
-                                </div>
                             </div>
                             <div style={warningCardStyle}>
-                                После генерации mapping или live-запуска менять стратегию кодов нельзя без отдельного миграционного плана.
+                                После генерации внешних кодов не меняйте стратегию без миграционного плана.
                             </div>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>F. Каталог</h3>
+                            <h3 style={subSectionTitleStyle}>Каталог</h3>
                             <div style={formGridStyle}>
-                                <Field label="Ассортимент каталога">
-                                    <select
-                                        style={inputStyle}
-                                        value={storeDraft.catalog_only_in_stock ? "in_stock_only" : "all_products"}
-                                        onChange={(event) => onStoreChange("catalog_only_in_stock", event.target.value === "in_stock_only")}
-                                    >
-                                        <option value="all_products">Все товары</option>
-                                        <option value="in_stock_only">Только товары с остатком</option>
-                                    </select>
-                                </Field>
+                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                    <input
+                                        type="checkbox"
+                                        style={checkboxStyle}
+                                        checked={Boolean(storeDraft.catalog_only_in_stock)}
+                                        onChange={(event) => onStoreChange("catalog_only_in_stock", event.target.checked)}
+                                    />
+                                    В каталог только товары с остатком
+                                </label>
                             </div>
-                            <div style={infoCardStyle}>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    `catalog_only_in_stock=false` оставляет полный master catalog для preview.
-                                </div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    `catalog_only_in_stock=true` ограничивает preview товарами с положительным остатком в `legacy_scope_key`.
-                                </div>
-                            </div>
+                            <p style={mutedTextStyle}>
+                                Если включено, каталог preview/publish берёт только товары с положительным остатком в выбранном scope.
+                            </p>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>G. Названия товаров</h3>
+                            <h3 style={subSectionTitleStyle}>Названия товаров</h3>
                             <div style={formGridStyle}>
-                                <Field label="name_strategy">
+                                <Field label="Стратегия названий">
                                     <select
                                         style={inputStyle}
                                         value={storeDraft.name_strategy}
@@ -1354,20 +1338,14 @@ const BusinessStoresPage = () => {
                                 </Field>
                             </div>
                             <div style={infoCardStyle}>
-                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Микроинструкция</div>
+                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Текущая стратегия</div>
                                 <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedNameStrategy.label}</div>
                                 <div style={{ fontSize: "14px", color: "#475569" }}>{selectedNameStrategy.help}</div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    Existing mappings не перезаписываются автоматически.
-                                </div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>
-                                    Если supplier name отсутствует, товар не попадёт в catalog preview для этого store.
-                                </div>
                             </div>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>H. Цены</h3>
+                            <h3 style={subSectionTitleStyle}>Цены</h3>
                             <div style={formGridStyle}>
                                 <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                     <input
@@ -1376,12 +1354,12 @@ const BusinessStoresPage = () => {
                                         checked={Boolean(storeDraft.extra_markup_enabled)}
                                         onChange={(event) => onStoreChange("extra_markup_enabled", event.target.checked)}
                                     />
-                                    extra_markup_enabled
+                                    Дополнительная наценка включена
                                 </label>
-                                <Field label="extra_markup_mode">
+                                <Field label="Режим наценки">
                                     <input style={readonlyInputStyle} value={storeDraft.extra_markup_mode} readOnly />
                                 </Field>
-                                <Field label="extra_markup_min (%)">
+                                <Field label="Минимальная наценка (%)">
                                     <input
                                         type="number"
                                         min="0"
@@ -1391,7 +1369,7 @@ const BusinessStoresPage = () => {
                                         onChange={(event) => onStoreChange("extra_markup_min", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="extra_markup_max (%)">
+                                <Field label="Максимальная наценка (%)">
                                     <input
                                         type="number"
                                         min="0"
@@ -1401,25 +1379,25 @@ const BusinessStoresPage = () => {
                                         onChange={(event) => onStoreChange("extra_markup_max", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="extra_markup_strategy">
+                                <Field label="Стратегия наценки">
                                     <input style={readonlyInputStyle} value={storeDraft.extra_markup_strategy} readOnly />
                                 </Field>
                             </div>
-                            <div style={warningCardStyle}>
-                                Доп. наценка не меняет текущие `offers.price` и не участвует в live runtime. Сейчас она видна только в dry-run preview.
-                            </div>
+                            <p style={mutedTextStyle}>
+                                stable_per_product: один раз генерирует стабильную наценку для каждого товара магазина.
+                            </p>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>I. Store-level будущие флаги</h3>
-                            <div style={warningCardStyle}>
-                                Store-level флаги пока не запускают текущий live runtime. Они нужны для будущего store-aware catalog/stock/orders.
-                            </div>
+                            <h3 style={subSectionTitleStyle}>Участие магазина в процессах</h3>
+                            <p style={mutedTextStyle}>
+                                Эти флаги определяют, участвует ли выбранный магазин в store-aware каталоге, остатках и заказах. Для работы также должны быть включены разрешения предприятия выше.
+                            </p>
                             <div style={formGridStyle}>
                                 {[
-                                    ["catalog_enabled", "catalog_enabled"],
-                                    ["stock_enabled", "stock_enabled"],
-                                    ["orders_enabled", "orders_enabled"],
+                                    ["catalog_enabled", "Магазин участвует в каталоге"],
+                                    ["stock_enabled", "Магазин участвует в остатках"],
+                                    ["orders_enabled", "Магазин участвует в заказах"],
                                 ].map(([key, label]) => (
                                     <label key={key} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                         <input
@@ -1438,16 +1416,19 @@ const BusinessStoresPage = () => {
                                         checked={Boolean(storeDraft.takes_over_legacy_scope)}
                                         onChange={(event) => onStoreChange("takes_over_legacy_scope", event.target.checked)}
                                     />
-                                    takes_over_legacy_scope
+                                    Забирает legacy scope
                                 </label>
                             </div>
                             <div style={redWarningCardStyle}>
-                                Не включать до готового live store export. В будущем этот флаг будет исключать legacy scope из старой выгрузки.
+                                Не включать без отдельного миграционного плана.
                             </div>
                         </div>
 
                         <div style={{ display: "grid", gap: "12px" }}>
-                            <h3 style={subSectionTitleStyle}>Действия по overlay</h3>
+                            <h3 style={subSectionTitleStyle}>Действия по магазину</h3>
+                            <p style={mutedTextStyle}>
+                                Кнопки генерации создают недостающие mapping-записи. Preview не отправляет данные наружу.
+                            </p>
                             <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                                 <button
                                     type="button"
@@ -1455,7 +1436,7 @@ const BusinessStoresPage = () => {
                                     onClick={runDryRun}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Dry-run
+                                    Dry-run магазина
                                 </button>
                                 <button
                                     type="button"
@@ -1463,7 +1444,7 @@ const BusinessStoresPage = () => {
                                     onClick={generateMissingCodes}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Сгенерировать missing codes
+                                    Сгенерировать коды
                                 </button>
                                 <button
                                     type="button"
@@ -1471,7 +1452,7 @@ const BusinessStoresPage = () => {
                                     onClick={generateMissingNames}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Generate missing names
+                                    Сгенерировать названия
                                 </button>
                                 <button
                                     type="button"
@@ -1479,7 +1460,7 @@ const BusinessStoresPage = () => {
                                     onClick={generateMissingPriceAdjustments}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Generate missing price adjustments
+                                    Сгенерировать наценки
                                 </button>
                                 <button
                                     type="button"
@@ -1487,7 +1468,7 @@ const BusinessStoresPage = () => {
                                     onClick={() => loadCatalogPreview(selectedStoreId)}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Catalog preview
+                                    Preview каталога
                                 </button>
                                 <button
                                     type="button"
@@ -1495,7 +1476,7 @@ const BusinessStoresPage = () => {
                                     onClick={() => loadStockPreview(selectedStoreId)}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Stock preview
+                                    Preview остатков
                                 </button>
                                 <button
                                     type="button"
@@ -1503,40 +1484,39 @@ const BusinessStoresPage = () => {
                                     onClick={cleanupProductNames}
                                     disabled={!selectedStoreId || actionLoading}
                                 >
-                                    Emergency очистка names mapping
+                                    Emergency: очистить названия
                                 </button>
                             </div>
                             {!selectedStoreId ? (
                                 <div style={warningCardStyle}>
-                                    Dry-run и write actions доступны только после создания overlay.
+                                    Сначала сохраните магазин.
                                 </div>
                             ) : null}
                         </div>
                     </Section>
 
                     <Section
-                        title="Список overlay-настроек"
-                        description="Вспомогательный список магазинов для выбранного enterprise."
+                        title="Список магазинов выбранного предприятия"
+                        description="Магазины выбранного Business-предприятия."
                     >
+                        {storesForSelectedEnterprise.length > 0 ? (
                         <div style={{ overflow: "auto", maxHeight: "420px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1680px" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1480px" }}>
                                 <thead>
                                     <tr>
                                         {[
                                             "Код магазина",
-                                            "Название магазина",
+                                            "Название",
                                             "Юрлицо",
-                                            "ЄДРПОУ / РНОКПП",
-                                            "Старый scope",
+                                            "Scope",
                                             "Код Tabletki",
                                             "Branch Tabletki",
-                                            "SalesDrive ID",
                                             "Стратегия кодов",
-                                            "Статус",
+                                            "Этап запуска",
                                             "Активен",
-                                            "Catalog store flag",
-                                            "Stock store flag",
-                                            "Orders store flag",
+                                            "Каталог",
+                                            "Остатки",
+                                            "Заказы",
                                             "Действия",
                                         ].map((header) => (
                                             <th key={header} style={tableHeaderStyle}>{header}</th>
@@ -1545,21 +1525,23 @@ const BusinessStoresPage = () => {
                                 </thead>
                                 <tbody>
                                     {storesForSelectedEnterprise.map((item) => (
-                                        <tr key={item.id} style={{ backgroundColor: item.id === selectedStoreId ? "#eff6ff" : "#ffffff" }}>
+                                        <tr
+                                            key={item.id}
+                                            style={{ backgroundColor: item.id === selectedStoreId ? "#eff6ff" : "#ffffff", cursor: "pointer" }}
+                                            onClick={() => selectOverlay(item)}
+                                        >
                                             <td style={tableCellStyle}>{item.store_code}</td>
                                             <td style={tableCellStyle}>{item.store_name}</td>
                                             <td style={tableCellStyle}>{item.legal_entity_name || emptyValue}</td>
-                                            <td style={tableCellStyle}>{item.tax_identifier || emptyValue}</td>
                                             <td style={tableCellStyle}>{item.legacy_scope_key || emptyValue}</td>
                                             <td style={tableCellStyle}>{item.tabletki_enterprise_code || emptyValue}</td>
                                             <td style={tableCellStyle}>{item.tabletki_branch || emptyValue}</td>
-                                            <td style={tableCellStyle}>{item.salesdrive_enterprise_id ?? emptyValue}</td>
                                             <td style={tableCellStyle}>{item.code_strategy}</td>
-                                            <td style={tableCellStyle}><span style={badgeStyle}>{item.migration_status}</span></td>
+                                            <td style={tableCellStyle}><span style={badgeStyle}>{formatMigrationStatusLabel(item.migration_status)}</span></td>
                                             <td style={tableCellStyle}>{item.is_active ? "Да" : "Нет"}</td>
-                                            <td style={tableCellStyle}>{item.catalog_enabled ? "ON" : "OFF"}</td>
-                                            <td style={tableCellStyle}>{item.stock_enabled ? "ON" : "OFF"}</td>
-                                            <td style={tableCellStyle}>{item.orders_enabled ? "ON" : "OFF"}</td>
+                                            <td style={tableCellStyle}>{boolShort(item.catalog_enabled)}</td>
+                                            <td style={tableCellStyle}>{boolShort(item.stock_enabled)}</td>
+                                            <td style={tableCellStyle}>{boolShort(item.orders_enabled)}</td>
                                             <td style={tableCellStyle}>
                                                 <div style={{ display: "grid", gap: "8px" }}>
                                                     <button type="button" style={secondaryButtonStyle} onClick={() => selectOverlay(item)}>
@@ -1575,32 +1557,30 @@ const BusinessStoresPage = () => {
                                                         selectOverlay(item);
                                                         loadCatalogPreview(item.id);
                                                     }}>
-                                                        Catalog preview
+                                                        Preview каталога
                                                     </button>
                                                     <button type="button" style={secondaryButtonStyle} onClick={() => {
                                                         selectOverlay(item);
                                                         loadStockPreview(item.id);
                                                     }}>
-                                                        Stock preview
+                                                        Preview остатков
                                                     </button>
                                                 </div>
                                             </td>
                                         </tr>
                                     ))}
-                                    {!storesForSelectedEnterprise.length ? (
-                                        <tr>
-                                            <td colSpan={15} style={{ ...tableCellStyle, textAlign: "center" }}>
-                                                Для выбранного предприятия overlay-настройки пока не созданы.
-                                            </td>
-                                        </tr>
-                                    ) : null}
                                 </tbody>
                             </table>
                         </div>
+                        ) : (
+                            <div style={warningCardStyle}>
+                                Для выбранного предприятия пока нет сохранённых магазинов. Заполните форму выше и нажмите «Сохранить магазин».
+                            </div>
+                        )}
                     </Section>
 
                     {dryRunResult ? (
-                        <Section title="Dry-run summary" description="Dry-run не меняет enterprise_settings и не запускает live runtime.">
+                        <Section title="Результат dry-run" description="Dry-run не отправляет данные наружу и не меняет live-процессы.">
                             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                                 {"generated_codes" in dryRunResult ? (
                                     <span style={badgeStyle}>generated_codes: {dryRunResult.generated_codes}</span>
@@ -1628,21 +1608,21 @@ const BusinessStoresPage = () => {
                     ) : null}
 
                     {catalogPreviewResult ? (
-                        <Section title="Catalog payload preview" description="Preview only: payload строится поверх master_catalog и store mappings, но не отправляется в Tabletki.">
+                        <Section title="Preview каталога" description="Payload строится поверх master_catalog и store mappings, но не отправляется в Tabletki.">
                             {catalogPreviewResult.warnings?.length ? (
                                 <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
                                     {JSON.stringify(catalogPreviewResult.warnings, null, 2)}
                                 </pre>
                             ) : null}
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Tabletki enterprise" value={catalogPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
-                                <InfoItem label="Tabletki branch" value={catalogPreviewResult.store?.tabletki_branch || emptyValue} />
-                                <InfoItem label="Legacy scope" value={catalogPreviewResult.store?.legacy_scope_key || emptyValue} />
-                                <InfoItem label="Catalog source" value={catalogPreviewResult.summary?.catalog_source || emptyValue} />
-                                <InfoItem label="Candidate products" value={catalogPreviewResult.summary?.candidate_products ?? emptyValue} />
-                                <InfoItem label="Exportable products" value={catalogPreviewResult.summary?.exportable_products ?? emptyValue} />
-                                <InfoItem label="Missing code mapping" value={catalogPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
-                                <InfoItem label="Missing name mapping" value={catalogPreviewResult.summary?.missing_name_mapping ?? emptyValue} />
+                                <InfoItem label="Код предприятия Tabletki" value={catalogPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
+                                <InfoItem label="Branch Tabletki" value={catalogPreviewResult.store?.tabletki_branch || emptyValue} />
+                                <InfoItem label="Scope остатков" value={catalogPreviewResult.store?.legacy_scope_key || emptyValue} />
+                                <InfoItem label="Источник каталога" value={catalogPreviewResult.summary?.catalog_source || emptyValue} />
+                                <InfoItem label="Товаров-кандидатов" value={catalogPreviewResult.summary?.candidate_products ?? emptyValue} />
+                                <InfoItem label="Товаров к выгрузке" value={catalogPreviewResult.summary?.exportable_products ?? emptyValue} />
+                                <InfoItem label="Нет code mapping" value={catalogPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
+                                <InfoItem label="Нет name mapping" value={catalogPreviewResult.summary?.missing_name_mapping ?? emptyValue} />
                             </div>
                             {catalogPreviewResult.not_exportable_samples?.length ? (
                                 <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
@@ -1654,15 +1634,15 @@ const BusinessStoresPage = () => {
                                     <thead>
                                         <tr>
                                             {[
-                                                "Internal code",
-                                                "External code",
-                                                "Base name",
-                                                "External name",
-                                                "Barcode",
-                                                "Manufacturer",
-                                                "Brand",
-                                                "Exportable",
-                                                "Reasons",
+                                                "Внутренний код",
+                                                "Внешний код",
+                                                "Базовое название",
+                                                "Внешнее название",
+                                                "Штрихкод",
+                                                "Производитель",
+                                                "Бренд",
+                                                "К выгрузке",
+                                                "Причины",
                                             ].map((header) => (
                                                 <th key={header} style={tableHeaderStyle}>{header}</th>
                                             ))}
@@ -1678,7 +1658,7 @@ const BusinessStoresPage = () => {
                                                 <td style={tableCellStyle}>{item.barcode || emptyValue}</td>
                                                 <td style={tableCellStyle}>{item.manufacturer || emptyValue}</td>
                                                 <td style={tableCellStyle}>{item.brand || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.exportable ? "Yes" : "No"}</td>
+                                                <td style={tableCellStyle}>{item.exportable ? "Да" : "Нет"}</td>
                                                 <td style={tableCellStyle}>{(item.reasons || []).join(", ") || emptyValue}</td>
                                             </tr>
                                         ))}
@@ -1696,23 +1676,23 @@ const BusinessStoresPage = () => {
                     ) : null}
 
                     {stockPreviewResult ? (
-                        <Section title="Stock payload preview" description="Preview only: stock payload строится поверх offers, code mappings и price adjustments, но не отправляется в Tabletki.">
+                        <Section title="Preview остатков" description="Payload остатков строится поверх offers, code mappings и price adjustments, но не отправляется в Tabletki.">
                             {stockPreviewResult.warnings?.length ? (
                                 <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
                                     {JSON.stringify(stockPreviewResult.warnings, null, 2)}
                                 </pre>
                             ) : null}
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Tabletki enterprise" value={stockPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
-                                <InfoItem label="Tabletki branch" value={stockPreviewResult.store?.tabletki_branch || emptyValue} />
-                                <InfoItem label="Legacy scope" value={stockPreviewResult.store?.legacy_scope_key || emptyValue} />
-                                <InfoItem label="Stock source" value={stockPreviewResult.summary?.stock_source || emptyValue} />
-                                <InfoItem label="Offer rows total" value={stockPreviewResult.summary?.offer_rows_total ?? emptyValue} />
-                                <InfoItem label="Candidate products" value={stockPreviewResult.summary?.candidate_products ?? emptyValue} />
-                                <InfoItem label="Exportable products" value={stockPreviewResult.summary?.exportable_products ?? emptyValue} />
-                                <InfoItem label="Missing code mapping" value={stockPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
-                                <InfoItem label="Missing price adjustment" value={stockPreviewResult.summary?.missing_price_adjustment ?? emptyValue} />
-                                <InfoItem label="Markup applied products" value={stockPreviewResult.summary?.markup_applied_products ?? emptyValue} />
+                                <InfoItem label="Код предприятия Tabletki" value={stockPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
+                                <InfoItem label="Branch Tabletki" value={stockPreviewResult.store?.tabletki_branch || emptyValue} />
+                                <InfoItem label="Scope остатков" value={stockPreviewResult.store?.legacy_scope_key || emptyValue} />
+                                <InfoItem label="Источник остатков" value={stockPreviewResult.summary?.stock_source || emptyValue} />
+                                <InfoItem label="Всего offer-строк" value={stockPreviewResult.summary?.offer_rows_total ?? emptyValue} />
+                                <InfoItem label="Товаров-кандидатов" value={stockPreviewResult.summary?.candidate_products ?? emptyValue} />
+                                <InfoItem label="Товаров к выгрузке" value={stockPreviewResult.summary?.exportable_products ?? emptyValue} />
+                                <InfoItem label="Нет code mapping" value={stockPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
+                                <InfoItem label="Нет наценки" value={stockPreviewResult.summary?.missing_price_adjustment ?? emptyValue} />
+                                <InfoItem label="С наценкой" value={stockPreviewResult.summary?.markup_applied_products ?? emptyValue} />
                             </div>
                             {stockPreviewResult.not_exportable_samples?.length ? (
                                 <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
@@ -1724,15 +1704,15 @@ const BusinessStoresPage = () => {
                                     <thead>
                                         <tr>
                                             {[
-                                                "Internal code",
-                                                "External code",
-                                                "Supplier",
-                                                "Qty",
-                                                "Base price",
-                                                "Markup %",
-                                                "Final store price",
-                                                "Exportable",
-                                                "Reasons",
+                                                "Внутренний код",
+                                                "Внешний код",
+                                                "Поставщик",
+                                                "Количество",
+                                                "Базовая цена",
+                                                "Наценка %",
+                                                "Итоговая цена магазина",
+                                                "К выгрузке",
+                                                "Причины",
                                             ].map((header) => (
                                                 <th key={header} style={tableHeaderStyle}>{header}</th>
                                             ))}
@@ -1748,7 +1728,7 @@ const BusinessStoresPage = () => {
                                                 <td style={tableCellStyle}>{item.base_price || emptyValue}</td>
                                                 <td style={tableCellStyle}>{item.markup_percent || emptyValue}</td>
                                                 <td style={tableCellStyle}>{item.final_store_price_preview || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.exportable ? "Yes" : "No"}</td>
+                                                <td style={tableCellStyle}>{item.exportable ? "Да" : "Нет"}</td>
                                                 <td style={tableCellStyle}>{(item.reasons || []).join(", ") || emptyValue}</td>
                                             </tr>
                                         ))}

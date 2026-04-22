@@ -14,6 +14,7 @@ It is intentionally limited to architecture, ownership, UI/API boundaries, and f
 Store-level catalog identity and price markup target model is documented separately in:
 
 - [docs/business_store_catalog_identity.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_catalog_identity.md)
+- [docs/business_enterprise_catalog_identity_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_enterprise_catalog_identity_audit.md)
 - [docs/business_store_stock_export_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_stock_export_audit.md)
 - [docs/business_store_offers_refresh_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_offers_refresh_audit.md)
 - [docs/business_store_order_reverse_mapping_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_store_order_reverse_mapping_audit.md)
@@ -97,6 +98,7 @@ Store-aware order reverse mapping clarification:
 - it can also verify downstream readiness in legacy order read paths without runtime integration;
 - legacy orders keep old behavior by default;
 - store-aware orders currently bypass legacy `auto_confirm` when the feature flag is enabled;
+- store-aware orders can now use a separate Tabletki status `2` path after successful outbound processing behind `BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED`;
 - dedicated store-aware availability checker is still a later step.
 
 ## 2. What Was Checked
@@ -957,3 +959,52 @@ Primary source priority for future store-level supplier names:
 4. `master_catalog.name_ua/name_ru` as base-name fallback
 
 This keeps new multistore identity aligned with the newer master catalog model and avoids introducing new dependence on legacy `catalog_mapping`.
+
+## 20. Outbound Status Mapping Note
+
+Store-aware inbound order normalization and separate Tabletki status `2` send are already available behind feature flags.
+
+The next outbound order-status problem is different:
+
+- SalesDrive webhook payload carries `branch` sourced from `MappingBranch.branch`
+- in the current Business contour this branch is expected to stay aligned with `BusinessStore.tabletki_branch`
+- therefore isolated outbound mapping may currently resolve store by Tabletki branch
+- webhook runtime integration is still a separate later step
+
+Current architectural recommendation:
+
+- add a dedicated outbound mapper layer for Tabletki-facing payloads
+- current Stage 1 resolver is `BusinessStore.tabletki_branch`
+- long-term stronger fallback remains persisted order-to-store link based on `externalId` / `tabletkiOrder`
+- only then convert internal product codes back into store external codes
+
+Current runtime status:
+
+- outbound code restoration is now wired only into main SalesDrive webhook `/webhooks/salesdrive`
+- this wiring is gated by `BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED`
+- `/webhooks/salesdrive-simple/{branch}` is intentionally unchanged
+- `mapping_error` blocks only the affected outbound Tabletki status send and does not crash the webhook processor
+
+See:
+
+- `docs/business_store_outbound_status_mapping_audit.md`
+
+## 21. Enterprise-Level Catalog Identity Migration Note
+
+A separate audit now fixes the next architectural shift:
+
+- catalog identity should move from `store_id` scope to `enterprise_code` scope
+- catalog publish target should move from `BusinessStore.tabletki_branch` to `EnterpriseSettings.branch_id`
+- stock routing should remain store-aware
+- inbound/outbound order store resolution should remain branch-based, but code mapping should become enterprise-level
+
+See:
+
+- [docs/business_enterprise_catalog_identity_audit.md](/Users/dmitrijnazdrin/inventory_service_1/docs/business_enterprise_catalog_identity_audit.md)
+
+Current implementation status for that migration:
+
+- Stage 1 is implemented as schema + tooling only;
+- enterprise-level catalog identity tables now exist in models/migration;
+- backfill and comparison CLI tooling now exists;
+- catalog/stock/order/outbound runtime readers still remain store-level.

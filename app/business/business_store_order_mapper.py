@@ -242,3 +242,23 @@ async def normalize_store_order_payload(
         "warnings": warnings,
         "errors": errors,
     }
+
+
+def restore_tabletki_goods_codes_for_status(order: dict) -> dict:
+    restored_order = deepcopy(order)
+    rows = restored_order.get("rows")
+    if not isinstance(rows, list):
+        return restored_order
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        original_external = _clean_text(row.get(ORIGINAL_EXTERNAL_GOODS_CODE_FIELD))
+        if original_external:
+            row["goodsCode"] = original_external
+
+        row.pop(ORIGINAL_EXTERNAL_GOODS_CODE_FIELD, None)
+        row.pop(DEBUG_BUSINESS_STORE_ID_FIELD, None)
+
+    return restored_order

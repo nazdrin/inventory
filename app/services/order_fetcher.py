@@ -7,7 +7,11 @@ from typing import Any, Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models import DeveloperSettings, EnterpriseSettings, MappingBranch
-from app.business.business_store_order_mapper import normalize_store_order_payload
+from app.business.business_store_order_mapper import (
+    ORIGINAL_EXTERNAL_GOODS_CODE_FIELD,
+    normalize_store_order_payload,
+    restore_tabletki_goods_codes_for_status,
+)
 from app.services.auto_confirm import process_orders
 from app.services.order_sender import process_due_tabletki_cancel_retries, send_orders_to_tabletki
 from app.services.order_sender import send_single_order_status_2
@@ -32,6 +36,15 @@ BUSINESS_STORE_ORDER_MAPPING_ENABLED = os.getenv("BUSINESS_STORE_ORDER_MAPPING_E
     "yes",
     "on",
 }
+BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED = os.getenv(
+    "BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED",
+    "0",
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 ORDER_SEND_PROCESSORS = {
     "KeyCRM": send_order_to_key_crm,
@@ -46,6 +59,59 @@ ORDER_STATUS_CHECKERS = {
     # "Dntrade": check_statuses_dntrade,
     # "Prom": check_statuses_prom,
 }
+
+
+async def _send_store_aware_status_2_if_enabled(
+    *,
+    session: AsyncSession,
+    enterprise: EnterpriseSettings,
+    order: Dict[str, Any],
+    branch: str,
+) -> None:
+    order_id = order.get("id")
+
+    if not BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED:
+        logger.info(
+            "Store-aware status 2 send disabled by BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED: enterprise_code=%s branch=%s order_id=%s",
+            enterprise.enterprise_code,
+            branch,
+            order_id,
+        )
+        return
+
+    tabletki_order = restore_tabletki_goods_codes_for_status(order)
+    tabletki_order["statusID"] = 2.0
+    restored_rows = [
+        row for row in (tabletki_order.get("rows") or [])
+        if isinstance(row, dict) and str(row.get("goodsCode") or "").strip()
+    ]
+    tabletki_order["rows"] = restored_rows
+
+    restored_from_external = sum(
+        1
+        for row in (order.get("rows") or [])
+        if isinstance(row, dict) and str(row.get(ORIGINAL_EXTERNAL_GOODS_CODE_FIELD) or "").strip()
+    )
+
+    logger.info(
+        "Store-aware status 2 send started: enterprise_code=%s branch=%s order_id=%s restored_external_rows=%s",
+        enterprise.enterprise_code,
+        branch,
+        order_id,
+        restored_from_external,
+    )
+    await send_single_order_status_2(
+        session=session,
+        order=tabletki_order,
+        tabletki_login=enterprise.tabletki_login,
+        tabletki_password=enterprise.tabletki_password,
+    )
+    logger.info(
+        "Store-aware status 2 sent: enterprise_code=%s branch=%s order_id=%s",
+        enterprise.enterprise_code,
+        branch,
+        order_id,
+    )
 
 
 async def _normalize_business_orders_for_runtime(
@@ -223,6 +289,22 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                                     branch,
                                                     order.get("id"),
                                                 )
+                                                if status == 0:
+                                                    try:
+                                                        await _send_store_aware_status_2_if_enabled(
+                                                            session=session,
+                                                            enterprise=enterprise,
+                                                            order=order,
+                                                            branch=branch,
+                                                        )
+                                                    except Exception as exc:
+                                                        logger.warning(
+                                                            "Store-aware status 2 send failed after successful outbound processing: enterprise_code=%s branch=%s order_id=%s error=%s",
+                                                            enterprise_code,
+                                                            branch,
+                                                            order.get("id"),
+                                                            exc,
+                                                        )
                                             else:
                                                 logger.warning("No order send processor for data_format=%s", enterprise.data_format)
 
@@ -326,6 +408,21 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                                     branch,
                                                     order.get("id"),
                                                 )
+                                                try:
+                                                    await _send_store_aware_status_2_if_enabled(
+                                                        session=session,
+                                                        enterprise=enterprise,
+                                                        order=order,
+                                                        branch=branch,
+                                                    )
+                                                except Exception as exc:
+                                                    logger.warning(
+                                                        "Store-aware status 2 send failed after successful outbound processing: enterprise_code=%s branch=%s order_id=%s error=%s",
+                                                        enterprise_code,
+                                                        branch,
+                                                        order.get("id"),
+                                                        exc,
+                                                    )
                                             else:
                                                 logger.warning(
                                                     "Store-aware order outbound processing failed: data_format=%s order_id=%s",

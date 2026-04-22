@@ -706,3 +706,85 @@ Current runtime note:
 
 - the normalization point is now inserted in `order_fetcher.py` before any downstream Business use of `goodsCode`, but only when `BUSINESS_STORE_ORDER_MAPPING_ENABLED=true`;
 - dedicated store-aware availability checker is still not implemented.
+
+## 18. Status 2 Audit For Store-Aware Orders
+
+Current legacy status `2` path:
+
+- in `app/services/order_fetcher.py`
+- when `enterprise.auto_confirm == false`
+- for incoming `status == 0`
+- legacy orders do:
+  1. outbound processor
+  2. `order["statusID"] = 2.0`
+  3. `send_single_order_status_2(...)`
+
+Current store-aware gap:
+
+- normalized store-aware orders are processed in a separate branch
+- after successful outbound Business processing they only log success
+- they do not call:
+  - `send_single_order_status_2(...)`
+  - or `send_orders_to_tabletki(...)`
+
+Operational consequence:
+
+- the order remains on Tabletki in status `0`
+- next scheduler run can fetch the same order again from `/api/Orders/{branch}/0`
+- the same order can be resent to SalesDrive
+
+Current sender shape:
+
+- `send_single_order_status_2(...)` sends the whole `order` object to `POST /api/orders`
+- it only filters rows by positive `qty` / `qtyShip`
+- it does not rewrite `goodsCode`
+- it preserves top-level `branchID`
+
+This means:
+
+- if called with a normalized store-aware order as-is, it would send internal `goodsCode` back to Tabletki
+
+Recommended safe rule for future implementation:
+
+- SalesDrive path keeps normalized internal `goodsCode`
+- Tabletki status `2` path restores:
+  - `row["goodsCode"] = row["originalGoodsCodeExternal"]`
+  - when `originalGoodsCodeExternal` exists
+- legacy rows without preserved external code remain unchanged
+
+Safe insertion point:
+
+- `app/services/order_fetcher.py`
+- immediately after successful `process_and_send_order(...)`
+- only for store-aware normalized orders
+- only for incoming status `0`
+
+Success signal today:
+
+- `process_and_send_order(...)` does not return explicit success metadata
+- practical success condition is absence of exception
+
+Recommended feature flag:
+
+- `BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED=false`
+
+Most likely files for the next step:
+
+- `app/services/order_fetcher.py`
+- optional helper in `app/business/business_store_order_mapper.py`
+- `app/services/order_sender.py`
+- `ENV_REFERENCE.md`
+
+Current implementation status:
+
+- helper `restore_tabletki_goods_codes_for_status(...)` now exists in `app/business/business_store_order_mapper.py`
+- `order_fetcher.py` can now send Tabletki status `2` for store-aware normalized orders behind `BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED`
+- SalesDrive path still uses normalized internal `goodsCode`
+- Tabletki status `2` path restores external `goodsCode` from `originalGoodsCodeExternal`
+- legacy order flow remains unchanged
+
+Related follow-up:
+
+- outbound SalesDrive/webhook status mapping for status `4` / `4.1` / `6` / `7` is audited separately in `docs/business_store_outbound_status_mapping_audit.md`
+- current Stage 1 there: isolated outbound mapper resolves store by `BusinessStore.tabletki_branch` because Business contour expects `mapping_branch.branch` and `tabletki_branch` alignment
+- long-term stronger path still remains persisted order-to-store link via `externalId` / `tabletkiOrder`

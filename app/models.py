@@ -533,6 +533,95 @@ class BusinessStoreProductPriceAdjustment(Base):
     )
 
 
+class BusinessEnterpriseProductCode(Base):
+    __tablename__ = "business_enterprise_product_codes"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_code = Column(String(255), nullable=False)
+    code_source = Column(String(64), nullable=False, server_default=text("'generated'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "internal_product_code",
+            name="uq_business_enterprise_product_codes_enterprise_internal",
+        ),
+        UniqueConstraint(
+            "enterprise_code",
+            "external_product_code",
+            name="uq_business_enterprise_product_codes_enterprise_external",
+        ),
+        Index("ix_bepc_enterprise_code", "enterprise_code"),
+        Index("ix_bepc_internal_code", "internal_product_code"),
+        Index("ix_bepc_external_code", "external_product_code"),
+        Index("ix_bepc_is_active", "is_active"),
+        CheckConstraint(
+            "code_source IN ('generated', 'legacy_same', 'prefix_mapping', 'backfilled_from_store')",
+            name="ck_business_enterprise_product_codes_code_source",
+        ),
+    )
+
+
+class BusinessEnterpriseProductName(Base):
+    __tablename__ = "business_enterprise_product_names"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_name = Column(String(500), nullable=False)
+    name_source = Column(String(64), nullable=False, server_default=text("'catalog_supplier_mapping'"))
+    source_supplier_id = Column(BigInteger, nullable=True)
+    source_supplier_code = Column(String(255), nullable=True)
+    source_supplier_product_id = Column(String(255), nullable=True)
+    source_supplier_product_name_raw = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "internal_product_code",
+            name="uq_business_enterprise_product_names_enterprise_internal",
+        ),
+        Index("ix_bepn_enterprise_code", "enterprise_code"),
+        Index("ix_bepn_internal_code", "internal_product_code"),
+        Index("ix_bepn_is_active", "is_active"),
+        Index(
+            "ix_bepn_source_supplier",
+            "source_supplier_id",
+            "source_supplier_code",
+        ),
+        CheckConstraint(
+            "name_source IN ('catalog_supplier_mapping', 'manual', 'cleaned', 'backfilled_from_store')",
+            name="ck_business_enterprise_product_names_name_source",
+        ),
+    )
+
+
 # Сопоставление аптек 
 class MappingBranch(Base):
     __tablename__ = "mapping_branch"

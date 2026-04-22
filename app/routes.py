@@ -2860,6 +2860,15 @@ from app.business.salesdrive_webhook import process_salesdrive_webhook  # заг
 from app.salesdrive_simple.webhook import process_salesdrive_simple_webhook
 
 
+def _salesdrive_payload_items_for_summary(payload: dict) -> list[dict]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
+
+
 @router.post("/webhooks/salesdrive-simple/{branch}", summary="SalesDriveSimple Webhook (public)")
 async def salesdrive_simple_webhook(
     branch: str,
@@ -2920,11 +2929,16 @@ async def salesdrive_webhook(
 
     # Короткая сводка
     info = (payload.get("info") or {})
-    data = (payload.get("data") or {})
+    items = _salesdrive_payload_items_for_summary(payload)
+    first_item = items[0] if items else {}
     sd_logger.info(
-        "Summary: webhookType=%s webhookEvent=%s account=%s order_id=%s status_id=%s",
-        info.get("webhookType"), info.get("webhookEvent"), info.get("account"),
-        data.get("id"), data.get("statusId")
+        "Summary: webhookType=%s webhookEvent=%s account=%s events=%s first_order_id=%s first_status_id=%s",
+        info.get("webhookType"),
+        info.get("webhookEvent"),
+        info.get("account"),
+        len(items),
+        first_item.get("id"),
+        first_item.get("statusId"),
     )
 
     # Полный «как есть» JSON

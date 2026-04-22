@@ -275,13 +275,15 @@ Model:
 
 Следующий этап после безопасного bypass:
 
-- `Strategy B`: dedicated store-aware availability checker
+- separate store-aware status `2` sender after successful SalesDrive send
+- then `Strategy B`: dedicated store-aware availability checker
 
 То есть roadmap:
 
 1. сначала safe routing + bypass
-2. потом separate checker
-3. только потом optional store-aware auto-confirm
+2. потом separate status `2` send with external-code restore
+3. потом separate checker
+4. только потом optional store-aware auto-confirm
 
 ### 6.3 What not to do
 
@@ -290,6 +292,7 @@ Model:
 - не писать store-aware stock в `InventoryStock`
 - не пускать store-aware orders напрямую в current `process_orders(...)`
 - не пытаться reuse legacy `auto_confirm` only by swapping `goodsCode` to internal code
+- не отправлять Tabletki status `2` с normalized internal `goodsCode`
 
 ## 7. Future Integration Point
 
@@ -335,6 +338,20 @@ Current mapper already preserves:
 
 - confirm/cancel/status sender decides which code Tabletki expects back
 
+### 7.5 Где ставить store-aware status 2
+
+Safe insertion point:
+
+- в `fetch_orders_for_enterprise(...)`
+- after successful `process_and_send_order(...)`
+- only for store-aware normalized orders
+- only for incoming status `0`
+
+Payload rule:
+
+- for SalesDrive keep normalized internal `goodsCode`
+- for Tabletki status `2` restore `originalGoodsCodeExternal` when present
+
 ## 8. Future Implementation Checklist
 
 1. Integrate `normalize_store_order_payload(...)` into `order_fetcher.py`
@@ -379,3 +396,4 @@ Current implementation status:
   - store-aware orders are normalized and bypass legacy `process_orders(...)`
   - mapping errors are skipped from normal downstream processing
 - dedicated availability checker is still not implemented
+- separate store-aware status `2` sender is now implemented behind `BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED`
