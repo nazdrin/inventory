@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BusinessStore, BusinessStoreProductCode
+from app.models import BusinessEnterpriseProductCode, BusinessStore, BusinessStoreProductCode
 
 
 def _clean_text(value: Any) -> str | None:
@@ -14,6 +15,15 @@ def _clean_text(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _is_enterprise_outbound_code_mapping_enabled() -> bool:
+    return (os.getenv("BUSINESS_ENTERPRISE_OUTBOUND_STATUS_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 async def resolve_business_store_by_tabletki_branch(
@@ -49,25 +59,69 @@ async def resolve_business_store_by_tabletki_branch(
 async def map_internal_code_to_store_external(
     session: AsyncSession,
     *,
-    store_id: int,
+    store: BusinessStore,
     internal_product_code: str,
-) -> str | None:
+) -> dict[str, Any]:
+    code_mapping_mode = "enterprise_level" if _is_enterprise_outbound_code_mapping_enabled() else "store_level"
     normalized_internal_code = _clean_text(internal_product_code)
     if not normalized_internal_code:
-        return None
+        return {
+            "status": "missing_mapping",
+            "code_mapping_mode": code_mapping_mode,
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": _clean_text(store.enterprise_code),
+            "internal_product_code": normalized_internal_code,
+            "external_product_code": None,
+            "reason": "missing_enterprise_internal_code_mapping"
+            if code_mapping_mode == "enterprise_level"
+            else "missing_internal_code_mapping",
+        }
 
-    row = (
-        await session.execute(
-            select(BusinessStoreProductCode).where(
-                BusinessStoreProductCode.store_id == int(store_id),
-                BusinessStoreProductCode.internal_product_code == normalized_internal_code,
-                BusinessStoreProductCode.is_active.is_(True),
-            ).limit(1)
-        )
-    ).scalar_one_or_none()
+    if code_mapping_mode == "enterprise_level":
+        row = (
+            await session.execute(
+                select(BusinessEnterpriseProductCode).where(
+                    BusinessEnterpriseProductCode.enterprise_code == _clean_text(store.enterprise_code),
+                    BusinessEnterpriseProductCode.internal_product_code == normalized_internal_code,
+                    BusinessEnterpriseProductCode.is_active.is_(True),
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+    else:
+        row = (
+            await session.execute(
+                select(BusinessStoreProductCode).where(
+                    BusinessStoreProductCode.store_id == int(store.id),
+                    BusinessStoreProductCode.internal_product_code == normalized_internal_code,
+                    BusinessStoreProductCode.is_active.is_(True),
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+
     if row is None:
-        return None
-    return _clean_text(row.external_product_code)
+        return {
+            "status": "missing_mapping",
+            "code_mapping_mode": code_mapping_mode,
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": _clean_text(store.enterprise_code),
+            "internal_product_code": normalized_internal_code,
+            "external_product_code": None,
+            "reason": "missing_enterprise_internal_code_mapping"
+            if code_mapping_mode == "enterprise_level"
+            else "missing_internal_code_mapping",
+        }
+
+    return {
+        "status": "ok",
+        "code_mapping_mode": code_mapping_mode,
+        "store_id": int(store.id),
+        "store_code": store.store_code,
+        "enterprise_code": _clean_text(store.enterprise_code),
+        "internal_product_code": normalized_internal_code,
+        "external_product_code": _clean_text(row.external_product_code),
+    }
 
 
 def _extract_orders(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -93,6 +147,7 @@ async def restore_salesdrive_products_for_tabletki_outbound(
     transformed_payload = deepcopy(payload)
     warnings: list[str] = []
     errors: list[str] = []
+    code_mapping_mode = "enterprise_level" if _is_enterprise_outbound_code_mapping_enabled() else "store_level"
 
     orders = _extract_orders(transformed_payload)
     if not orders:
@@ -114,11 +169,17 @@ async def restore_salesdrive_products_for_tabletki_outbound(
         errors.append(str(exc))
         return {
             "status": "mapping_error",
+            "code_mapping_mode": code_mapping_mode,
             "store_found": False,
             "store_id": None,
             "store_code": None,
+            "enterprise_code": _clean_text(enterprise_code),
             "branch": resolved_branch,
             "mapped_products": 0,
+            "first_parameter_before": None,
+            "first_parameter_after": None,
+            "first_sku_before": None,
+            "first_sku_after": None,
             "missing_mappings": [],
             "warnings": warnings,
             "errors": errors,
@@ -129,11 +190,17 @@ async def restore_salesdrive_products_for_tabletki_outbound(
         warnings.append("BusinessStore was not resolved by tabletki branch; payload left unchanged.")
         return {
             "status": "legacy_passthrough",
+            "code_mapping_mode": code_mapping_mode,
             "store_found": False,
             "store_id": None,
             "store_code": None,
+            "enterprise_code": _clean_text(enterprise_code),
             "branch": resolved_branch,
             "mapped_products": 0,
+            "first_parameter_before": None,
+            "first_parameter_after": None,
+            "first_sku_before": None,
+            "first_sku_after": None,
             "missing_mappings": [],
             "warnings": warnings,
             "errors": errors,
@@ -144,11 +211,17 @@ async def restore_salesdrive_products_for_tabletki_outbound(
         warnings.append("BusinessStore uses legacy passthrough code strategy; payload left unchanged.")
         return {
             "status": "legacy_passthrough",
+            "code_mapping_mode": code_mapping_mode,
             "store_found": True,
             "store_id": int(store.id),
             "store_code": store.store_code,
+            "enterprise_code": _clean_text(store.enterprise_code),
             "branch": resolved_branch,
             "mapped_products": 0,
+            "first_parameter_before": None,
+            "first_parameter_after": None,
+            "first_sku_before": None,
+            "first_sku_after": None,
             "missing_mappings": [],
             "warnings": warnings,
             "errors": errors,
@@ -157,6 +230,10 @@ async def restore_salesdrive_products_for_tabletki_outbound(
 
     missing_mappings: list[dict[str, Any]] = []
     mapped_products = 0
+    first_parameter_before: str | None = None
+    first_parameter_after: str | None = None
+    first_sku_before: str | None = None
+    first_sku_after: str | None = None
 
     for order_index, order in enumerate(orders):
         products = order.get("products")
@@ -181,38 +258,95 @@ async def restore_salesdrive_products_for_tabletki_outbound(
                 )
                 continue
 
-            internal_code = _clean_text(product.get("parameter")) or _clean_text(product.get("sku"))
-            external_code = await map_internal_code_to_store_external(
-                session,
-                store_id=int(store.id),
-                internal_product_code=internal_code or "",
-            )
-            if not external_code:
+            parameter_before = _clean_text(product.get("parameter"))
+            sku_before = _clean_text(product.get("sku"))
+            if first_parameter_before is None:
+                first_parameter_before = parameter_before
+            if first_sku_before is None:
+                first_sku_before = sku_before
+
+            parameter_result = None
+            sku_result = None
+            if parameter_before:
+                parameter_result = await map_internal_code_to_store_external(
+                    session,
+                    store=store,
+                    internal_product_code=parameter_before,
+                )
+            if sku_before and sku_before != parameter_before:
+                sku_result = await map_internal_code_to_store_external(
+                    session,
+                    store=store,
+                    internal_product_code=sku_before,
+                )
+            elif sku_before:
+                sku_result = parameter_result
+
+            failed_results = [
+                result for result in (parameter_result, sku_result)
+                if result is not None and result.get("status") != "ok"
+            ]
+            if failed_results:
+                failure = failed_results[0]
                 missing_mappings.append(
                     {
                         "order_index": order_index,
                         "product_index": product_index,
-                        "internal_product_code": internal_code,
-                        "reason": "missing_external_code_mapping",
+                        "internal_product_code": failure.get("internal_product_code"),
+                        "reason": failure.get("reason") or (
+                            "missing_enterprise_internal_code_mapping"
+                            if code_mapping_mode == "enterprise_level"
+                            else "missing_internal_code_mapping"
+                        ),
                     }
                 )
                 continue
 
-            if "parameter" in product:
-                product["parameter"] = external_code
-            if "sku" in product:
-                product["sku"] = external_code
+            if parameter_result is None and sku_result is None:
+                missing_mappings.append(
+                    {
+                        "order_index": order_index,
+                        "product_index": product_index,
+                        "internal_product_code": None,
+                        "reason": "missing_enterprise_internal_code_mapping"
+                        if code_mapping_mode == "enterprise_level"
+                        else "missing_internal_code_mapping",
+                    }
+                )
+                continue
+
+            if "parameter" in product and parameter_result is not None:
+                product["parameter"] = parameter_result.get("external_product_code")
+            if "sku" in product and sku_result is not None:
+                product["sku"] = sku_result.get("external_product_code")
+
+            if first_parameter_after is None:
+                first_parameter_after = _clean_text(product.get("parameter"))
+            if first_sku_after is None:
+                first_sku_after = _clean_text(product.get("sku"))
+
+            if parameter_before and sku_before and parameter_before != sku_before:
+                warnings.append(
+                    f"Order index {order_index} product index {product_index} had different parameter and sku internal codes."
+                )
+
             mapped_products += 1
 
     if missing_mappings:
         errors.append("One or more SalesDrive products could not be mapped to external store codes.")
         return {
             "status": "mapping_error",
+            "code_mapping_mode": code_mapping_mode,
             "store_found": True,
             "store_id": int(store.id),
             "store_code": store.store_code,
+            "enterprise_code": _clean_text(store.enterprise_code),
             "branch": resolved_branch,
             "mapped_products": mapped_products,
+            "first_parameter_before": first_parameter_before,
+            "first_parameter_after": first_parameter_after,
+            "first_sku_before": first_sku_before,
+            "first_sku_after": first_sku_after,
             "missing_mappings": missing_mappings,
             "warnings": warnings,
             "errors": errors,
@@ -221,11 +355,17 @@ async def restore_salesdrive_products_for_tabletki_outbound(
 
     return {
         "status": "ok",
+        "code_mapping_mode": code_mapping_mode,
         "store_found": True,
         "store_id": int(store.id),
         "store_code": store.store_code,
+        "enterprise_code": _clean_text(store.enterprise_code),
         "branch": resolved_branch,
         "mapped_products": mapped_products,
+        "first_parameter_before": first_parameter_before,
+        "first_parameter_after": first_parameter_after,
+        "first_sku_before": first_sku_before,
+        "first_sku_after": first_sku_after,
         "missing_mappings": [],
         "warnings": warnings,
         "errors": errors,

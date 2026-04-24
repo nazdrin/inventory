@@ -20,6 +20,12 @@ Stage update:
 - runtime wiring now exists only in `app/business/salesdrive_webhook.py`
 - `/webhooks/salesdrive-simple/{branch}` remains unchanged
 - runtime wiring is gated by `BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED=false`
+- outbound code lookup now also has a second-stage flag:
+  - `BUSINESS_ENTERPRISE_OUTBOUND_STATUS_CODE_MAPPING_ENABLED=false`
+- default rollback path remains store-level:
+  - `BusinessStoreProductCode.store_id`
+- optional enterprise-level mode uses:
+  - `BusinessEnterpriseProductCode.enterprise_code`
 
 ## 2. Files Reviewed
 

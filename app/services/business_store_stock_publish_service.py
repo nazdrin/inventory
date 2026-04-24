@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from sqlalchemy import select
@@ -8,6 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.business.business_store_stock_exporter import export_business_store_stock
 from app.business.business_store_stock_preview import build_store_stock_payload_preview
 from app.models import BusinessStore, EnterpriseSettings
+from app.services.business_runtime_mode_service import (
+    CUSTOM_BUSINESS_RUNTIME_MODE,
+    resolve_business_runtime_mode_from_db,
+)
 
 
 PUBLISH_READY_STOCK_STATES = {"dry_run", "catalog_stock_live", "orders_live"}
@@ -18,6 +23,15 @@ def _clean_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _enterprise_stock_code_mapping_enabled() -> bool:
+    return (os.getenv("BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _empty_store_report_row(
@@ -41,11 +55,19 @@ def _empty_store_report_row(
         "eligible": bool(eligible),
         "skip_reason": skip_reason,
         "status": status,
+        "code_mapping_mode": "store_level",
+        "identity_mode": "store_level",
+        "target_branch": store.tabletki_branch,
+        "target_branch_source": "business_store",
         "candidate_products": 0,
         "exportable_products": 0,
         "skipped_products": 0,
         "sent_products": 0,
         "endpoint_preview": None,
+        "business_runtime_mode": CUSTOM_BUSINESS_RUNTIME_MODE,
+        "runtime_mode_source": "enterprise_settings",
+        "stock_mode": "store_aware",
+        "stock_mode_source": "enterprise_settings",
         "warnings": list(warnings or []),
         "errors": list(errors or []),
     }
@@ -60,7 +82,7 @@ def _detect_preview_skip_reason(preview: dict[str, Any]) -> str:
     if exportable_products > 0:
         return ""
     if missing_code_mapping > 0:
-        return "missing_code_mapping"
+        return "missing_enterprise_code_mapping" if preview.get("code_mapping_mode") == "enterprise_level" else "missing_code_mapping"
     if missing_price_adjustment > 0:
         return "missing_price_adjustment"
     return "missing_exportable_rows"
@@ -71,6 +93,7 @@ def _check_store_stock_eligibility(
     enterprise: EnterpriseSettings | None,
     *,
     include_legacy_default: bool,
+    stock_mode_report: dict[str, Any],
 ) -> tuple[bool, str | None]:
     if not bool(store.is_active):
         return False, "inactive_store"
@@ -78,6 +101,8 @@ def _check_store_stock_eligibility(
         return False, "store_stock_disabled"
     if enterprise is None:
         return False, "missing_enterprise_settings"
+    if stock_mode_report.get("business_runtime_mode") != CUSTOM_BUSINESS_RUNTIME_MODE:
+        return False, "baseline_legacy_mode_enabled"
     if not bool(enterprise.stock_enabled):
         return False, "enterprise_stock_disabled"
     if bool(store.is_legacy_default) and not include_legacy_default:
@@ -96,6 +121,7 @@ async def _load_store_candidates(
     *,
     store_id: int | None = None,
     store_code: str | None = None,
+    enterprise_code: str | None = None,
 ) -> list[tuple[BusinessStore, EnterpriseSettings | None]]:
     stmt = (
         select(BusinessStore, EnterpriseSettings)
@@ -109,6 +135,8 @@ async def _load_store_candidates(
         stmt = stmt.where(BusinessStore.id == int(store_id))
     if store_code is not None:
         stmt = stmt.where(BusinessStore.store_code == _clean_text(store_code))
+    if enterprise_code is not None:
+        stmt = stmt.where(BusinessStore.enterprise_code == _clean_text(enterprise_code))
 
     rows = await session.execute(stmt)
     return [(store, enterprise) for store, enterprise in rows.all()]
@@ -120,11 +148,14 @@ async def get_eligible_business_store_stocks(
     include_legacy_default: bool = False,
     store_id: int | None = None,
     store_code: str | None = None,
+    enterprise_code: str | None = None,
 ) -> dict[str, Any]:
+    code_mapping_mode = "enterprise_level" if _enterprise_stock_code_mapping_enabled() else "store_level"
     store_rows = await _load_store_candidates(
         session,
         store_id=store_id,
         store_code=store_code,
+        enterprise_code=enterprise_code,
     )
 
     report_rows: list[dict[str, Any]] = []
@@ -133,10 +164,12 @@ async def get_eligible_business_store_stocks(
 
     for store, enterprise in store_rows:
         enterprise_stock_enabled = None if enterprise is None else bool(enterprise.stock_enabled)
+        stock_mode_report = await resolve_business_runtime_mode_from_db(session, str(store.enterprise_code or ""))
         eligible, skip_reason = _check_store_stock_eligibility(
             store,
             enterprise,
             include_legacy_default=bool(include_legacy_default),
+            stock_mode_report=stock_mode_report,
         )
 
         warnings = [OFFERS_FRESHNESS_WARNING]
@@ -172,6 +205,12 @@ async def get_eligible_business_store_stocks(
             warnings=warnings,
             errors=errors,
         )
+        row["code_mapping_mode"] = code_mapping_mode
+        row["identity_mode"] = code_mapping_mode
+        row["business_runtime_mode"] = stock_mode_report.get("business_runtime_mode")
+        row["runtime_mode_source"] = stock_mode_report.get("runtime_mode_source")
+        row["stock_mode"] = stock_mode_report.get("stock_runtime_path")
+        row["stock_mode_source"] = stock_mode_report.get("runtime_mode_source")
         row["candidate_products"] = candidate_products
         row["exportable_products"] = exportable_products
         row["skipped_products"] = skipped_products
@@ -183,6 +222,11 @@ async def get_eligible_business_store_stocks(
 
     return {
         "status": "ok",
+        "business_runtime_mode": CUSTOM_BUSINESS_RUNTIME_MODE,
+        "runtime_mode_source": "enterprise_settings",
+        "stock_mode": "store_aware",
+        "stock_mode_source": "enterprise_settings",
+        "enterprise_code": _clean_text(enterprise_code) or None,
         "total_stores_found": len(store_rows),
         "eligible_stores": eligible_count,
         "skipped_stores": skipped_count,
@@ -201,17 +245,21 @@ async def publish_enabled_business_store_stocks(
     include_legacy_default: bool = False,
     store_code: str | None = None,
     store_id: int | None = None,
+    enterprise_code: str | None = None,
     require_confirm: bool = True,
     confirm: bool = False,
 ) -> dict[str, Any]:
     if not bool(dry_run) and bool(require_confirm) and not bool(confirm):
         raise ValueError("Live send requires explicit confirm.")
 
+    code_mapping_mode = "enterprise_level" if _enterprise_stock_code_mapping_enabled() else "store_level"
+
     eligibility = await get_eligible_business_store_stocks(
         session,
         include_legacy_default=bool(include_legacy_default),
         store_id=int(store_id) if store_id is not None else None,
         store_code=_clean_text(store_code) or None,
+        enterprise_code=_clean_text(enterprise_code) or None,
     )
 
     top_errors: list[str] = []
@@ -247,6 +295,10 @@ async def publish_enabled_business_store_stocks(
         merged = {
             **entry,
             "status": result.get("status"),
+            "code_mapping_mode": result.get("code_mapping_mode"),
+            "identity_mode": result.get("identity_mode"),
+            "target_branch": result.get("target_branch"),
+            "target_branch_source": result.get("target_branch_source"),
             "candidate_products": int(result.get("total_candidates", 0) or 0),
             "exportable_products": int(result.get("exportable_products", 0) or 0),
             "skipped_products": int(result.get("skipped_products", 0) or 0),
@@ -279,10 +331,20 @@ async def publish_enabled_business_store_stocks(
         top_warnings.append("Scheduler is not connected; this service performs only manual multi-store stock publish.")
     else:
         top_warnings.append("Dry-run mode: no external API calls were performed.")
+    top_warnings.append(
+        "Enterprise-level stock code mapping is {}.".format(
+            "enabled" if code_mapping_mode == "enterprise_level" else "disabled"
+        )
+    )
 
     return {
         "status": overall_status,
         "dry_run": bool(dry_run),
+        "stock_mode": "store_aware",
+        "stock_mode_source": "default",
+        "enterprise_code": _clean_text(enterprise_code) or None,
+        "code_mapping_mode": code_mapping_mode,
+        "identity_mode": code_mapping_mode,
         "total_stores_found": total_found,
         "eligible_stores": eligible_stores,
         "skipped_stores": skipped_stores,

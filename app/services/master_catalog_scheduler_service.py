@@ -154,11 +154,13 @@ def _summarize_store_publish_report(report: Dict[str, Any]) -> None:
     for store in report.get("stores", []):
         logger.info(
             (
-                "Store-aware catalog store result: store_code=%s branch=%s status=%s "
-                "exportable=%s sent=%s skip_reason=%s"
+                "Store-aware catalog store result: store_code=%s branch=%s branch_source=%s "
+                "identity_mode=%s status=%s exportable=%s sent=%s skip_reason=%s"
             ),
             store.get("store_code"),
-            store.get("tabletki_branch"),
+            store.get("target_branch") or store.get("tabletki_branch"),
+            store.get("target_branch_source"),
+            store.get("identity_mode"),
             store.get("status"),
             store.get("exportable_products"),
             store.get("sent_products"),

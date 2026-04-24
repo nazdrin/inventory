@@ -58,6 +58,22 @@ export const updateMappingBranch = async (branch, payload) => {
     }
 };
 
+export const getBusinessStoreMappingBranches = async (enterpriseCode) => {
+    try {
+        const response = await axios.get(
+            `${API_BASE_URL}/business-stores/meta/mapping-branches`,
+            {
+                ...getAuthHeaders(),
+                params: { enterprise_code: enterpriseCode },
+            },
+        );
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching Business Store mapping branches:", error);
+        throw error;
+    }
+};
+
 // Функция выхода (очистка токена)
 export const logout = () => {
     localStorage.removeItem("token");

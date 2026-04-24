@@ -124,6 +124,8 @@ class EnterpriseSettings(Base, TimestampMixin):
     auto_confirm = Column(Boolean, nullable=False, server_default=text("false"))
     catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    business_runtime_mode = Column(String(16), nullable=False, server_default=text("'baseline'"))
+    business_stock_mode = Column(String(32), nullable=False, server_default=text("'baseline_legacy'"))
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
@@ -132,6 +134,14 @@ class EnterpriseSettings(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_enterprise_settings_data_format", "data_format"),
         Index("ix_enterprise_settings_single_store", "single_store"),
+        CheckConstraint(
+            "business_runtime_mode IN ('baseline', 'custom')",
+            name="ck_enterprise_settings_business_runtime_mode",
+        ),
+        CheckConstraint(
+            "business_stock_mode IN ('baseline_legacy', 'store_aware')",
+            name="ck_enterprise_settings_business_stock_mode",
+        ),
     )
 
 

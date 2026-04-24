@@ -605,3 +605,9 @@ Standalone multi-store publish layer for this path is now implemented via:
 Separate scheduler layer for the same path is now implemented via:
 
 - `app/services/business_store_stock_scheduler_service.py`
+Stage 4 update:
+
+- store-aware stock preview/export/publish can now switch product code lookup behind `BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED`;
+- default remains store-level code lookup rollback path;
+- when enabled, only `external_product_code` lookup becomes enterprise-level via `BusinessEnterpriseProductCode`;
+- branch (`BusinessStore.tabletki_branch`), offer scope (`legacy_scope_key`), and store-level price adjustments remain unchanged.

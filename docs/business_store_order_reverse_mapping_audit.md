@@ -39,6 +39,19 @@ Current status after Stage 3:
 - `mapping_error` orders are logged and skipped from normal downstream processing;
 - `auto_confirm.py`, `app/business/order_sender.py`, and `app/services/order_sender.py` remain unchanged.
 
+Current status after Stage 5:
+
+- store-aware inbound order flow still resolves store by branch / `BusinessStore`;
+- reverse product code lookup can now switch behind `BUSINESS_ENTERPRISE_ORDER_CODE_MAPPING_ENABLED`;
+- default rollback path remains store-level:
+  - `BusinessStoreProductCode.store_id`
+- enterprise-level mode uses:
+  - `BusinessEnterpriseProductCode.enterprise_code`
+- normalized payload shape stays the same:
+  - `rows[].goodsCode = internal_product_code`
+  - `rows[].originalGoodsCodeExternal = incoming external goodsCode`
+  - `rows[]["_businessStoreId"] = store.id`
+
 Ограничения этого шага:
 
 - не менять `order_fetcher.py`;

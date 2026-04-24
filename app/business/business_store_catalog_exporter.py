@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.business.business_store_catalog_preview import build_store_catalog_payload_preview
 from app.models import BusinessStore, DeveloperSettings, EnterpriseSettings
 from app.services.catalog_export_service import SUPPLIER_MAPPING, post_data_to_endpoint
+from app.services.business_runtime_mode_service import (
+    BASELINE_BUSINESS_RUNTIME_MODE,
+    resolve_business_runtime_mode_from_db,
+)
 
 
 VAT_VALUE = 20.0
@@ -190,8 +194,23 @@ async def export_business_store_catalog(
         "dry_run": bool(dry_run),
         "store_id": int(store.id),
         "store_code": store.store_code,
+        "enterprise_catalog_enabled": bool(enterprise_settings.catalog_enabled) if enterprise_settings is not None else None,
+        "store_catalog_enabled_deprecated": bool(store.catalog_enabled),
+        "catalog_gate_source": "store_and_enterprise_legacy",
         "tabletki_enterprise_code": store.tabletki_enterprise_code,
         "tabletki_branch": store.tabletki_branch,
+        "identity_mode": "store_level",
+        "assortment_mode": "store_native",
+        "catalog_scope_store_id": int(store.id),
+        "catalog_scope_store_code": store.store_code,
+        "catalog_scope_branch": store.tabletki_branch,
+        "catalog_scope_key": store.legacy_scope_key,
+        "catalog_scope_source": "selected_store_legacy",
+        "catalog_only_in_stock_source": "selected_store_legacy",
+        "catalog_only_in_stock": bool(store.catalog_only_in_stock),
+        "target_branch": store.tabletki_branch,
+        "target_branch_source": "business_store",
+        "candidate_source": preview.get("summary", {}).get("catalog_source"),
         "total_candidates": preview.get("summary", {}).get("candidate_products", 0),
         "exportable_products": len(exportable_rows),
         "skipped_products": max(0, int(preview.get("summary", {}).get("candidate_products", 0)) - len(exportable_rows)),
@@ -247,6 +266,34 @@ async def export_business_store_catalog_by_selector(
         store = await _get_store_by_code_or_fail(session, str(store_code))
     else:
         raise ValueError("store_id or store_code is required")
+
+    runtime_mode_report = await resolve_business_runtime_mode_from_db(session, str(store.enterprise_code or ""))
+
+    if runtime_mode_report.get("business_runtime_mode") == BASELINE_BUSINESS_RUNTIME_MODE:
+        from app.business.business_baseline_catalog_exporter import (
+            export_business_baseline_catalog,
+        )
+
+        return await export_business_baseline_catalog(
+            session,
+            store_id=int(store.id),
+            dry_run=dry_run,
+            limit=limit,
+            require_confirm=require_confirm,
+        )
+
+    if runtime_mode_report.get("catalog_runtime_path") == "enterprise_identity":
+        from app.business.business_enterprise_catalog_exporter import (
+            export_business_enterprise_catalog,
+        )
+
+        return await export_business_enterprise_catalog(
+            session,
+            store_id=int(store.id),
+            dry_run=dry_run,
+            limit=limit,
+            require_confirm=require_confirm,
+        )
 
     return await export_business_store_catalog(
         session,

@@ -65,6 +65,8 @@ class EnterpriseSettingsSchema(BaseModel):
     auto_confirm: Optional[bool] = False
     catalog_enabled: Optional[bool] = True
     stock_enabled: Optional[bool] = True
+    business_runtime_mode: Literal["baseline", "custom"] = "baseline"
+    business_stock_mode: Literal["baseline_legacy", "store_aware"] = "baseline_legacy"
     store_serial: Optional[str] = None  # Серийный номер магазина
     stock_upload_frequency: Optional[int] = None  # Частота загрузки остатков
     catalog_upload_frequency: Optional[int] = None  # Частота загрузки каталога
@@ -569,6 +571,13 @@ class BusinessEnterpriseOptionOut(BaseModel):
     catalog_enabled: bool
     stock_enabled: bool
     order_fetcher: bool
+
+
+class BusinessStoreMappingBranchOptionOut(BaseModel):
+    enterprise_code: str
+    branch: str
+    mapping_store_hint: Optional[str] = None
+    is_primary_enterprise_branch: bool = False
 
 
 # Схема для глобальных настроек системы

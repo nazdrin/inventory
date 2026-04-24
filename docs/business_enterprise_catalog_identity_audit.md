@@ -625,6 +625,29 @@ Principle:
 - switch readers by feature flag;
 - do not switch catalog, stock, inbound orders, and outbound orders in one step.
 
+Catalog gate cleanup:
+
+- при `BUSINESS_ENTERPRISE_CATALOG_IDENTITY_ENABLED=true` operator-facing catalog gate = `EnterpriseSettings.catalog_enabled`;
+- `BusinessStore.catalog_enabled` больше не должен блокировать enterprise-level catalog eligibility;
+- поле остаётся в БД как deprecated compatibility field для rollback/storage;
+- catalog reports now expose:
+  - `enterprise_catalog_enabled`
+  - `store_catalog_enabled_deprecated`
+  - `catalog_gate_source`
+
+Enterprise catalog assortment scope:
+
+- `catalog_only_in_stock` физически пока хранится в `BusinessStore`;
+- в enterprise catalog mode это поле трактуется как enterprise-level assortment setting через главный магазин каталога;
+- главный магазин каталога определяется как active `BusinessStore` where:
+  - `enterprise_code == EnterpriseSettings.enterprise_code`
+  - `tabletki_branch == EnterpriseSettings.branch_id`
+- selected store больше не должен определять catalog assortment в enterprise mode;
+- если главный магазин не найден:
+  - `missing_catalog_scope_store`
+- если найдено несколько:
+  - `ambiguous_catalog_scope_store`
+
 ## 11. Risks
 
 Main risks:
@@ -730,3 +753,129 @@ Stage 1 is now implemented as schema and tooling only:
 - rollback path still remains:
   - `business_store_product_codes`
   - `business_store_product_names`
+
+## 16. Stage 2 Status
+
+Stage 2 is now implemented as read-only comparison tooling:
+
+- enterprise-level catalog preview added:
+  - `app/business/business_enterprise_catalog_preview.py`
+- enterprise vs store preview comparison CLI added:
+  - `python -m app.scripts.business_enterprise_catalog_preview_compare`
+- enterprise preview uses:
+  - `EnterpriseSettings.branch_id`
+  - `BusinessEnterpriseProductCode`
+  - `BusinessEnterpriseProductName`
+- enterprise preview now supports two assortment modes:
+  - `master_all`
+    - diagnostic mode over the full non-archived `MasterCatalog`
+  - `store_compatible`
+    - compatibility mode that reuses the same candidate assortment scope as current store preview
+    - for `catalog_only_in_stock=true` this means:
+      - non-archived `MasterCatalog`
+      - intersected with `Offer.product_code`
+      - filtered by `Offer.city == BusinessStore.legacy_scope_key`
+      - filtered by `Offer.stock > 0`
+- comparison CLI now defaults to `store_compatible`, because Stage 2 is meant to validate identity replacement only, not assortment expansion;
+- `master_all` remains available as a diagnostic mode to inspect enterprise mapping coverage outside current store assortment;
+- reason-family comparison now normalizes:
+  - `missing_code_mapping` == `missing_enterprise_code_mapping`
+  - `missing_name_mapping` == `missing_enterprise_name_mapping`
+- existing runtime readers still remain store-level;
+- existing store catalog preview/export/publish paths are unchanged;
+- no external API calls are made by enterprise preview or comparison CLI.
+
+## 17. Stage 3 Status
+
+Stage 3 is now implemented behind feature flag:
+
+- `BUSINESS_ENTERPRISE_CATALOG_IDENTITY_ENABLED=false`
+  - rollback/default mode
+  - Business store catalog preview/export/publish still use store-level identity
+  - code/name lookup:
+    - `BusinessStoreProductCode`
+    - `BusinessStoreProductName`
+  - target branch:
+    - `BusinessStore.tabletki_branch`
+- `BUSINESS_ENTERPRISE_CATALOG_IDENTITY_ENABLED=true`
+  - Business store catalog preview/export/publish switch to enterprise-level identity
+  - code/name lookup:
+    - `BusinessEnterpriseProductCode`
+    - `BusinessEnterpriseProductName`
+  - target branch:
+    - `EnterpriseSettings.branch_id`
+  - assortment mode:
+    - `store_compatible`
+    - candidate scope remains aligned with current store preview/export behavior
+
+Important boundary:
+
+- only catalog preview/export/publish are switched in Stage 3;
+- stock readers remain store-level;
+- inbound/outbound order readers remain store-level;
+- UI is unchanged in this step.
+
+## 18. Stage 4 Status
+
+Stage 4 is now implemented behind feature flag:
+
+- `BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED=false`
+  - rollback/default mode
+  - store-aware stock preview/export/publish still read product codes via:
+    - `BusinessStoreProductCode.store_id`
+- `BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED=true`
+  - store-aware stock preview/export/publish switch only code lookup to:
+    - `BusinessEnterpriseProductCode.enterprise_code`
+
+Important boundary:
+
+- stock branch remains store-level:
+  - `BusinessStore.tabletki_branch`
+- stock scope remains store-level:
+  - `BusinessStore.legacy_scope_key`
+- best offer selection remains based on `Offer`
+- stock pricing and extra markup remain store-level:
+  - `BusinessStoreProductPriceAdjustment.store_id`
+- catalog, inbound order mapping, outbound status mapping, and UI are unchanged in this step.
+
+## 19. Stage 5 Status
+
+Stage 5 is now implemented behind feature flag:
+
+- `BUSINESS_ENTERPRISE_ORDER_CODE_MAPPING_ENABLED=false`
+  - rollback/default mode
+  - store-aware inbound reverse lookup still uses:
+    - `BusinessStoreProductCode.store_id`
+- `BUSINESS_ENTERPRISE_ORDER_CODE_MAPPING_ENABLED=true`
+  - store-aware inbound reverse lookup switches to:
+    - `BusinessEnterpriseProductCode.enterprise_code`
+
+Important boundary:
+
+- `BUSINESS_STORE_ORDER_MAPPING_ENABLED` still remains the main gate for store-aware inbound order flow;
+- store resolution remains store-level:
+  - branch -> `BusinessStore`
+- only reverse product code lookup becomes enterprise-level;
+- outbound status mapper remains store-level until later stage;
+- catalog and stock keep their separate feature flags.
+
+## 20. Stage 6 Status
+
+Stage 6 is now implemented behind feature flag:
+
+- `BUSINESS_ENTERPRISE_OUTBOUND_STATUS_CODE_MAPPING_ENABLED=false`
+  - rollback/default mode
+  - outbound Tabletki status mapper still restores codes via:
+    - `BusinessStoreProductCode.store_id`
+- `BUSINESS_ENTERPRISE_OUTBOUND_STATUS_CODE_MAPPING_ENABLED=true`
+  - outbound Tabletki status mapper can restore codes via:
+    - `BusinessEnterpriseProductCode.enterprise_code`
+
+Important boundary:
+
+- `BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED` still remains the main gate for the runtime mapper in `/webhooks/salesdrive`;
+- store resolution remains branch-based:
+  - branch -> `BusinessStore`
+- only `internal -> external` product code lookup changes in this step;
+- `salesdrive-simple` remains unchanged;
+- catalog, stock, inbound order mapping, and UI are unchanged in this step.

@@ -12,6 +12,10 @@ from app.business.business_store_order_mapper import (
     normalize_store_order_payload,
     restore_tabletki_goods_codes_for_status,
 )
+from app.services.business_runtime_mode_service import (
+    BASELINE_BUSINESS_RUNTIME_MODE,
+    normalize_business_runtime_mode,
+)
 from app.services.auto_confirm import process_orders
 from app.services.order_sender import process_due_tabletki_cancel_retries, send_orders_to_tabletki
 from app.services.order_sender import send_single_order_status_2
@@ -136,6 +140,18 @@ async def _normalize_business_orders_for_runtime(
         )
         return list(orders), store_aware_orders, mapping_error_orders
 
+    business_runtime_mode = normalize_business_runtime_mode(
+        getattr(enterprise, "business_runtime_mode", None),
+    )
+    if business_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+        logger.info(
+            "Baseline enterprise skipped from custom business order contour: enterprise_code=%s branch=%s runtime_mode=%s",
+            enterprise.enterprise_code,
+            branch,
+            business_runtime_mode,
+        )
+        return list(orders), store_aware_orders, mapping_error_orders
+
     for order in orders:
         order_branch = str(order.get("branchID") or branch or "").strip() or branch
         try:
@@ -168,24 +184,26 @@ async def _normalize_business_orders_for_runtime(
         if status == "ok":
             normalized_order = normalization.get("order") or order
             logger.info(
-                "Store-aware order normalized: enterprise_code=%s branch=%s order_id=%s store_id=%s store_code=%s mapped_rows=%s",
+                "Store-aware order normalized: enterprise_code=%s branch=%s order_id=%s store_id=%s store_code=%s code_mapping_mode=%s mapped_rows=%s",
                 enterprise.enterprise_code,
                 order_branch,
                 order.get("id"),
                 normalization.get("store_id"),
                 normalization.get("store_code"),
+                normalization.get("code_mapping_mode"),
                 normalization.get("mapped_rows"),
             )
             store_aware_orders.append(normalized_order)
             continue
 
         logger.warning(
-            "Store-aware mapping_error skipped: enterprise_code=%s branch=%s order_id=%s store_id=%s store_code=%s errors=%s missing=%s",
+            "Store-aware mapping_error skipped: enterprise_code=%s branch=%s order_id=%s store_id=%s store_code=%s code_mapping_mode=%s errors=%s missing=%s",
             enterprise.enterprise_code,
             order_branch,
             order.get("id"),
             normalization.get("store_id"),
             normalization.get("store_code"),
+            normalization.get("code_mapping_mode"),
             normalization.get("errors"),
             normalization.get("missing_mappings"),
         )

@@ -14,6 +14,14 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, getcontext
 from app.services.notification_service import send_notification
+from app.business.business_store_order_mapper import (
+    DEBUG_BUSINESS_STORE_ID_FIELD,
+    resolve_business_store_for_order,
+)
+from app.services.business_runtime_mode_service import (
+    BASELINE_BUSINESS_RUNTIME_MODE,
+    normalize_business_runtime_mode,
+)
 # БАЗОВЫЙ URL SalesDrive (используется для /handler/ и /api/order/update/)
 SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необходимости замените на ваш домен
 
@@ -27,7 +35,7 @@ from app.business.supplier_identity import (
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
-from app.models import Offer, DropshipEnterprise, CatalogMapping, CatalogSupplierMapping, EnterpriseSettings, MasterCatalog
+from app.models import BusinessStore, Offer, DropshipEnterprise, CatalogMapping, CatalogSupplierMapping, EnterpriseSettings, MasterCatalog
 import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
@@ -1278,6 +1286,144 @@ def _extract_name_parts(order: Dict[str, Any], d: Dict[str, str]) -> Tuple[str, 
     return f, l, m
 
 
+def _extract_business_store_id_from_order_rows(order: Dict[str, Any]) -> tuple[int | None, list[str]]:
+    warnings: list[str] = []
+    rows = order.get("rows")
+    if not isinstance(rows, list):
+        return None, warnings
+
+    store_ids: list[int] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_store_id = row.get(DEBUG_BUSINESS_STORE_ID_FIELD)
+        if raw_store_id in (None, ""):
+            continue
+        try:
+            store_ids.append(int(raw_store_id))
+        except (TypeError, ValueError):
+            warnings.append(f"invalid_business_store_id_debug_field={raw_store_id}")
+
+    if not store_ids:
+        return None, warnings
+
+    unique_store_ids = sorted(set(store_ids))
+    if len(unique_store_ids) > 1:
+        warnings.append(
+            f"multiple_business_store_ids_in_order_rows={','.join(str(item) for item in unique_store_ids)}"
+        )
+    return unique_store_ids[0], warnings
+
+
+async def resolve_salesdrive_organization_context(
+    session: AsyncSession,
+    *,
+    order: Dict[str, Any],
+    enterprise_code: str,
+    branch: Optional[str] = None,
+) -> Dict[str, Any]:
+    warnings: list[str] = []
+    normalized_enterprise_code = str(enterprise_code or "").strip()
+    branch_value = str(order.get("branchID") or branch or "").strip() or None
+    enterprise_runtime_mode = BASELINE_BUSINESS_RUNTIME_MODE
+
+    if normalized_enterprise_code:
+        enterprise_runtime_mode_raw = (
+            await session.execute(
+                select(EnterpriseSettings.business_runtime_mode)
+                .where(EnterpriseSettings.enterprise_code == normalized_enterprise_code)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        enterprise_runtime_mode = normalize_business_runtime_mode(enterprise_runtime_mode_raw)
+
+    store_id, store_id_warnings = _extract_business_store_id_from_order_rows(order)
+    warnings.extend(store_id_warnings)
+
+    store: BusinessStore | None = None
+    if store_id is not None:
+        try:
+            store = await resolve_business_store_for_order(session, store_id=store_id)
+        except Exception as exc:
+            warning = f"store_resolution_by_debug_store_id_failed:{exc}"
+            warnings.append(warning)
+            logger.warning(
+                "SalesDrive organizationId debug-store resolution failed: store_id=%s enterprise_code=%s branch=%s err=%s",
+                store_id,
+                normalized_enterprise_code,
+                branch_value,
+                exc,
+            )
+
+    if store is None and branch_value:
+        try:
+            store = await resolve_business_store_for_order(
+                session,
+                tabletki_branch=branch_value,
+                tabletki_enterprise_code=normalized_enterprise_code or None,
+            )
+        except Exception as exc:
+            warning = f"store_resolution_by_branch_failed:{exc}"
+            warnings.append(warning)
+            logger.warning(
+                "SalesDrive organizationId branch resolution failed: enterprise_code=%s branch=%s err=%s",
+                normalized_enterprise_code,
+                branch_value,
+                exc,
+            )
+
+    organization_id_value = "1"
+    organization_id_source = "fallback_default"
+
+    if store is not None:
+        if getattr(store, "salesdrive_enterprise_id", None) not in (None, ""):
+            organization_id_value = str(store.salesdrive_enterprise_id)
+            organization_id_source = "store_salesdrive_enterprise_id"
+        else:
+            if enterprise_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+                logger.info(
+                    "SalesDrive organizationId baseline fallback used: store_code=%s enterprise_code=%s branch=%s",
+                    getattr(store, "store_code", None),
+                    getattr(store, "enterprise_code", None),
+                    branch_value or getattr(store, "tabletki_branch", None),
+                )
+            else:
+                warnings.append("missing_salesdrive_enterprise_id")
+                logger.warning(
+                    "SalesDrive organizationId fallback used: reason=missing_salesdrive_enterprise_id store_code=%s enterprise_code=%s branch=%s",
+                    getattr(store, "store_code", None),
+                    getattr(store, "enterprise_code", None),
+                    branch_value or getattr(store, "tabletki_branch", None),
+                )
+    else:
+        if enterprise_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+            logger.info(
+                "SalesDrive organizationId baseline fallback used without store resolution: enterprise_code=%s branch=%s",
+                normalized_enterprise_code,
+                branch_value,
+            )
+        else:
+            warnings.append("store_resolution_missing_for_salesdrive_organization")
+            logger.warning(
+                "SalesDrive organizationId fallback used: reason=store_resolution_missing_for_salesdrive_organization enterprise_code=%s branch=%s",
+                normalized_enterprise_code,
+                branch_value,
+            )
+
+    return {
+        "organizationId_value": organization_id_value,
+        "organizationId_source": organization_id_source,
+        "payment_method": "Післяплата",
+        "business_runtime_mode": enterprise_runtime_mode,
+        "order_runtime_path": "baseline_passthrough" if enterprise_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE else "custom_business",
+        "store_id": int(store.id) if store is not None else None,
+        "store_code": getattr(store, "store_code", None) if store is not None else None,
+        "enterprise_code": getattr(store, "enterprise_code", None) if store is not None else normalized_enterprise_code or None,
+        "branch": branch_value or (getattr(store, "tabletki_branch", None) if store is not None else None),
+        "warnings": warnings,
+    }
+
+
 async def build_salesdrive_payload(
     session: AsyncSession,
     order: Dict[str, Any],
@@ -1290,6 +1436,12 @@ async def build_salesdrive_payload(
 ) -> Dict[str, Any]:
     d = _delivery_dict(order)
     fName, lName, mName = _extract_name_parts(order, d)
+    salesdrive_context = await resolve_salesdrive_organization_context(
+        session,
+        order=order,
+        enterprise_code=enterprise_code,
+        branch=branch,
+    )
     supplier_changed_note = None
     if order.get("_supplier_changed"):
         supplier_changed_note = _make_supplier_changed_note(rows, supplier_name)
@@ -1384,13 +1536,13 @@ async def build_salesdrive_payload(
         "email": "",
         "company": "",
         "products": products,
-        "payment_method": "",
+        "payment_method": salesdrive_context["payment_method"],
         "shipping_method": d.get("DeliveryServiceName", ""),
         "shipping_address": d.get("ReceiverWhs", ""),
         "comment": comment_text,
         "sajt": str(branch or ""),
         "externalId": order.get("id", ""),
-        "organizationId": "1",
+        "organizationId": salesdrive_context["organizationId_value"],
         "stockId": D14_SALESDRIVE_STOCK_ID if _is_d14_supplier(supplier_code) else "",
         "novaposhta": _build_novaposhta_block(d),
         "ukrposhta": _build_ukrposhta_block(d),
@@ -1413,6 +1565,34 @@ async def build_salesdrive_payload(
             supplier_code,
             D14_SALESDRIVE_STOCK_ID,
         )
+    if salesdrive_context.get("business_runtime_mode") == BASELINE_BUSINESS_RUNTIME_MODE:
+        logger.info(
+            "Baseline enterprise order passthrough path: enterprise_code=%s branch=%s organizationId=%s",
+            salesdrive_context.get("enterprise_code"),
+            salesdrive_context.get("branch"),
+            salesdrive_context.get("organizationId_value"),
+        )
+    else:
+        logger.info(
+            "Custom enterprise order path: enterprise_code=%s branch=%s organizationId_source=%s store_code=%s",
+            salesdrive_context.get("enterprise_code"),
+            salesdrive_context.get("branch"),
+            salesdrive_context.get("organizationId_source"),
+            salesdrive_context.get("store_code"),
+        )
+    logger.info(
+        "SalesDrive payload built: externalId=%s branch=%s runtime_mode=%s order_runtime_path=%s organizationId_source=%s organizationId_value=%s payment_method=%s store_code=%s enterprise_code=%s warnings=%s",
+        order.get("id", ""),
+        salesdrive_context.get("branch"),
+        salesdrive_context.get("business_runtime_mode"),
+        salesdrive_context.get("order_runtime_path"),
+        salesdrive_context["organizationId_source"],
+        salesdrive_context["organizationId_value"],
+        salesdrive_context["payment_method"],
+        salesdrive_context.get("store_code"),
+        salesdrive_context.get("enterprise_code"),
+        salesdrive_context.get("warnings") or [],
+    )
     return payload
 
 

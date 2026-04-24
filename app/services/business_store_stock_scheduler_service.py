@@ -82,10 +82,11 @@ def _log_refresh_summary(report: dict) -> None:
 def _log_publish_summary(report: dict) -> None:
     logger.info(
         (
-            "Store-aware stock publish summary: dry_run=%s total=%s eligible=%s "
+            "Store-aware stock publish summary: dry_run=%s code_mapping_mode=%s total=%s eligible=%s "
             "skipped=%s published=%s failed=%s status=%s"
         ),
         report.get("dry_run"),
+        report.get("code_mapping_mode"),
         report.get("total_stores_found"),
         report.get("eligible_stores"),
         report.get("skipped_stores"),
@@ -96,11 +97,12 @@ def _log_publish_summary(report: dict) -> None:
     for store in report.get("stores", []):
         logger.info(
             (
-                "Store-aware stock store result: store_code=%s branch=%s status=%s "
+                "Store-aware stock store result: store_code=%s branch=%s code_mapping_mode=%s status=%s "
                 "exportable=%s sent=%s skip_reason=%s"
             ),
             store.get("store_code"),
-            store.get("tabletki_branch"),
+            store.get("target_branch") or store.get("tabletki_branch"),
+            store.get("code_mapping_mode"),
             store.get("status"),
             store.get("exportable_products"),
             store.get("sent_products"),

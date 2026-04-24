@@ -96,10 +96,31 @@ Store-aware order reverse mapping clarification:
 - it resolves `BusinessStore` and maps external store codes back to internal product codes;
 - it preserves the original external `goodsCode` in normalized payload output;
 - it can also verify downstream readiness in legacy order read paths without runtime integration;
+- it is applied only for enterprises with `EnterpriseSettings.business_runtime_mode='custom'`;
+- baseline enterprises explicitly skip the custom Business order contour and stay on the legacy/passthrough path;
 - legacy orders keep old behavior by default;
 - store-aware orders currently bypass legacy `auto_confirm` when the feature flag is enabled;
 - store-aware orders can now use a separate Tabletki status `2` path after successful outbound processing behind `BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED`;
 - dedicated store-aware availability checker is still a later step.
+
+Current status after the branch-sync and store-form cleanup step:
+
+- `mapping_branch` is now the source of truth for the branch list shown in Business store UI;
+- a dedicated sync/report/apply layer exists for `mapping_branch` ↔ `BusinessStore`;
+- sync key is `(enterprise_code, tabletki_branch)`;
+- missing stores are reported and can be created with safe defaults;
+- orphan stores are reported and can be deactivated, but are not deleted;
+- duplicates by `(enterprise_code, tabletki_branch)` are report-only and not auto-fixed;
+- `legacy_scope_key` is intentionally not auto-derived from `mapping_branch.store_id`;
+- `tabletki_branch` in the main operator form is selected from `mapping_branch`, not typed manually;
+- primary store form now focuses on stock, orders, routing, and pricing instead of catalog ownership.
+
+Current status after the Business SalesDrive payload update step:
+
+- `BusinessStore.salesdrive_enterprise_id` is now used as the Business SalesDrive payload `organizationId` when a store is resolved;
+- if `salesdrive_enterprise_id` is missing, compatibility fallback `"1"` is still used and explicitly logged;
+- Business SalesDrive payload now always sends `payment_method="Післяплата"`;
+- this step does not change catalog runtime, stock runtime, inbound/outbound code mapping, or webhook status flow.
 
 ## 2. What Was Checked
 
@@ -606,6 +627,51 @@ Therefore:
 - it remains isolated from legacy `business_stock_scheduler_service`;
 - see `docs/business_store_stock_scheduler_audit.md` for the recommended separate scheduler strategy and offers-freshness constraints.
 
+### 10.4 Baseline legacy stock preview
+
+A read-only baseline legacy stock preview now exists for baseline enterprises that should keep the current enterprise-level stock behavior instead of being forced through store overlays.
+
+Implementation:
+
+- service: `app/services/business_baseline_stock_preview_service.py`;
+- CLI: `python -m app.scripts.business_baseline_stock_preview --enterprise-code 223 --output-json`;
+- stock mode label: `baseline_legacy`;
+- payload source: `dropship_pipeline.build_stock_payload`;
+- branch routing: existing `mapping_branch`;
+- `depends_on_business_stores=false`.
+
+Boundaries:
+
+- no `process_database_service` call;
+- no live send;
+- no scheduler switch;
+- no external API calls;
+- store-aware stock remains the separate Business multistore mode.
+
+### 10.5 Enterprise runtime mode selector
+
+Baseline and custom Business runtime control is implemented as an enterprise-level selector.
+
+Implementation:
+
+- resolver: `app/services/business_runtime_mode_service.py`;
+- mode-aware publish wrapper: `app/services/business_stock_publish_service.py`;
+- mode-aware catalog publish wrapper: `app/services/business_store_catalog_publish_service.py`;
+- persisted mode field: `EnterpriseSettings.business_runtime_mode`;
+- CLI: `python -m app.scripts.business_stock_mode_status --enterprise-code 223 --output-json`;
+- dry-run/live CLI: `python -m app.scripts.business_stock_publish --enterprise-code 223 --dry-run --output-json`;
+- catalog dry-run CLI: `python -m app.scripts.business_store_catalog_publish --store-code business_223 --dry-run --output-json`;
+- BusinessStoresPage enterprise settings block shows `Режим предприятия` as an editable selector.
+
+Behavior:
+
+- `business_runtime_mode=baseline` => baseline catalog + baseline stock;
+- `business_runtime_mode=custom` => enterprise catalog identity + store-aware stock;
+- `baseline` uses the legacy catalog path with base codes/names and the legacy dropship stock pipeline with `mapping_branch`, pricing and jitter;
+- `custom` uses enterprise-level catalog identity and BusinessStore stock publish with store branch/scope/markup;
+- stock scheduler processes each `data_format=Business` enterprise through the selector, so baseline enterprises and custom enterprises can coexist;
+- BusinessStores remain available for branch overlay/admin visibility in baseline mode, but do not gate baseline catalog/stock runtime.
+
 ## 11. Orders Future Architecture
 
 ### 11.1 Current situation
@@ -1007,4 +1073,23 @@ Current implementation status for that migration:
 - Stage 1 is implemented as schema + tooling only;
 - enterprise-level catalog identity tables now exist in models/migration;
 - backfill and comparison CLI tooling now exists;
-- catalog/stock/order/outbound runtime readers still remain store-level.
+- Stage 2 read-only enterprise catalog preview now also exists;
+- Stage 2 comparison should default to store-compatible assortment scope, so it validates only enterprise code/name identity replacement and branch target differences;
+- `master_all` remains a diagnostic mode for full enterprise mapping coverage over `MasterCatalog`;
+- enterprise preview comparison now shows old store target branch vs new enterprise branch;
+- Stage 3 now gates Business catalog preview/export/publish behind `BUSINESS_ENTERPRISE_CATALOG_IDENTITY_ENABLED`;
+- default rollback path remains store-level catalog identity;
+- when the flag is enabled, catalog target branch comes from `EnterpriseSettings.branch_id`, but assortment remains store-compatible and does not expand to full `MasterCatalog`;
+- operator-facing catalog gate is `EnterpriseSettings.catalog_enabled`;
+- `BusinessStore.catalog_enabled` is deprecated as a primary operator control and should not be shown as a normal store-level toggle;
+- store block should focus on stock, pricing, orders and routing, while catalog controls belong to the enterprise level;
+- `catalog_only_in_stock` remains physically stored on `BusinessStore`, but in enterprise catalog mode it is read through the primary catalog scope store matched by `EnterpriseSettings.branch_id`;
+- the selected store no longer defines enterprise catalog assortment; the primary scope store does;
+- Stage 4 now separately gates Business stock code lookup behind `BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED`;
+- when the stock flag is enabled, only product code lookup becomes enterprise-level; stock branch, stock scope, offers selection, and store-level markup remain unchanged;
+- Stage 5 now separately gates inbound Business order reverse lookup behind `BUSINESS_ENTERPRISE_ORDER_CODE_MAPPING_ENABLED`;
+- when the order flag is enabled, store resolution remains branch-based and only `external goodsCode -> internal product_code` lookup becomes enterprise-level;
+- Stage 6 now separately gates outbound Business status code restoration behind `BUSINESS_ENTERPRISE_OUTBOUND_STATUS_CODE_MAPPING_ENABLED`;
+- when the outbound flag is enabled, store resolution still remains branch-based and only `internal -> external` code restoration becomes enterprise-level;
+- `salesdrive-simple` remains outside this stage;
+- catalog/stock/order/outbound runtime readers are still switched stage-by-stage rather than all at once.

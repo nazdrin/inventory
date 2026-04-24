@@ -5,8 +5,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.business.business_store_catalog_exporter import export_business_store_catalog
+from app.business.business_baseline_catalog_exporter import export_business_baseline_catalog
+from app.business.business_enterprise_catalog_exporter import export_business_enterprise_catalog
 from app.models import BusinessStore, EnterpriseSettings
+from app.services.business_runtime_mode_service import (
+    BASELINE_BUSINESS_RUNTIME_MODE,
+    CUSTOM_BUSINESS_RUNTIME_MODE,
+    resolve_business_runtime_mode_from_db,
+)
 
 
 PUBLISH_READY_DRY_RUN_STATES = {"dry_run"}
@@ -23,6 +29,8 @@ def _empty_store_report_row(
     store: BusinessStore,
     *,
     enterprise_catalog_enabled: bool | None,
+    store_catalog_enabled_deprecated: bool,
+    catalog_gate_source: str,
     eligible: bool,
     skip_reason: str | None,
     status: str,
@@ -37,9 +45,26 @@ def _empty_store_report_row(
         "tabletki_branch": store.tabletki_branch,
         "migration_status": store.migration_status,
         "enterprise_catalog_enabled": enterprise_catalog_enabled,
+        "store_catalog_enabled_deprecated": bool(store_catalog_enabled_deprecated),
+        "catalog_gate_source": catalog_gate_source,
         "eligible": bool(eligible),
         "skip_reason": skip_reason,
         "status": status,
+        "business_runtime_mode": CUSTOM_BUSINESS_RUNTIME_MODE,
+        "runtime_mode_source": "enterprise_settings",
+        "catalog_runtime_path": "enterprise_identity",
+        "identity_mode": "enterprise_level",
+        "assortment_mode": None,
+        "target_branch": None,
+        "target_branch_source": None,
+        "catalog_scope_store_id": None,
+        "catalog_scope_store_code": None,
+        "catalog_scope_branch": None,
+        "catalog_scope_key": None,
+        "catalog_scope_source": None,
+        "catalog_scope_error_reason": None,
+        "catalog_only_in_stock_source": None,
+        "catalog_only_in_stock": None,
         "candidate_products": 0,
         "exportable_products": 0,
         "skipped_products": 0,
@@ -69,15 +94,20 @@ def _check_store_catalog_eligibility(
     *,
     allowed_states: set[str],
     include_legacy_default: bool,
+    runtime_mode_report: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    if not bool(store.is_active):
-        return False, "inactive_store"
-    if not bool(store.catalog_enabled):
-        return False, "store_catalog_disabled"
+    business_runtime_mode = runtime_mode_report.get("business_runtime_mode")
     if enterprise is None:
         return False, "missing_enterprise_settings"
     if not bool(enterprise.catalog_enabled):
         return False, "enterprise_catalog_disabled"
+    if business_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+        if not _clean_text(getattr(enterprise, "branch_id", None)):
+            return False, "missing_enterprise_branch"
+        return True, None
+
+    if not bool(store.is_active):
+        return False, "inactive_store"
     if bool(store.is_legacy_default) and not include_legacy_default:
         return False, "legacy_default_excluded"
 
@@ -136,22 +166,44 @@ async def get_eligible_business_store_catalogs(
     report_rows: list[dict[str, Any]] = []
     eligible_count = 0
     skipped_count = 0
+    processed_baseline_enterprises: set[str] = set()
 
     for store, enterprise in store_rows:
+        runtime_mode_report = await resolve_business_runtime_mode_from_db(session, str(store.enterprise_code or ""))
+        business_runtime_mode = runtime_mode_report.get("business_runtime_mode")
+        catalog_runtime_path = runtime_mode_report.get("catalog_runtime_path")
+        catalog_gate_source = "enterprise_settings"
         eligible, skip_reason = _check_store_catalog_eligibility(
             store,
             enterprise,
             allowed_states=allowed_states,
             include_legacy_default=bool(include_legacy_default),
+            runtime_mode_report=runtime_mode_report,
         )
+        if eligible and business_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+            normalized_enterprise_code = _clean_text(store.enterprise_code)
+            if normalized_enterprise_code in processed_baseline_enterprises:
+                eligible = False
+                skip_reason = "baseline_enterprise_already_processed"
+            else:
+                processed_baseline_enterprises.add(normalized_enterprise_code)
         enterprise_catalog_enabled = None if enterprise is None else bool(enterprise.catalog_enabled)
         row = _empty_store_report_row(
             store,
             enterprise_catalog_enabled=enterprise_catalog_enabled,
+            store_catalog_enabled_deprecated=bool(store.catalog_enabled),
+            catalog_gate_source=catalog_gate_source,
             eligible=eligible,
             skip_reason=skip_reason,
             status="eligible" if eligible else "skipped",
         )
+        row["business_runtime_mode"] = business_runtime_mode
+        row["runtime_mode_source"] = runtime_mode_report.get("runtime_mode_source")
+        row["catalog_runtime_path"] = catalog_runtime_path
+        row["identity_mode"] = "baseline_legacy" if business_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE else "enterprise_level"
+        row["target_branch_source"] = "enterprise_settings"
+        row["target_branch"] = _clean_text(getattr(enterprise, "branch_id", None)) or None
+        row["assortment_mode"] = "baseline_legacy" if business_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE else "store_compatible"
         report_rows.append(row)
         if eligible:
             eligible_count += 1
@@ -215,16 +267,52 @@ async def publish_enabled_business_store_catalogs(
             report_rows.append(entry)
             continue
 
-        result = await export_business_store_catalog(
-            session,
-            store_id=int(entry["store_id"]),
-            dry_run=bool(dry_run),
-            limit=limit,
-            require_confirm=effective_require_confirm,
-        )
+        if entry.get("business_runtime_mode") == BASELINE_BUSINESS_RUNTIME_MODE:
+            result = await export_business_baseline_catalog(
+                session,
+                store_id=int(entry["store_id"]),
+                dry_run=bool(dry_run),
+                limit=limit,
+                require_confirm=effective_require_confirm,
+            )
+        else:
+            result = await export_business_enterprise_catalog(
+                session,
+                store_id=int(entry["store_id"]),
+                dry_run=bool(dry_run),
+                limit=limit,
+                require_confirm=effective_require_confirm,
+            )
         merged = {
             **entry,
             "status": result.get("status"),
+            "business_runtime_mode": entry.get("business_runtime_mode"),
+            "runtime_mode_source": entry.get("runtime_mode_source"),
+            "catalog_runtime_path": result.get("catalog_runtime_path", entry.get("catalog_runtime_path")),
+            "identity_mode": result.get("identity_mode"),
+            "assortment_mode": result.get("assortment_mode"),
+            "catalog_gate_source": result.get("catalog_gate_source", entry.get("catalog_gate_source")),
+            "enterprise_catalog_enabled": result.get("enterprise_catalog_enabled", entry.get("enterprise_catalog_enabled")),
+            "store_catalog_enabled_deprecated": result.get(
+                "store_catalog_enabled_deprecated",
+                entry.get("store_catalog_enabled_deprecated"),
+            ),
+            "catalog_scope_store_id": result.get("catalog_scope_store_id", entry.get("catalog_scope_store_id")),
+            "catalog_scope_store_code": result.get("catalog_scope_store_code", entry.get("catalog_scope_store_code")),
+            "catalog_scope_branch": result.get("catalog_scope_branch", entry.get("catalog_scope_branch")),
+            "catalog_scope_key": result.get("catalog_scope_key", entry.get("catalog_scope_key")),
+            "catalog_scope_source": result.get("catalog_scope_source", entry.get("catalog_scope_source")),
+            "catalog_scope_error_reason": result.get(
+                "catalog_scope_error_reason",
+                entry.get("catalog_scope_error_reason"),
+            ),
+            "catalog_only_in_stock_source": result.get(
+                "catalog_only_in_stock_source",
+                entry.get("catalog_only_in_stock_source"),
+            ),
+            "catalog_only_in_stock": result.get("catalog_only_in_stock", entry.get("catalog_only_in_stock")),
+            "target_branch": result.get("target_branch"),
+            "target_branch_source": result.get("target_branch_source"),
             "candidate_products": int(result.get("total_candidates", 0) or 0),
             "exportable_products": int(result.get("exportable_products", 0) or 0),
             "skipped_products": int(result.get("skipped_products", 0) or 0),
@@ -258,9 +346,29 @@ async def publish_enabled_business_store_catalogs(
     else:
         top_warnings.append("Dry-run mode: no external API calls were performed.")
 
+    distinct_runtime_modes = {
+        _clean_text(row.get("business_runtime_mode"))
+        for row in report_rows
+        if _clean_text(row.get("business_runtime_mode"))
+    }
+    distinct_catalog_paths = {
+        _clean_text(row.get("catalog_runtime_path"))
+        for row in report_rows
+        if _clean_text(row.get("catalog_runtime_path"))
+    }
+    distinct_identity_modes = {
+        _clean_text(row.get("identity_mode"))
+        for row in report_rows
+        if _clean_text(row.get("identity_mode"))
+    }
+
     return {
         "status": overall_status,
         "dry_run": bool(dry_run),
+        "business_runtime_mode": next(iter(distinct_runtime_modes)) if len(distinct_runtime_modes) == 1 else None,
+        "runtime_mode_source": "enterprise_settings" if distinct_runtime_modes else None,
+        "catalog_runtime_path": next(iter(distinct_catalog_paths)) if len(distinct_catalog_paths) == 1 else None,
+        "identity_mode": next(iter(distinct_identity_modes)) if len(distinct_identity_modes) == 1 else None,
         "total_stores_found": total_found,
         "eligible_stores": eligible_stores,
         "skipped_stores": skipped_stores,

@@ -5,10 +5,11 @@ from datetime import datetime, timedelta, timezone
 import pytz
 from sqlalchemy.future import select
 
-from app.business.dropship_pipeline import run_pipeline
 from app.database import EnterpriseSettings, get_async_db
 from app.models import BusinessSettings
 from app.services.notification_service import send_notification
+from app.services.business_stock_publish_service import publish_business_stock_for_enterprise
+from app.services.business_runtime_mode_service import build_business_runtime_mode_report
 
 os_tz = "UTC"
 KIEV_TZ = pytz.timezone("Europe/Kiev")
@@ -52,6 +53,71 @@ def _resolve_business_enterprise(candidates: list[EnterpriseSettings]) -> tuple[
     if len(candidates) > 1:
         return "ambiguous", None
     return "resolved", candidates[0]
+
+
+async def _run_business_stock_for_enterprise(
+    enterprise: EnterpriseSettings,
+    *,
+    business_stock_enabled: bool,
+    control_source: str,
+) -> bool:
+    enterprise_code = str(enterprise.enterprise_code)
+    runtime_mode_report = build_business_runtime_mode_report(
+        enterprise_code,
+        getattr(enterprise, "business_runtime_mode", None),
+        source="enterprise_settings",
+    )
+    logger.info(
+        "Business stock: resolved enterprise_code=%s enabled=%s runtime_mode=%s stock_mode=%s source=%s",
+        enterprise_code,
+        business_stock_enabled,
+        runtime_mode_report.get("business_runtime_mode"),
+        runtime_mode_report.get("stock_runtime_path"),
+        runtime_mode_report.get("runtime_mode_source"),
+    )
+
+    if not business_stock_enabled:
+        logger.info(
+            "Business stock: skip enterprise_code=%s because business_stock_enabled=false",
+            enterprise_code,
+        )
+        return False
+
+    if control_source == "fallback" and not _is_stock_due(enterprise):
+        logger.info(
+            "Business stock: skip enterprise_code=%s because stock run is not due yet",
+            enterprise_code,
+        )
+        return False
+
+    try:
+        logger.info(
+            "Business stock: start enterprise_code=%s stock_mode=%s",
+            enterprise_code,
+            runtime_mode_report.get("stock_runtime_path"),
+        )
+        async with get_async_db(commit_on_exit=False) as db:
+            result = await publish_business_stock_for_enterprise(
+                db,
+                enterprise_code=enterprise_code,
+                dry_run=False,
+                require_confirm=False,
+                confirm=True,
+            )
+        logger.info(
+            "Business stock: success enterprise_code=%s stock_mode=%s status=%s",
+            enterprise_code,
+            result.get("stock_mode"),
+            result.get("status"),
+        )
+        return True
+    except Exception as exc:
+        logger.exception("Business stock: failure enterprise_code=%s", enterprise_code)
+        await notify_error(
+            f"Ошибка Business stock pipeline для предприятия {enterprise_code}: {exc}",
+            enterprise_code,
+        )
+        return False
 
 
 def _is_stock_due(enterprise: EnterpriseSettings) -> bool:
@@ -123,47 +189,24 @@ async def run_business_stock_once() -> tuple[bool, int]:
 
     if resolution == "ambiguous":
         codes = ", ".join(str(item.enterprise_code) for item in candidates)
-        logger.warning(
-            "Business stock: multiple enterprises found with data_format=Business (%s); skipping run",
+        logger.info(
+            "Business stock: multiple enterprises found with data_format=Business (%s); processing each enterprise with stock mode selector",
             codes,
         )
-        return False, interval_seconds
 
-    assert enterprise is not None
-    enterprise_code = str(enterprise.enterprise_code)
-    logger.info(
-        "Business stock: resolved enterprise_code=%s enabled=%s interval_seconds=%s",
-        enterprise_code,
-        business_stock_enabled,
-        interval_seconds,
-    )
-
-    if not business_stock_enabled:
-        logger.info(
-            "Business stock: skip enterprise_code=%s because business_stock_enabled=false",
-            enterprise_code,
+    target_enterprises = candidates if resolution == "ambiguous" else [enterprise]
+    ran_any = False
+    for target in target_enterprises:
+        if target is None:
+            continue
+        ran = await _run_business_stock_for_enterprise(
+            target,
+            business_stock_enabled=business_stock_enabled,
+            control_source=control_source,
         )
-        return False, interval_seconds
+        ran_any = ran_any or ran
 
-    if control_source == "fallback" and not _is_stock_due(enterprise):
-        logger.info(
-            "Business stock: skip enterprise_code=%s because stock run is not due yet",
-            enterprise_code,
-        )
-        return False, interval_seconds
-
-    try:
-        logger.info("Business stock: start enterprise_code=%s", enterprise_code)
-        await run_pipeline(enterprise_code, "stock")
-        logger.info("Business stock: success enterprise_code=%s", enterprise_code)
-        return True, interval_seconds
-    except Exception as exc:
-        logger.exception("Business stock: failure enterprise_code=%s", enterprise_code)
-        await notify_error(
-            f"Ошибка Business stock pipeline для предприятия {enterprise_code}: {exc}",
-            enterprise_code,
-        )
-        return False, interval_seconds
+    return ran_any, interval_seconds
 
 
 async def schedule_business_stock_tasks():

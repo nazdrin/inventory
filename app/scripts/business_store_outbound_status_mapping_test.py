@@ -125,6 +125,26 @@ async def _amain() -> None:
     if resolved_store is not None and result.get("store_code") is None:
         result["store_id"] = int(resolved_store.id)
         result["store_code"] = resolved_store.store_code
+        result["enterprise_code"] = _clean_text(resolved_store.enterprise_code)
+
+    transformed_payload = result.get("payload") if isinstance(result, dict) else None
+    transformed_data = None
+    if isinstance(transformed_payload, dict):
+        data = transformed_payload.get("data")
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            transformed_data = data[0]
+        elif isinstance(data, dict):
+            transformed_data = data
+
+    first_product = None
+    if isinstance(transformed_data, dict):
+        products = transformed_data.get("products")
+        if isinstance(products, list) and products and isinstance(products[0], dict):
+            first_product = products[0]
+
+    result["input_internal_code"] = internal_code
+    result["mapped_parameter"] = _clean_text(first_product.get("parameter")) if isinstance(first_product, dict) else None
+    result["mapped_sku"] = _clean_text(first_product.get("sku")) if isinstance(first_product, dict) else None
 
     if args.output_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -133,7 +153,12 @@ async def _amain() -> None:
     print(f"status: {result.get('status')}")
     print(f"store_found: {result.get('store_found')}")
     print(f"store_code: {result.get('store_code')}")
+    print(f"enterprise_code: {result.get('enterprise_code')}")
     print(f"branch: {result.get('branch')}")
+    print(f"code_mapping_mode: {result.get('code_mapping_mode')}")
+    print(f"input_internal_code: {result.get('input_internal_code')}")
+    print(f"mapped_parameter: {result.get('mapped_parameter')}")
+    print(f"mapped_sku: {result.get('mapped_sku')}")
     print(f"mapped_products: {result.get('mapped_products')}")
     if result.get("missing_mappings"):
         print(f"missing_mappings: {len(result['missing_mappings'])}")

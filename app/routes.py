@@ -22,7 +22,7 @@ from app.schemas import (
     BusinessEnterpriseCandidateVM, BusinessEnterpriseOptionVM, BusinessSettingsUpdateSchema,
     BusinessEnterpriseOperationalFieldsUpdateSchema, BusinessPricingSettingsUpdateSchema,
     BusinessStoreCreate, BusinessStoreUpdate, BusinessStoreOut, LegacyScopeOut,
-    BusinessEnterpriseOptionOut,
+    BusinessEnterpriseOptionOut, BusinessStoreMappingBranchOptionOut,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -62,6 +62,8 @@ from app.models import (
     BusinessStoreProductCode,
     BusinessStoreProductName,
     BusinessStoreProductPriceAdjustment,
+    BusinessEnterpriseProductCode,
+    BusinessEnterpriseProductName,
 )
 from app.schemas import DropshipEnterpriseSchema
 from app.business.business_store_name_generator import cleanup_store_product_names
@@ -75,8 +77,14 @@ from app.business.business_store_export_dry_run import (
     build_store_catalog_dry_run,
     build_store_stock_dry_run,
 )
-from app.business.business_store_catalog_preview import build_store_catalog_payload_preview
+from app.business.business_store_catalog_preview import (
+    build_effective_business_store_catalog_payload_preview,
+)
 from app.business.business_store_stock_preview import build_store_stock_payload_preview
+from app.services.business_store_branch_sync_service import (
+    apply_business_store_branch_sync,
+    build_business_store_branch_sync_report,
+)
 
 
 def _mapping_semantic_store_label(data_format: str | None) -> str:
@@ -1279,7 +1287,6 @@ def _build_business_sections(
     token_hint_target_code = target_primary_code or master_catalog_target
     token_hint_target = enterprise_lookup.get(str(token_hint_target_code or ""))
     token_presence = bool((getattr(token_hint_target, "token", None) or "").strip()) if token_hint_target else False
-
     if target_enterprise is not None:
         target_items = [
             _business_item("enterprise_name", "Текущее предприятие", target_enterprise.enterprise_name, "EnterpriseSettings", group="Сейчас используется"),
@@ -2111,7 +2118,9 @@ async def get_enterprise_by_code(enterprise_code: str, db: AsyncSession = Depend
     enterprise = result.scalars().first()
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
-    return EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True)
+    payload = EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True).model_dump()
+    payload.update(await _enterprise_runtime_mode_metadata(db, enterprise))
+    return payload
 
 
 @router.get(
@@ -2145,12 +2154,24 @@ async def update_enterprise_settings(enterprise_code: str, updated_settings: Ent
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
 
+    current_runtime_mode = str(enterprise.business_runtime_mode or "baseline")
+    requested_runtime_mode = str(updated_settings.business_runtime_mode or current_runtime_mode)
+    if (
+        current_runtime_mode == "custom"
+        and requested_runtime_mode == "baseline"
+        and await _enterprise_has_catalog_identity_mappings(db, enterprise.enterprise_code)
+    ):
+        raise HTTPException(status_code=400, detail=ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE)
+
     for key, value in updated_settings.model_dump(exclude_unset=True).items():
         setattr(enterprise, key, value)
 
     await db.commit()
     await db.refresh(enterprise)
-    return {"detail": "Enterprise settings updated successfully", "data": enterprise}
+    return {
+        "detail": "Enterprise settings updated successfully",
+        "data": EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True).model_dump(),
+    }
 
 # 🔒 Эндпоинты форматов данных
 @router.post("/data_formats/", dependencies=[Depends(verify_token)])
@@ -2286,6 +2307,106 @@ async def _get_business_store_or_404(db: AsyncSession, store_id: int) -> Busines
     return store
 
 
+ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE = (
+    "Для підприємства вже створені індивідуальні коди або назви каталогу. "
+    "Зміну режиму заблоковано."
+)
+
+
+async def _enterprise_has_catalog_identity_mappings(
+    db: AsyncSession,
+    enterprise_code: str | None,
+) -> bool:
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    if not normalized_enterprise_code:
+        return False
+
+    code_mapping_result = await db.execute(
+        select(BusinessEnterpriseProductCode.id)
+        .where(BusinessEnterpriseProductCode.enterprise_code == normalized_enterprise_code)
+        .limit(1)
+    )
+    if code_mapping_result.scalar_one_or_none() is not None:
+        return True
+
+    name_mapping_result = await db.execute(
+        select(BusinessEnterpriseProductName.id)
+        .where(BusinessEnterpriseProductName.enterprise_code == normalized_enterprise_code)
+        .limit(1)
+    )
+    return name_mapping_result.scalar_one_or_none() is not None
+
+
+async def _enterprise_runtime_mode_metadata(
+    db: AsyncSession,
+    enterprise: EnterpriseSettings,
+) -> dict[str, Any]:
+    has_enterprise_catalog_mappings = await _enterprise_has_catalog_identity_mappings(
+        db,
+        enterprise.enterprise_code,
+    )
+    runtime_mode_switch_locked = bool(
+        (enterprise.business_runtime_mode or "baseline") == "custom"
+        and has_enterprise_catalog_mappings
+    )
+    return {
+        "has_enterprise_catalog_mappings": has_enterprise_catalog_mappings,
+        "runtime_mode_switch_locked": runtime_mode_switch_locked,
+        "runtime_mode_switch_lock_reason": (
+            ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE if runtime_mode_switch_locked else None
+        ),
+    }
+
+
+async def _mapping_branch_exists_for_store(
+    db: AsyncSession,
+    *,
+    enterprise_code: str | None,
+    tabletki_branch: str | None,
+) -> bool:
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    normalized_branch = _normalize_optional_query_string(tabletki_branch)
+    if not normalized_enterprise_code or not normalized_branch:
+        return False
+
+    result = await db.execute(
+        select(MappingBranch.branch).where(
+            MappingBranch.enterprise_code == normalized_enterprise_code,
+            MappingBranch.branch == normalized_branch,
+        ).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _validate_business_store_branch_mapping(
+    db: AsyncSession,
+    *,
+    enterprise_code: str | None,
+    tabletki_branch: str | None,
+    is_active: bool,
+) -> None:
+    if not bool(is_active):
+        return
+
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    normalized_branch = _normalize_optional_query_string(tabletki_branch)
+    if not normalized_enterprise_code or not normalized_branch:
+        return
+
+    if not await _mapping_branch_exists_for_store(
+        db,
+        enterprise_code=normalized_enterprise_code,
+        tabletki_branch=normalized_branch,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Active store branch must exist in mapping_branch for the same enterprise_code: "
+                f"enterprise_code={normalized_enterprise_code}, branch={normalized_branch}"
+            ),
+        )
+
+
 @router.get(
     "/business-stores",
     response_model=List[BusinessStoreOut],
@@ -2370,6 +2491,73 @@ async def get_business_store_business_enterprises(db: AsyncSession = Depends(get
 
 
 @router.get(
+    "/business-stores/meta/mapping-branches",
+    response_model=List[BusinessStoreMappingBranchOptionOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_mapping_branches(
+    enterprise_code: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    if not normalized_enterprise_code:
+        raise HTTPException(status_code=400, detail="enterprise_code is required.")
+
+    enterprise = (
+        await db.execute(
+            select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == normalized_enterprise_code).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    rows = (
+        await db.execute(
+            select(MappingBranch)
+            .where(MappingBranch.enterprise_code == normalized_enterprise_code)
+            .order_by(MappingBranch.branch.asc())
+        )
+    ).scalars().all()
+
+    primary_branch = _normalize_optional_query_string(getattr(enterprise, "branch_id", None))
+    return [
+        BusinessStoreMappingBranchOptionOut(
+            enterprise_code=normalized_enterprise_code,
+            branch=str(row.branch),
+            mapping_store_hint=_normalize_optional_query_string(row.store_id),
+            is_primary_enterprise_branch=bool(primary_branch and str(row.branch) == primary_branch),
+        )
+        for row in rows
+        if _normalize_optional_query_string(row.branch)
+    ]
+
+
+@router.get(
+    "/business-stores/branch-sync",
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_branch_sync_report(
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await build_business_store_branch_sync_report(db, enterprise_code=enterprise_code)
+
+
+@router.post(
+    "/business-stores/branch-sync/apply",
+    dependencies=[Depends(verify_token)],
+)
+async def apply_business_store_branch_sync_route(
+    enterprise_code: str | None = Query(default=None),
+    dry_run: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+):
+    return await apply_business_store_branch_sync(
+        db,
+        enterprise_code=enterprise_code,
+        dry_run=bool(dry_run),
+    )
+
+
+@router.get(
     "/business-stores/{store_id}",
     response_model=BusinessStoreOut,
     dependencies=[Depends(verify_token)],
@@ -2390,6 +2578,13 @@ async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession =
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="BusinessStore with this store_code already exists.")
+
+    await _validate_business_store_branch_mapping(
+        db,
+        enterprise_code=payload.enterprise_code,
+        tabletki_branch=payload.tabletki_branch,
+        is_active=bool(payload.is_active),
+    )
 
     obj = BusinessStore(
         store_code=payload.store_code,
@@ -2437,6 +2632,64 @@ async def update_business_store(
     db: AsyncSession = Depends(get_db),
 ):
     store = await _get_business_store_or_404(db, store_id)
+    current_mapping_exists = await _mapping_branch_exists_for_store(
+        db,
+        enterprise_code=store.enterprise_code,
+        tabletki_branch=store.tabletki_branch,
+    )
+    effective_enterprise_code = (
+        payload.enterprise_code if "enterprise_code" in payload.model_fields_set else store.enterprise_code
+    )
+    effective_tabletki_branch = (
+        payload.tabletki_branch if "tabletki_branch" in payload.model_fields_set else store.tabletki_branch
+    )
+    effective_is_active = (
+        payload.is_active if "is_active" in payload.model_fields_set else store.is_active
+    )
+    branch_or_active_changed = (
+        _normalize_optional_query_string(effective_enterprise_code) != _normalize_optional_query_string(store.enterprise_code)
+        or _normalize_optional_query_string(effective_tabletki_branch) != _normalize_optional_query_string(store.tabletki_branch)
+        or bool(effective_is_active) != bool(store.is_active)
+    )
+    should_validate_branch = bool(effective_is_active) and (bool(current_mapping_exists) or branch_or_active_changed)
+    if should_validate_branch:
+        await _validate_business_store_branch_mapping(
+            db,
+            enterprise_code=effective_enterprise_code,
+            tabletki_branch=effective_tabletki_branch,
+            is_active=bool(effective_is_active),
+        )
+
+    enterprise_result = await db.execute(
+        select(EnterpriseSettings.business_runtime_mode).where(
+            EnterpriseSettings.enterprise_code == effective_enterprise_code
+        )
+    )
+    effective_runtime_mode = str(enterprise_result.scalar_one_or_none() or "baseline")
+    baseline_scope_or_branch_change = (
+        effective_runtime_mode == "baseline"
+        and (
+            (
+                "legacy_scope_key" in payload.model_fields_set
+                and _normalize_optional_query_string(payload.legacy_scope_key)
+                != _normalize_optional_query_string(store.legacy_scope_key)
+            )
+            or (
+                "tabletki_branch" in payload.model_fields_set
+                and _normalize_optional_query_string(payload.tabletki_branch)
+                != _normalize_optional_query_string(store.tabletki_branch)
+            )
+        )
+    )
+    if baseline_scope_or_branch_change:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Для підприємства в базовому режимі не можна змінювати Branch магазина "
+                "та Scope остатков через store overlay."
+            ),
+        )
+
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(store, key, value)
 
@@ -2610,7 +2863,7 @@ async def preview_business_store_catalog(
         raise HTTPException(status_code=400, detail="limit must be >= 0 or null.")
 
     try:
-        return await build_store_catalog_payload_preview(
+        return await build_effective_business_store_catalog_payload_preview(
             db,
             int(store_id),
             limit=limit,

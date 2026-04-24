@@ -255,6 +255,26 @@ const getSourceBadge = (source) => {
         };
     }
 
+    if (source === "env_allowlist") {
+        return {
+            label: "ENV allowlist",
+            style: {
+                backgroundColor: "#ecfdf5",
+                color: "#166534",
+            },
+        };
+    }
+
+    if (source === "default" || source === "computed") {
+        return {
+            label: "Computed",
+            style: {
+                backgroundColor: "#f1f5f9",
+                color: "#334155",
+            },
+        };
+    }
+
     if (source === "EnterpriseSettings") {
         return {
             label: "Enterprise",

@@ -15,8 +15,9 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Manual Business Store order reverse mapping test.")
     parser.add_argument("--store-id", type=int, default=0)
     parser.add_argument("--store-code", default="")
-    parser.add_argument("--tabletki-branch", default="")
+    parser.add_argument("--tabletki-branch", "--branch", dest="tabletki_branch", default="")
     parser.add_argument("--tabletki-enterprise-code", default="")
+    parser.add_argument("--enterprise-code", dest="tabletki_enterprise_code", default="")
     parser.add_argument("--external-code", default="")
     parser.add_argument("--qty", type=int, default=1)
     parser.add_argument("--price", default="100")
@@ -102,7 +103,28 @@ async def _amain() -> None:
             tabletki_enterprise_code=tabletki_enterprise_code,
         )
 
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=_json_default))
+    normalized_order = result.get("order") or {}
+    normalized_rows = normalized_order.get("rows") or []
+    first_row = normalized_rows[0] if normalized_rows and isinstance(normalized_rows[0], dict) else {}
+
+    output = {
+        "status": result.get("status"),
+        "code_mapping_mode": result.get("code_mapping_mode"),
+        "store_id": result.get("store_id"),
+        "store_code": result.get("store_code"),
+        "enterprise_code": result.get("enterprise_code"),
+        "branch": mock_order.get("branchID"),
+        "input_external_code": external_code,
+        "mapped_internal_code": first_row.get("goodsCode"),
+        "originalGoodsCodeExternal": first_row.get("originalGoodsCodeExternal"),
+        "mapped_rows": result.get("mapped_rows"),
+        "missing_mappings": result.get("missing_mappings") or [],
+        "warnings": result.get("warnings") or [],
+        "errors": result.get("errors") or [],
+        "normalized_order": normalized_order,
+    }
+
+    print(json.dumps(output, ensure_ascii=False, indent=2, default=_json_default))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { getEnterpriseByCode, updateEnterprise } from "../api/enterpriseApi";
+import { getBusinessStoreMappingBranches } from "../api/mappingBranchAPI";
 import { getAuthHeaders, handleAuthError } from "../api/developerApi";
 import { API_BASE_URL } from "../config";
 
@@ -88,13 +89,6 @@ const secondaryButtonStyle = {
     borderColor: "#bfdbfe",
 };
 
-const dangerButtonStyle = {
-    ...buttonBaseStyle,
-    backgroundColor: "#fff7ed",
-    color: "#c2410c",
-    borderColor: "#fdba74",
-};
-
 const warningCardStyle = {
     border: "1px solid #fed7aa",
     backgroundColor: "#fff7ed",
@@ -160,16 +154,6 @@ const infoCardStyle = {
     backgroundColor: "#f8fafc",
 };
 
-const badgeStyle = {
-    display: "inline-block",
-    padding: "4px 8px",
-    borderRadius: "999px",
-    fontSize: "12px",
-    fontWeight: 700,
-    backgroundColor: "#eef2ff",
-    color: "#4338ca",
-};
-
 const emptyValue = "—";
 
 const formatApiError = (error, fallbackMessage) => {
@@ -213,6 +197,10 @@ const initialEnterpriseDraft = {
     token: "",
     catalog_enabled: false,
     stock_enabled: false,
+    business_runtime_mode: "baseline",
+    has_enterprise_catalog_mappings: false,
+    runtime_mode_switch_locked: false,
+    runtime_mode_switch_lock_reason: "",
     order_fetcher: false,
     auto_confirm: false,
     stock_correction: false,
@@ -279,25 +267,8 @@ const nameStrategyOptions = [
     },
 ];
 
-const migrationStatusOptions = [
-    { value: "draft", label: "draft", help: "Черновик. Не участвует в live-выгрузках." },
-    { value: "dry_run", label: "dry_run", help: "Тест. Можно смотреть preview и dry-run." },
-    { value: "stock_live", label: "stock_live", help: "Промежуточный этап запуска остатков." },
-    { value: "catalog_stock_live", label: "catalog_stock_live", help: "Каталог и остатки live." },
-    { value: "orders_live", label: "orders_live", help: "Каталог, остатки и заказы live." },
-    { value: "disabled", label: "disabled", help: "Магазин выключен из нового контура." },
-];
-
 const boolOnOff = (value) => (value ? "Включено" : "Выключено");
 const boolShort = (value) => (value ? "Вкл" : "Выкл");
-
-const formatMigrationStatusLabel = (value) => {
-    const option = migrationStatusOptions.find((item) => item.value === value);
-    if (!option) {
-        return value || emptyValue;
-    }
-    return `${option.value} · ${option.help}`;
-};
 
 const normalizeOptionalText = (value) => {
     const normalized = String(value ?? "").trim();
@@ -348,14 +319,21 @@ const buildEnterpriseDraft = (enterprise) => ({
     token: String(enterprise?.token || ""),
     catalog_enabled: Boolean(enterprise?.catalog_enabled),
     stock_enabled: Boolean(enterprise?.stock_enabled),
+    business_runtime_mode: String(enterprise?.business_runtime_mode || "baseline"),
+    has_enterprise_catalog_mappings: Boolean(enterprise?.has_enterprise_catalog_mappings),
+    runtime_mode_switch_locked: Boolean(enterprise?.runtime_mode_switch_locked),
+    runtime_mode_switch_lock_reason: String(enterprise?.runtime_mode_switch_lock_reason || ""),
     order_fetcher: Boolean(enterprise?.order_fetcher),
     auto_confirm: Boolean(enterprise?.auto_confirm),
     stock_correction: Boolean(enterprise?.stock_correction),
 });
 
-const buildSuggestedStoreCode = (enterprise, existingStores = []) => {
+const buildSuggestedStoreCode = (enterprise, existingStores = [], branch = "") => {
     const enterpriseCode = String(enterprise?.enterprise_code || "").trim();
-    const baseCode = enterpriseCode ? `business_${enterpriseCode}` : "business_store";
+    const normalizedBranch = String(branch || "").trim();
+    const baseCode = enterpriseCode
+        ? (normalizedBranch ? `business_${enterpriseCode}_${normalizedBranch}` : `business_${enterpriseCode}`)
+        : "business_store";
     const usedCodes = new Set(
         existingStores.map((item) => String(item.store_code || "").trim()).filter(Boolean),
     );
@@ -369,13 +347,20 @@ const buildSuggestedStoreCode = (enterprise, existingStores = []) => {
     return `${baseCode}_${counter}`;
 };
 
+const buildStoreNameForBranch = (enterprise, branch = "") => {
+    const enterpriseName = String(enterprise?.enterprise_name || "").trim() || "Business";
+    const normalizedBranch = String(branch || "").trim();
+    return normalizedBranch ? `${enterpriseName} / ${normalizedBranch}` : enterpriseName;
+};
+
 const buildStoreDraftFromEnterprise = (enterprise, existingStores = []) => ({
     ...initialStoreDraft,
-    store_code: buildSuggestedStoreCode(enterprise, existingStores),
-    store_name: String(enterprise?.enterprise_name || "").trim(),
+    store_code: buildSuggestedStoreCode(enterprise, existingStores, String(enterprise?.branch_id || "").trim()),
+    store_name: buildStoreNameForBranch(enterprise, String(enterprise?.branch_id || "").trim()),
     enterprise_code: String(enterprise?.enterprise_code || "").trim(),
     tabletki_enterprise_code: String(enterprise?.enterprise_code || "").trim(),
     tabletki_branch: String(enterprise?.branch_id || "").trim(),
+    catalog_enabled: true,
 });
 
 const buildStoreDraftFromStore = (store) => ({
@@ -419,6 +404,9 @@ const buildEnterprisePayload = (draft) => ({
     token: normalizeOptionalText(draft.token),
     catalog_enabled: Boolean(draft.catalog_enabled),
     stock_enabled: Boolean(draft.stock_enabled),
+    business_runtime_mode: String(draft.business_runtime_mode || "baseline") === "custom"
+        ? "custom"
+        : "baseline",
     order_fetcher: Boolean(draft.order_fetcher),
     auto_confirm: Boolean(draft.auto_confirm),
     stock_correction: Boolean(draft.stock_correction),
@@ -433,14 +421,16 @@ const buildStorePayload = (draft, selectedEnterpriseCode) => ({
     is_legacy_default: Boolean(draft.is_legacy_default),
     enterprise_code: normalizeOptionalText(selectedEnterpriseCode),
     legacy_scope_key: normalizeOptionalText(draft.legacy_scope_key),
-    tabletki_enterprise_code: normalizeOptionalText(draft.tabletki_enterprise_code),
+    tabletki_enterprise_code: normalizeOptionalText(draft.tabletki_enterprise_code) || normalizeOptionalText(selectedEnterpriseCode),
     tabletki_branch: normalizeOptionalText(draft.tabletki_branch),
     salesdrive_enterprise_code: normalizeOptionalText(draft.salesdrive_enterprise_code),
     salesdrive_enterprise_id: String(draft.salesdrive_enterprise_id).trim() === ""
         ? null
         : Number(draft.salesdrive_enterprise_id),
     salesdrive_store_name: normalizeOptionalText(draft.salesdrive_store_name),
-    catalog_enabled: Boolean(draft.catalog_enabled),
+    // Deprecated compatibility field: catalog is now operator-managed on the
+    // enterprise level, but backend/storage still carries BusinessStore.catalog_enabled.
+    catalog_enabled: true,
     stock_enabled: Boolean(draft.stock_enabled),
     orders_enabled: Boolean(draft.orders_enabled),
     catalog_only_in_stock: Boolean(draft.catalog_only_in_stock),
@@ -488,22 +478,25 @@ const BusinessStoresPage = () => {
     const [businessEnterprises, setBusinessEnterprises] = useState([]);
     const [stores, setStores] = useState([]);
     const [legacyScopes, setLegacyScopes] = useState([]);
+    const [mappingBranches, setMappingBranches] = useState([]);
     const [selectedEnterpriseCode, setSelectedEnterpriseCode] = useState("");
     const [selectedStoreId, setSelectedStoreId] = useState(null);
+    const [storeDraftStoreId, setStoreDraftStoreId] = useState(null);
     const [enterpriseDraft, setEnterpriseDraft] = useState(initialEnterpriseDraft);
     const [storeDraft, setStoreDraft] = useState(initialStoreDraft);
     const [enterpriseSaving, setEnterpriseSaving] = useState(false);
     const [storeSaving, setStoreSaving] = useState(false);
-    const [actionLoading, setActionLoading] = useState(false);
     const [pageLoading, setPageLoading] = useState(true);
     const [pageError, setPageError] = useState("");
     const [enterpriseError, setEnterpriseError] = useState("");
     const [enterpriseSuccess, setEnterpriseSuccess] = useState("");
     const [storeError, setStoreError] = useState("");
     const [storeSuccess, setStoreSuccess] = useState("");
-    const [dryRunResult, setDryRunResult] = useState(null);
-    const [catalogPreviewResult, setCatalogPreviewResult] = useState(null);
-    const [stockPreviewResult, setStockPreviewResult] = useState(null);
+    const [enterpriseCatalogOnlyInStockDraft, setEnterpriseCatalogOnlyInStockDraft] = useState(true);
+    const [mappingBranchesLoading, setMappingBranchesLoading] = useState(false);
+    const [mappingBranchesError, setMappingBranchesError] = useState("");
+    const enterpriseContextRequestIdRef = useRef(0);
+    const storeDraftDirtyRef = useRef(false);
 
     const loadBusinessEnterprises = useCallback(async () => {
         const response = await axios.get(
@@ -530,6 +523,23 @@ const BusinessStoresPage = () => {
         const rows = response.data || [];
         setStores(rows);
         return rows;
+    }, []);
+
+    const loadMappingBranches = useCallback(async (enterpriseCode) => {
+        const normalizedEnterpriseCode = String(enterpriseCode || "").trim();
+        if (!normalizedEnterpriseCode) {
+            setMappingBranches([]);
+            return [];
+        }
+        const rows = await getBusinessStoreMappingBranches(normalizedEnterpriseCode);
+        setMappingBranches(rows || []);
+        return rows || [];
+    }, []);
+
+    const replaceStoreDraft = useCallback((draft, ownerStoreId = null, { dirty = false } = {}) => {
+        setStoreDraft(draft);
+        setStoreDraftStoreId(ownerStoreId);
+        storeDraftDirtyRef.current = Boolean(dirty);
     }, []);
 
     const reloadMeta = useCallback(async () => {
@@ -562,6 +572,31 @@ const BusinessStoresPage = () => {
         bootstrap();
     }, [reloadMeta, selectedEnterpriseCode]);
 
+    useEffect(() => {
+        async function loadBranchOptions() {
+            if (!selectedEnterpriseCode) {
+                setMappingBranches([]);
+                setMappingBranchesError("");
+                return;
+            }
+
+            setMappingBranchesLoading(true);
+            setMappingBranchesError("");
+            try {
+                await loadMappingBranches(selectedEnterpriseCode);
+            } catch (error) {
+                handleAuthError(error);
+                console.error("Error loading mapping branches:", error);
+                setMappingBranches([]);
+                setMappingBranchesError(formatApiError(error, "Не удалось загрузить branch-список из mapping_branch."));
+            } finally {
+                setMappingBranchesLoading(false);
+            }
+        }
+
+        loadBranchOptions();
+    }, [loadMappingBranches, selectedEnterpriseCode]);
+
     const selectedEnterpriseMeta = useMemo(
         () => businessEnterprises.find((item) => item.enterprise_code === selectedEnterpriseCode) || null,
         [businessEnterprises, selectedEnterpriseCode],
@@ -572,10 +607,52 @@ const BusinessStoresPage = () => {
         [stores, selectedEnterpriseCode],
     );
 
-    const selectedLegacyScopeOption = useMemo(
-        () => legacyScopes.find((item) => item.legacy_scope_key === storeDraft.legacy_scope_key) || null,
-        [legacyScopes, storeDraft.legacy_scope_key],
+    const mappingBranchOptions = useMemo(
+        () => (mappingBranches || []).filter((item) => String(item.branch || "").trim()),
+        [mappingBranches],
     );
+
+    const mappingBranchValues = useMemo(
+        () => new Set(mappingBranchOptions.map((item) => String(item.branch || "").trim()).filter(Boolean)),
+        [mappingBranchOptions],
+    );
+
+    const currentStoreBranchMissingFromOptions = useMemo(() => {
+        const currentBranch = String(storeDraft.tabletki_branch || "").trim();
+        if (!currentBranch) {
+            return false;
+        }
+        return !mappingBranchValues.has(currentBranch);
+    }, [mappingBranchValues, storeDraft.tabletki_branch]);
+
+    const catalogScopeStoreCandidates = useMemo(() => {
+        const targetBranch = String(enterpriseDraft.branch_id || "").trim();
+        if (!selectedEnterpriseCode || !targetBranch) {
+            return [];
+        }
+        return storesForSelectedEnterprise.filter(
+            (item) => Boolean(item.is_active) && String(item.tabletki_branch || "").trim() === targetBranch,
+        );
+    }, [enterpriseDraft.branch_id, selectedEnterpriseCode, storesForSelectedEnterprise]);
+
+    const catalogScopeStore = useMemo(
+        () => (catalogScopeStoreCandidates.length === 1 ? catalogScopeStoreCandidates[0] : null),
+        [catalogScopeStoreCandidates],
+    );
+
+    const catalogScopeWarning = useMemo(() => {
+        const targetBranch = String(enterpriseDraft.branch_id || "").trim();
+        if (!selectedEnterpriseCode || !targetBranch) {
+            return "";
+        }
+        if (catalogScopeStoreCandidates.length === 0) {
+            return "Главный магазин каталога не найден. Для режима ограничения по остаткам нужен активный магазин, Branch которого совпадает с основным Branch предприятия.";
+        }
+        if (catalogScopeStoreCandidates.length > 1) {
+            return "Найдено несколько главных магазинов каталога с тем же Branch. Нужно оставить один активный магазин.";
+        }
+        return "";
+    }, [catalogScopeStoreCandidates, enterpriseDraft.branch_id, selectedEnterpriseCode]);
 
     const selectedCodeStrategy = useMemo(
         () => codeStrategyOptions.find((item) => item.value === storeDraft.code_strategy) || codeStrategyOptions[1],
@@ -587,27 +664,81 @@ const BusinessStoresPage = () => {
         [storeDraft.name_strategy],
     );
 
-    const selectedMigrationStatus = useMemo(
-        () => migrationStatusOptions.find((item) => item.value === storeDraft.migration_status) || migrationStatusOptions[0],
-        [storeDraft.migration_status],
-    );
-
     const isNewStoreDraft = !selectedStoreId;
+    const isBaselineEnterprise = enterpriseDraft.business_runtime_mode !== "custom";
+    const isCustomEnterprise = !isBaselineEnterprise;
+    const isRuntimeModeLocked = isCustomEnterprise && Boolean(enterpriseDraft.runtime_mode_switch_locked);
+    const catalogIdentityControlsDisabled = isBaselineEnterprise;
+    const storeRoutingReadOnly = isBaselineEnterprise;
+    const enterpriseStrategyStoreId = catalogScopeStore?.id || selectedStoreId || null;
 
     useEffect(() => {
+        if (catalogScopeStore) {
+            setEnterpriseCatalogOnlyInStockDraft(Boolean(catalogScopeStore.catalog_only_in_stock));
+        } else {
+            setEnterpriseCatalogOnlyInStockDraft(true);
+        }
+    }, [catalogScopeStore]);
+
+    useEffect(() => {
+        if (!isNewStoreDraft || !selectedEnterpriseCode) {
+            return;
+        }
+
+        const currentBranch = String(storeDraft.tabletki_branch || "").trim();
+        if (currentBranch && mappingBranchValues.has(currentBranch)) {
+            return;
+        }
+
+        const preferredBranch = (
+            mappingBranchOptions.find((item) => Boolean(item.is_primary_enterprise_branch))?.branch
+            || mappingBranchOptions[0]?.branch
+            || String(enterpriseDraft.branch_id || "").trim()
+        );
+        if (!preferredBranch) {
+            return;
+        }
+
+        replaceStoreDraft({
+            ...storeDraft,
+            store_code: buildSuggestedStoreCode(enterpriseDraft, storesForSelectedEnterprise, preferredBranch),
+            store_name: buildStoreNameForBranch(enterpriseDraft, preferredBranch),
+            enterprise_code: String(enterpriseDraft.enterprise_code || "").trim(),
+            tabletki_enterprise_code: String(enterpriseDraft.enterprise_code || "").trim(),
+            tabletki_branch: preferredBranch,
+        }, null, { dirty: false });
+    }, [
+        enterpriseDraft,
+        isNewStoreDraft,
+        mappingBranchOptions,
+        mappingBranchValues,
+        replaceStoreDraft,
+        selectedEnterpriseCode,
+        storeDraft,
+        storeDraft.tabletki_branch,
+        storesForSelectedEnterprise,
+    ]);
+
+    useEffect(() => {
+        const requestId = enterpriseContextRequestIdRef.current + 1;
+        enterpriseContextRequestIdRef.current = requestId;
+        let cancelled = false;
+
+        const isLatestRequest = () => !cancelled && enterpriseContextRequestIdRef.current === requestId;
+
         async function loadEnterpriseContext() {
             if (!selectedEnterpriseCode) {
                 setEnterpriseDraft(initialEnterpriseDraft);
-                setStoreDraft(initialStoreDraft);
+                replaceStoreDraft(initialStoreDraft, null, { dirty: false });
                 setSelectedStoreId(null);
-                setDryRunResult(null);
-                setCatalogPreviewResult(null);
-                setStockPreviewResult(null);
                 return;
             }
 
             try {
                 const enterprise = await getEnterpriseByCode(selectedEnterpriseCode);
+                if (!isLatestRequest()) {
+                    return;
+                }
                 setEnterpriseDraft(buildEnterpriseDraft(enterprise));
 
                 const storeForSelection = storesForSelectedEnterprise.find(
@@ -615,16 +746,27 @@ const BusinessStoresPage = () => {
                 ) || null;
 
                 if (storeForSelection) {
-                    setStoreDraft(buildStoreDraftFromStore(storeForSelection));
+                    if (!storeDraftDirtyRef.current) {
+                        replaceStoreDraft(buildStoreDraftFromStore(storeForSelection), storeForSelection.id, { dirty: false });
+                    }
                 } else if (storesForSelectedEnterprise.length > 0) {
+                    if (storeDraftDirtyRef.current) {
+                        return;
+                    }
                     const firstStore = storesForSelectedEnterprise[0];
                     setSelectedStoreId(firstStore.id);
-                    setStoreDraft(buildStoreDraftFromStore(firstStore));
+                    replaceStoreDraft(buildStoreDraftFromStore(firstStore), firstStore.id, { dirty: false });
                 } else {
+                    if (storeDraftDirtyRef.current) {
+                        return;
+                    }
                     setSelectedStoreId(null);
-                    setStoreDraft(buildStoreDraftFromEnterprise(enterprise, storesForSelectedEnterprise));
+                    replaceStoreDraft(buildStoreDraftFromEnterprise(enterprise, storesForSelectedEnterprise), null, { dirty: false });
                 }
             } catch (error) {
+                if (!isLatestRequest()) {
+                    return;
+                }
                 handleAuthError(error);
                 console.error("Error loading selected Business enterprise:", error);
                 setPageError(formatApiError(error, "Не удалось загрузить данные выбранного Business-предприятия."));
@@ -632,24 +774,25 @@ const BusinessStoresPage = () => {
         }
 
         loadEnterpriseContext();
-    }, [selectedEnterpriseCode, selectedStoreId, storesForSelectedEnterprise]);
+        return () => {
+            cancelled = true;
+        };
+    }, [replaceStoreDraft, selectedEnterpriseCode, selectedStoreId, storesForSelectedEnterprise]);
 
     const onEnterpriseChange = (key, value) => {
         setEnterpriseDraft((prev) => ({ ...prev, [key]: value }));
     };
 
     const onStoreChange = (key, value) => {
+        storeDraftDirtyRef.current = true;
         setStoreDraft((prev) => ({ ...prev, [key]: value }));
     };
 
     const selectOverlay = (store) => {
         setStoreError("");
         setStoreSuccess("");
-        setDryRunResult(null);
-        setCatalogPreviewResult(null);
-        setStockPreviewResult(null);
         setSelectedStoreId(store.id);
-        setStoreDraft(buildStoreDraftFromStore(store));
+        replaceStoreDraft(buildStoreDraftFromStore(store), store.id, { dirty: false });
     };
 
     const handleSaveEnterprise = async () => {
@@ -659,9 +802,29 @@ const BusinessStoresPage = () => {
         try {
             const payload = buildEnterprisePayload(enterpriseDraft);
             await updateEnterprise(selectedEnterpriseCode, payload);
+            if (catalogScopeStore) {
+                await axios.put(
+                    `${API_BASE_URL}/business-stores/${catalogScopeStore.id}`,
+                    { catalog_only_in_stock: Boolean(enterpriseCatalogOnlyInStockDraft) },
+                    getAuthHeaders(),
+                );
+            }
+            if (enterpriseStrategyStoreId) {
+                await axios.put(
+                    `${API_BASE_URL}/business-stores/${enterpriseStrategyStoreId}`,
+                    {
+                        code_strategy: String(storeDraft.code_strategy || "opaque_mapping"),
+                        name_strategy: String(storeDraft.name_strategy || "base"),
+                        code_prefix: normalizeOptionalText(storeDraft.code_prefix),
+                    },
+                    getAuthHeaders(),
+                );
+            }
             const [updatedEnterprise] = await Promise.all([
                 getEnterpriseByCode(selectedEnterpriseCode),
                 loadBusinessEnterprises(),
+                loadStores(),
+                loadMappingBranches(selectedEnterpriseCode),
             ]);
             setEnterpriseDraft(buildEnterpriseDraft(updatedEnterprise));
             setStoreDraft((prev) => ({
@@ -669,7 +832,7 @@ const BusinessStoresPage = () => {
                 enterprise_code: String(updatedEnterprise.enterprise_code || ""),
                 tabletki_branch: prev.tabletki_branch || String(updatedEnterprise.branch_id || ""),
             }));
-            setEnterpriseSuccess("Настройки предприятия сохранены.");
+            setEnterpriseSuccess("Настройки предприятия и ассортимента каталога сохранены.");
         } catch (error) {
             handleAuthError(error);
             console.error("Error saving enterprise settings:", error);
@@ -684,6 +847,20 @@ const BusinessStoresPage = () => {
         setStoreError("");
         setStoreSuccess("");
         try {
+            if (selectedStoreId && selectedStoreId !== storeDraftStoreId) {
+                const message = (
+                    "Сохранение заблокировано: данные формы относятся к другому магазину. "
+                    + "Выберите магазин ещё раз и повторите изменение."
+                );
+                console.warn("BusinessStore draft owner mismatch", {
+                    selectedStoreId,
+                    storeDraftStoreId,
+                    store_code: storeDraft.store_code,
+                });
+                setStoreError(message);
+                return;
+            }
+
             const payload = buildStorePayload(storeDraft, selectedEnterpriseCode);
             let response;
             if (!selectedStoreId) {
@@ -701,9 +878,7 @@ const BusinessStoresPage = () => {
             const savedStore = response.data;
             await loadStores();
             setSelectedStoreId(savedStore.id);
-            setStoreDraft(buildStoreDraftFromStore(savedStore));
-            setCatalogPreviewResult(null);
-            setStockPreviewResult(null);
+            replaceStoreDraft(buildStoreDraftFromStore(savedStore), savedStore.id, { dirty: false });
             setStoreSuccess(!selectedStoreId
                 ? "Магазин создан."
                 : "Изменения магазина сохранены.");
@@ -716,241 +891,12 @@ const BusinessStoresPage = () => {
         }
     };
 
-    const runDryRun = async (storeId = selectedStoreId) => {
-        if (!storeId) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${storeId}/dry-run`,
-                {},
-                getAuthHeaders(),
-            );
-            setDryRunResult(response.data);
-            setStoreSuccess("Dry-run выполнен.");
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error running Business Store dry-run:", error);
-            setDryRunResult(null);
-            setStoreError(formatApiError(error, "Не удалось выполнить dry-run."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const generateMissingCodes = async () => {
-        if (!selectedStoreId) {
-            return;
-        }
-        if (!window.confirm("Сгенерировать недостающие коды товаров для выбранного магазина?")) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${selectedStoreId}/generate-missing-codes`,
-                {},
-                getAuthHeaders(),
-            );
-            setDryRunResult(response.data);
-            setStoreSuccess("Недостающие коды сгенерированы.");
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error generating missing codes:", error);
-            setDryRunResult(null);
-            setStoreError(formatApiError(error, "Не удалось сгенерировать недостающие коды."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const loadCatalogPreview = async (storeId = selectedStoreId) => {
-        if (!storeId) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${storeId}/catalog-preview`,
-                { limit: 100, include_not_exportable: true },
-                getAuthHeaders(),
-            );
-            setCatalogPreviewResult(response.data);
-            setStoreSuccess("Preview каталога построен.");
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error building catalog preview:", error);
-            setCatalogPreviewResult(null);
-            setStoreError(formatApiError(error, "Не удалось построить preview каталога."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const loadStockPreview = async (storeId = selectedStoreId) => {
-        if (!storeId) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${storeId}/stock-preview`,
-                { limit: 100, include_not_exportable: true },
-                getAuthHeaders(),
-            );
-            setStockPreviewResult(response.data);
-            setStoreSuccess("Preview остатков построен.");
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error building stock preview:", error);
-            setStockPreviewResult(null);
-            setStoreError(formatApiError(error, "Не удалось построить preview остатков."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const generateMissingNames = async () => {
-        if (!selectedStoreId) {
-            return;
-        }
-        if (!window.confirm("Сгенерировать missing product names для выбранного магазина?")) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${selectedStoreId}/generate-missing-names`,
-                {},
-                getAuthHeaders(),
-            );
-            setDryRunResult(response.data);
-            setStoreSuccess("Missing names сгенерированы.");
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error generating missing names:", error);
-            setDryRunResult(null);
-            setStoreError(formatApiError(error, "Не удалось сгенерировать missing names."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const cleanupProductNames = async () => {
-        if (!selectedStoreId) {
-            return;
-        }
-        if (!window.confirm("Emergency очистка names mapping деактивирует текущие generated names. Продолжить?")) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${selectedStoreId}/cleanup-product-names`,
-                { confirm: true, mode: "deactivate" },
-                getAuthHeaders(),
-            );
-            setStoreSuccess(`Names mapping очищен: ${response.data.affected_count || 0}.`);
-            await runDryRun(selectedStoreId);
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error cleaning product names:", error);
-            setDryRunResult(null);
-            setStoreError(formatApiError(error, "Не удалось очистить names mapping."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const generateMissingPriceAdjustments = async () => {
-        if (!selectedStoreId) {
-            return;
-        }
-        if (!window.confirm("Сгенерировать missing price adjustments для выбранного магазина?")) {
-            return;
-        }
-        setActionLoading(true);
-        setStoreError("");
-        setStoreSuccess("");
-        try {
-            const response = await axios.post(
-                `${API_BASE_URL}/business-stores/${selectedStoreId}/generate-missing-price-adjustments`,
-                {},
-                getAuthHeaders(),
-            );
-            setDryRunResult(response.data);
-            setStoreSuccess("Missing price adjustments сгенерированы.");
-        } catch (error) {
-            handleAuthError(error);
-            console.error("Error generating missing price adjustments:", error);
-            setDryRunResult(null);
-            setStoreError(formatApiError(error, "Не удалось сгенерировать missing price adjustments."));
-        } finally {
-            setActionLoading(false);
-        }
-    };
-
-    const renderSummaryBlock = (title, summary) => {
-        if (!summary) {
-            return null;
-        }
-
-        const largeKeys = [
-            "sample_items",
-            "missing_mapping_samples",
-            "missing_name_samples",
-            "missing_price_adjustment_samples",
-        ];
-        const detailKeys = largeKeys.filter((key) => key in summary);
-
-        return (
-            <div style={{ display: "grid", gap: "10px" }}>
-                <h3 style={subSectionTitleStyle}>{title}</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-                    {Object.entries(summary)
-                        .filter(([key]) => !largeKeys.includes(key))
-                        .map(([key, value]) => (
-                            <div key={key} style={{ border: "1px solid #e2e8f0", borderRadius: "10px", padding: "10px 12px" }}>
-                                <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "4px" }}>{key}</div>
-                                <div style={{ fontWeight: 700, color: "#111827" }}>{String(value ?? emptyValue)}</div>
-                            </div>
-                        ))}
-                </div>
-                {detailKeys.length ? (
-                    <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                        {detailKeys.map((key) => (
-                            <div key={key}>
-                                <div style={{ fontWeight: 700, marginBottom: "6px" }}>{key}</div>
-                                <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", overflow: "auto", fontSize: "12px" }}>
-                                    {JSON.stringify(summary[key] || [], null, 2)}
-                                </pre>
-                            </div>
-                        ))}
-                    </div>
-                ) : null}
-            </div>
-        );
-    };
-
     return (
         <div style={pageStyle}>
             <div style={{ ...cardStyle, padding: "20px 24px", display: "grid", gap: "10px" }}>
                 <h1 style={{ margin: 0, fontSize: "28px", color: "#111827" }}>Business-магазины</h1>
                 <p style={mutedTextStyle}>
-                    Настройка магазинов Business-контура: каталог, остатки, заказы, внешние коды и наценки.
+                    Настройка режима предприятия и рабочих параметров магазинов Business-контура.
                 </p>
             </div>
 
@@ -968,9 +914,7 @@ const BusinessStoresPage = () => {
                             onChange={(event) => {
                                 setSelectedEnterpriseCode(event.target.value);
                                 setSelectedStoreId(null);
-                                setDryRunResult(null);
-                                setCatalogPreviewResult(null);
-                                setStockPreviewResult(null);
+                                replaceStoreDraft(initialStoreDraft, null, { dirty: false });
                                 setEnterpriseError("");
                                 setEnterpriseSuccess("");
                                 setStoreError("");
@@ -1016,7 +960,7 @@ const BusinessStoresPage = () => {
 
                     <Section
                         title="2. Основные настройки предприятия"
-                        description="Источник: enterprise_settings. Эти параметры относятся ко всему предприятию."
+                        description="Источник: enterprise_settings. Здесь управляется реальный runtime-режим предприятия."
                         actions={(
                             <button
                                 type="button"
@@ -1029,98 +973,125 @@ const BusinessStoresPage = () => {
                         )}
                     >
                         <div style={formGridStyle}>
-                            <Field label="Код предприятия">
-                                <input style={readonlyInputStyle} value={enterpriseDraft.enterprise_code} readOnly />
-                            </Field>
-                            <Field label="Название предприятия">
-                                <input
+                            <Field
+                                label="Режим предприятия"
+                                helpText={isCustomEnterprise
+                                    ? "Каталог и остатки работают по настраиваемой business-логике. Используются настройки каталога предприятия и магазинов."
+                                    : "Каталог и остатки работают по стандартной старой логике. Настройки магазинов для каталога и остатков не используются."}
+                            >
+                                <select
                                     style={inputStyle}
-                                    value={enterpriseDraft.enterprise_name}
-                                    onChange={(event) => onEnterpriseChange("enterprise_name", event.target.value)}
-                                />
+                                    value={enterpriseDraft.business_runtime_mode || "baseline"}
+                                    onChange={(event) => onEnterpriseChange("business_runtime_mode", event.target.value)}
+                                    disabled={isRuntimeModeLocked}
+                                >
+                                    <option value="baseline">Базовый</option>
+                                    <option value="custom">Настраиваемый</option>
+                                </select>
                             </Field>
-                            <Field label="Основной branch">
+                            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                <input
+                                    type="checkbox"
+                                    style={checkboxStyle}
+                                    checked={Boolean(enterpriseDraft.catalog_enabled)}
+                                    onChange={(event) => onEnterpriseChange("catalog_enabled", event.target.checked)}
+                                />
+                                Каталог предприятия включён
+                            </label>
+                            <Field label="Branch каталога / основной branch предприятия">
                                 <input
                                     style={inputStyle}
                                     value={enterpriseDraft.branch_id}
                                     onChange={(event) => onEnterpriseChange("branch_id", event.target.value)}
                                 />
                             </Field>
-                            <Field label="Формат данных">
-                                <input style={readonlyInputStyle} value={enterpriseDraft.data_format || emptyValue} disabled />
-                            </Field>
-                            <Field label="Частота остатков">
-                                <input
-                                    type="number"
-                                    style={inputStyle}
-                                    value={enterpriseDraft.stock_upload_frequency}
-                                    onChange={(event) => onEnterpriseChange("stock_upload_frequency", event.target.value)}
-                                />
-                            </Field>
-                            <Field label="Частота каталога">
-                                <input
-                                    type="number"
-                                    style={inputStyle}
-                                    value={enterpriseDraft.catalog_upload_frequency}
-                                    onChange={(event) => onEnterpriseChange("catalog_upload_frequency", event.target.value)}
-                                />
-                            </Field>
                         </div>
-                        <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Доступы и интеграция</h3>
-                            <div style={formGridStyle}>
-                                <Field label="Логин Tabletki">
-                                <input
-                                    style={inputStyle}
-                                    value={enterpriseDraft.tabletki_login}
-                                    onChange={(event) => onEnterpriseChange("tabletki_login", event.target.value)}
-                                />
-                                </Field>
-                                <Field label="Пароль Tabletki">
-                                <input
-                                    type="password"
-                                    style={inputStyle}
-                                    value={enterpriseDraft.tabletki_password}
-                                    onChange={(event) => onEnterpriseChange("tabletki_password", event.target.value)}
-                                />
-                                </Field>
-                                <Field label="Token">
-                                <input
-                                    type="password"
-                                    style={inputStyle}
-                                    value={enterpriseDraft.token}
-                                    onChange={(event) => onEnterpriseChange("token", event.target.value)}
-                                />
-                                </Field>
+                        {isBaselineEnterprise ? (
+                            <div style={warningCardStyle}>
+                                В базовом режиме используется стандартный контур каталога предприятия.
                             </div>
-                        </div>
-                    </Section>
-
-                    <Section
-                        title="3. Разрешения предприятия"
-                        description="Эти флаги включают или выключают процессы на уровне предприятия. Для нового Business-магазина также должны быть включены флаги самого магазина ниже."
-                    >
-                        <div style={warningCardStyle}>
-                            Не путать с флагами магазина. Эти настройки разрешают работу предприятия в целом.
-                        </div>
-                        <div style={formGridStyle}>
-                            {[
-                                ["catalog_enabled", "Разрешить каталог предприятия"],
-                                ["stock_enabled", "Разрешить остатки предприятия"],
-                                ["order_fetcher", "Получать заказы предприятия"],
-                                ["auto_confirm", "Автоподтверждение по старому контуру"],
-                                ["stock_correction", "Коррекция остатков"],
-                            ].map(([key, label]) => (
-                                <label key={key} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                        ) : null}
+                        {isRuntimeModeLocked ? (
+                            <div style={redWarningCardStyle}>
+                                {enterpriseDraft.runtime_mode_switch_lock_reason || "Для підприємства вже створені індивідуальні коди або назви каталогу. Зміну режиму заблоковано."}
+                            </div>
+                        ) : null}
+                        <div style={{ display: "grid", gap: "16px" }}>
+                            <h3 style={subSectionTitleStyle}>Ограничение ассортимента каталога</h3>
+                            <div style={formGridStyle}>
+                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                     <input
                                         type="checkbox"
                                         style={checkboxStyle}
-                                        checked={Boolean(enterpriseDraft[key])}
-                                        onChange={(event) => onEnterpriseChange(key, event.target.checked)}
+                                        checked={Boolean(enterpriseCatalogOnlyInStockDraft)}
+                                        onChange={(event) => setEnterpriseCatalogOnlyInStockDraft(event.target.checked)}
+                                        disabled={!catalogScopeStore}
                                     />
-                                    {label}
+                                    В каталог только товары с остатком главного магазина
                                 </label>
-                            ))}
+                            </div>
+                            {catalogScopeStore ? (
+                                <div style={infoCardStyle}>
+                                    <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>
+                                        Главный магазин каталога
+                                    </div>
+                                    <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>
+                                        {`${catalogScopeStore.store_code} · Branch ${catalogScopeStore.tabletki_branch || emptyValue} · Scope ${catalogScopeStore.legacy_scope_key || emptyValue}`}
+                                    </div>
+                                </div>
+                            ) : null}
+                            {catalogScopeWarning ? (
+                                <div style={redWarningCardStyle}>{catalogScopeWarning}</div>
+                            ) : null}
+                        </div>
+                        <div style={{ display: "grid", gap: "16px" }}>
+                            <h3 style={subSectionTitleStyle}>Параметры catalog identity</h3>
+                            <div style={formGridStyle}>
+                                <Field label="Стратегия кодов каталога">
+                                    <select
+                                        style={inputStyle}
+                                        value={storeDraft.code_strategy}
+                                        onChange={(event) => onStoreChange("code_strategy", event.target.value)}
+                                        disabled={catalogIdentityControlsDisabled}
+                                    >
+                                        {codeStrategyOptions.map((item) => (
+                                            <option key={item.value} value={item.value}>{item.value}</option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field label="Стратегия названий каталога">
+                                    <select
+                                        style={inputStyle}
+                                        value={storeDraft.name_strategy}
+                                        onChange={(event) => onStoreChange("name_strategy", event.target.value)}
+                                        disabled={catalogIdentityControlsDisabled}
+                                    >
+                                        {nameStrategyOptions.map((item) => (
+                                            <option key={item.value} value={item.value}>{item.value}</option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                {storeDraft.code_strategy === "prefix_mapping" ? (
+                                    <Field label="Префикс кода каталога">
+                                        <input
+                                            style={inputStyle}
+                                            value={storeDraft.code_prefix}
+                                            onChange={(event) => onStoreChange("code_prefix", event.target.value)}
+                                            disabled={catalogIdentityControlsDisabled}
+                                        />
+                                    </Field>
+                                ) : <div />}
+                            </div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                            <div style={infoCardStyle}>
+                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Стратегия кодов каталога</div>
+                                <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedCodeStrategy.label}</div>
+                            </div>
+                            <div style={infoCardStyle}>
+                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Стратегия названий каталога</div>
+                                <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedNameStrategy.label}</div>
+                            </div>
                         </div>
                     </Section>
 
@@ -1145,11 +1116,13 @@ const BusinessStoresPage = () => {
                             </div>
                         )}
                     >
+                        {enterpriseDraft.business_runtime_mode === "baseline" ? (
+                            <div style={warningCardStyle}>
+                                Для предприятия в базовом режиме настройки магазинов не влияют на каталог и остатки.
+                            </div>
+                        ) : null}
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Идентификация магазина</h3>
-                            <p style={mutedTextStyle}>
-                                Здесь редактируются параметры конкретного магазина внутри Business-контура.
-                            </p>
+                            <h3 style={subSectionTitleStyle}>Данные магазина</h3>
                             <div style={formGridStyle}>
                                 <Field label="Код магазина">
                                     <input
@@ -1180,19 +1153,6 @@ const BusinessStoresPage = () => {
                                         onChange={(event) => onStoreChange("tax_identifier", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="Этап запуска" helpText={selectedMigrationStatus.help}>
-                                    <select
-                                        style={inputStyle}
-                                        value={storeDraft.migration_status}
-                                        onChange={(event) => onStoreChange("migration_status", event.target.value)}
-                                    >
-                                        {migrationStatusOptions.map((item) => (
-                                            <option key={item.value} value={item.value}>
-                                                {item.value} — {item.help}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </Field>
                                 <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                     <input
                                         type="checkbox"
@@ -1203,25 +1163,20 @@ const BusinessStoresPage = () => {
                                     Магазин активен
                                 </label>
                             </div>
-
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Юрлицо / ФОП" value={storeDraft.legal_entity_name || emptyValue} />
-                                <InfoItem label="ЕДРПОУ / РНОКПП" value={storeDraft.tax_identifier || emptyValue} />
-                                <InfoItem label="Этап запуска" value={formatMigrationStatusLabel(storeDraft.migration_status)} />
-                            </div>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Привязка к Tabletki</h3>
+                            <h3 style={subSectionTitleStyle}>Routing и заказы</h3>
                             <p style={mutedTextStyle}>
-                                Branch Tabletki должен совпадать с branch в mapping_branch для этого магазина.
+                                Branch магазина используется для остатков и заказов.
                             </p>
                             <div style={formGridStyle}>
-                                <Field label="Город / scope остатков">
+                                <Field label="Scope остатков">
                                     <select
                                         style={inputStyle}
                                         value={storeDraft.legacy_scope_key}
                                         onChange={(event) => onStoreChange("legacy_scope_key", event.target.value)}
+                                        disabled={storeRoutingReadOnly}
                                     >
                                         <option value="">Выберите legacy scope</option>
                                         {legacyScopes.map((item) => (
@@ -1231,19 +1186,33 @@ const BusinessStoresPage = () => {
                                         ))}
                                     </select>
                                 </Field>
-                                <Field label="Код предприятия Tabletki">
-                                    <input
-                                        style={inputStyle}
-                                        value={storeDraft.tabletki_enterprise_code}
-                                        onChange={(event) => onStoreChange("tabletki_enterprise_code", event.target.value)}
-                                    />
-                                </Field>
-                                <Field label="Branch Tabletki">
-                                    <input
+                                <Field label="Branch магазина для остатков и заказов">
+                                    <select
                                         style={inputStyle}
                                         value={storeDraft.tabletki_branch}
                                         onChange={(event) => onStoreChange("tabletki_branch", event.target.value)}
-                                    />
+                                        disabled={storeRoutingReadOnly || mappingBranchesLoading || mappingBranchOptions.length === 0}
+                                    >
+                                        {currentStoreBranchMissingFromOptions && storeDraft.tabletki_branch ? (
+                                            <option value={storeDraft.tabletki_branch}>
+                                                {`${storeDraft.tabletki_branch} — текущий branch вне mapping_branch`}
+                                            </option>
+                                        ) : null}
+                                        <option value="">
+                                            {mappingBranchesLoading
+                                                ? "Загрузка branch..."
+                                                : (mappingBranchOptions.length > 0
+                                                    ? "Выберите branch из mapping_branch"
+                                                    : "Нет branch в mapping_branch")}
+                                        </option>
+                                        {mappingBranchOptions.map((item) => (
+                                            <option key={item.branch} value={item.branch}>
+                                                {item.is_primary_enterprise_branch
+                                                    ? `${item.branch} — основной branch предприятия`
+                                                    : item.branch}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </Field>
                                 <Field label="SalesDrive ID">
                                     <input
@@ -1254,94 +1223,19 @@ const BusinessStoresPage = () => {
                                     />
                                 </Field>
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Scope остатков" value={selectedLegacyScopeOption ? `${selectedLegacyScopeOption.legacy_scope_key} — ${selectedLegacyScopeOption.rows_count} rows / ${selectedLegacyScopeOption.products_count} products` : emptyValue} />
-                                <InfoItem label="Код предприятия Tabletki" value={storeDraft.tabletki_enterprise_code || emptyValue} />
-                                <InfoItem label="Branch Tabletki" value={storeDraft.tabletki_branch || emptyValue} />
-                            </div>
-                        </div>
-
-                        <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Коды товаров</h3>
-                            <div style={formGridStyle}>
-                                <Field label="Стратегия кодов">
-                                    <select
-                                        style={inputStyle}
-                                        value={storeDraft.code_strategy}
-                                        onChange={(event) => onStoreChange("code_strategy", event.target.value)}
-                                    >
-                                        {codeStrategyOptions.map((item) => (
-                                            <option key={item.value} value={item.value}>{item.value}</option>
-                                        ))}
-                                    </select>
-                                </Field>
-                                {storeDraft.code_strategy === "prefix_mapping" ? (
-                                    <Field label="Префикс кода">
-                                        <input
-                                            style={inputStyle}
-                                            value={storeDraft.code_prefix}
-                                            onChange={(event) => onStoreChange("code_prefix", event.target.value)}
-                                        />
-                                    </Field>
-                                ) : <div />}
-                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input
-                                        type="checkbox"
-                                        style={checkboxStyle}
-                                        checked={Boolean(storeDraft.is_legacy_default)}
-                                        onChange={(event) => onStoreChange("is_legacy_default", event.target.checked)}
-                                    />
-                                    Базовый legacy-магазин
-                                </label>
-                            </div>
-                            <div style={infoCardStyle}>
-                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Текущая стратегия</div>
-                                <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedCodeStrategy.label}</div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>{selectedCodeStrategy.help}</div>
-                            </div>
-                            <div style={warningCardStyle}>
-                                После генерации внешних кодов не меняйте стратегию без миграционного плана.
-                            </div>
-                        </div>
-
-                        <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Каталог</h3>
-                            <div style={formGridStyle}>
-                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input
-                                        type="checkbox"
-                                        style={checkboxStyle}
-                                        checked={Boolean(storeDraft.catalog_only_in_stock)}
-                                        onChange={(event) => onStoreChange("catalog_only_in_stock", event.target.checked)}
-                                    />
-                                    В каталог только товары с остатком
-                                </label>
-                            </div>
-                            <p style={mutedTextStyle}>
-                                Если включено, каталог preview/publish берёт только товары с положительным остатком в выбранном scope.
-                            </p>
-                        </div>
-
-                        <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Названия товаров</h3>
-                            <div style={formGridStyle}>
-                                <Field label="Стратегия названий">
-                                    <select
-                                        style={inputStyle}
-                                        value={storeDraft.name_strategy}
-                                        onChange={(event) => onStoreChange("name_strategy", event.target.value)}
-                                    >
-                                        {nameStrategyOptions.map((item) => (
-                                            <option key={item.value} value={item.value}>{item.value}</option>
-                                        ))}
-                                    </select>
-                                </Field>
-                            </div>
-                            <div style={infoCardStyle}>
-                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Текущая стратегия</div>
-                                <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedNameStrategy.label}</div>
-                                <div style={{ fontSize: "14px", color: "#475569" }}>{selectedNameStrategy.help}</div>
-                            </div>
+                            {mappingBranchesError ? (
+                                <div style={redWarningCardStyle}>{mappingBranchesError}</div>
+                            ) : null}
+                            {!mappingBranchesLoading && mappingBranchOptions.length === 0 ? (
+                                <div style={warningCardStyle}>
+                                    Для выбранного предприятия нет branch в `mapping_branch`.
+                                </div>
+                            ) : null}
+                            {currentStoreBranchMissingFromOptions ? (
+                                <div style={redWarningCardStyle}>
+                                    Текущий branch магазина отсутствует в `mapping_branch` выбранного предприятия.
+                                </div>
+                            ) : null}
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
@@ -1383,21 +1277,17 @@ const BusinessStoresPage = () => {
                                     <input style={readonlyInputStyle} value={storeDraft.extra_markup_strategy} readOnly />
                                 </Field>
                             </div>
-                            <p style={mutedTextStyle}>
-                                stable_per_product: один раз генерирует стабильную наценку для каждого товара магазина.
-                            </p>
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
                             <h3 style={subSectionTitleStyle}>Участие магазина в процессах</h3>
                             <p style={mutedTextStyle}>
-                                Эти флаги определяют, участвует ли выбранный магазин в store-aware каталоге, остатках и заказах. Для работы также должны быть включены разрешения предприятия выше.
+                                Каталог управляется на уровне предприятия. Здесь настраиваются остатки, заказы и store-level routing.
                             </p>
                             <div style={formGridStyle}>
                                 {[
-                                    ["catalog_enabled", "Магазин участвует в каталоге"],
-                                    ["stock_enabled", "Магазин участвует в остатках"],
-                                    ["orders_enabled", "Магазин участвует в заказах"],
+                                    ["stock_enabled", "Остатки магазина включены"],
+                                    ["orders_enabled", "Заказы магазина включены"],
                                 ].map(([key, label]) => (
                                     <label key={key} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                         <input
@@ -1409,114 +1299,27 @@ const BusinessStoresPage = () => {
                                         {label}
                                     </label>
                                 ))}
-                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input
-                                        type="checkbox"
-                                        style={checkboxStyle}
-                                        checked={Boolean(storeDraft.takes_over_legacy_scope)}
-                                        onChange={(event) => onStoreChange("takes_over_legacy_scope", event.target.checked)}
-                                    />
-                                    Забирает legacy scope
-                                </label>
                             </div>
-                            <div style={redWarningCardStyle}>
-                                Не включать без отдельного миграционного плана.
-                            </div>
-                        </div>
-
-                        <div style={{ display: "grid", gap: "12px" }}>
-                            <h3 style={subSectionTitleStyle}>Действия по магазину</h3>
-                            <p style={mutedTextStyle}>
-                                Кнопки генерации создают недостающие mapping-записи. Preview не отправляет данные наружу.
-                            </p>
-                            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                                <button
-                                    type="button"
-                                    style={secondaryButtonStyle}
-                                    onClick={runDryRun}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Dry-run магазина
-                                </button>
-                                <button
-                                    type="button"
-                                    style={dangerButtonStyle}
-                                    onClick={generateMissingCodes}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Сгенерировать коды
-                                </button>
-                                <button
-                                    type="button"
-                                    style={secondaryButtonStyle}
-                                    onClick={generateMissingNames}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Сгенерировать названия
-                                </button>
-                                <button
-                                    type="button"
-                                    style={secondaryButtonStyle}
-                                    onClick={generateMissingPriceAdjustments}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Сгенерировать наценки
-                                </button>
-                                <button
-                                    type="button"
-                                    style={secondaryButtonStyle}
-                                    onClick={() => loadCatalogPreview(selectedStoreId)}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Preview каталога
-                                </button>
-                                <button
-                                    type="button"
-                                    style={secondaryButtonStyle}
-                                    onClick={() => loadStockPreview(selectedStoreId)}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Preview остатков
-                                </button>
-                                <button
-                                    type="button"
-                                    style={dangerButtonStyle}
-                                    onClick={cleanupProductNames}
-                                    disabled={!selectedStoreId || actionLoading}
-                                >
-                                    Emergency: очистить названия
-                                </button>
-                            </div>
-                            {!selectedStoreId ? (
-                                <div style={warningCardStyle}>
-                                    Сначала сохраните магазин.
-                                </div>
-                            ) : null}
                         </div>
                     </Section>
 
                     <Section
                         title="Список магазинов выбранного предприятия"
-                        description="Магазины выбранного Business-предприятия."
+                        description="Операционный список магазинов выбранного Business-предприятия."
                     >
                         {storesForSelectedEnterprise.length > 0 ? (
                         <div style={{ overflow: "auto", maxHeight: "420px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1480px" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1120px" }}>
                                 <thead>
                                     <tr>
                                         {[
                                             "Код магазина",
-                                            "Название",
-                                            "Юрлицо",
+                                            "Branch магазина",
                                             "Scope",
-                                            "Код Tabletki",
-                                            "Branch Tabletki",
-                                            "Стратегия кодов",
-                                            "Этап запуска",
                                             "Активен",
-                                            "Каталог",
                                             "Остатки",
                                             "Заказы",
+                                            "SalesDrive ID",
                                             "Действия",
                                         ].map((header) => (
                                             <th key={header} style={tableHeaderStyle}>{header}</th>
@@ -1531,41 +1334,16 @@ const BusinessStoresPage = () => {
                                             onClick={() => selectOverlay(item)}
                                         >
                                             <td style={tableCellStyle}>{item.store_code}</td>
-                                            <td style={tableCellStyle}>{item.store_name}</td>
-                                            <td style={tableCellStyle}>{item.legal_entity_name || emptyValue}</td>
-                                            <td style={tableCellStyle}>{item.legacy_scope_key || emptyValue}</td>
-                                            <td style={tableCellStyle}>{item.tabletki_enterprise_code || emptyValue}</td>
                                             <td style={tableCellStyle}>{item.tabletki_branch || emptyValue}</td>
-                                            <td style={tableCellStyle}>{item.code_strategy}</td>
-                                            <td style={tableCellStyle}><span style={badgeStyle}>{formatMigrationStatusLabel(item.migration_status)}</span></td>
+                                            <td style={tableCellStyle}>{item.legacy_scope_key || emptyValue}</td>
                                             <td style={tableCellStyle}>{item.is_active ? "Да" : "Нет"}</td>
-                                            <td style={tableCellStyle}>{boolShort(item.catalog_enabled)}</td>
                                             <td style={tableCellStyle}>{boolShort(item.stock_enabled)}</td>
                                             <td style={tableCellStyle}>{boolShort(item.orders_enabled)}</td>
+                                            <td style={tableCellStyle}>{item.salesdrive_enterprise_id ?? emptyValue}</td>
                                             <td style={tableCellStyle}>
-                                                <div style={{ display: "grid", gap: "8px" }}>
-                                                    <button type="button" style={secondaryButtonStyle} onClick={() => selectOverlay(item)}>
-                                                        Открыть
-                                                    </button>
-                                                    <button type="button" style={secondaryButtonStyle} onClick={() => {
-                                                        selectOverlay(item);
-                                                        runDryRun(item.id);
-                                                    }}>
-                                                        Dry-run
-                                                    </button>
-                                                    <button type="button" style={secondaryButtonStyle} onClick={() => {
-                                                        selectOverlay(item);
-                                                        loadCatalogPreview(item.id);
-                                                    }}>
-                                                        Preview каталога
-                                                    </button>
-                                                    <button type="button" style={secondaryButtonStyle} onClick={() => {
-                                                        selectOverlay(item);
-                                                        loadStockPreview(item.id);
-                                                    }}>
-                                                        Preview остатков
-                                                    </button>
-                                                </div>
+                                                <button type="button" style={secondaryButtonStyle} onClick={() => selectOverlay(item)}>
+                                                    Открыть
+                                                </button>
                                             </td>
                                         </tr>
                                     ))}
@@ -1578,172 +1356,6 @@ const BusinessStoresPage = () => {
                             </div>
                         )}
                     </Section>
-
-                    {dryRunResult ? (
-                        <Section title="Результат dry-run" description="Dry-run не отправляет данные наружу и не меняет live-процессы.">
-                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                                {"generated_codes" in dryRunResult ? (
-                                    <span style={badgeStyle}>generated_codes: {dryRunResult.generated_codes}</span>
-                                ) : null}
-                                {"generated_names" in dryRunResult ? (
-                                    <span style={badgeStyle}>generated_names: {dryRunResult.generated_names}</span>
-                                ) : null}
-                                {"generated_price_adjustments" in dryRunResult ? (
-                                    <span style={badgeStyle}>generated_price_adjustments: {dryRunResult.generated_price_adjustments}</span>
-                                ) : null}
-                            </div>
-                            {dryRunResult.warnings?.length ? (
-                                <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
-                                    {JSON.stringify(dryRunResult.warnings, null, 2)}
-                                </pre>
-                            ) : null}
-                            {"summary" in dryRunResult ? (
-                                <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
-                                    {JSON.stringify(dryRunResult.summary, null, 2)}
-                                </pre>
-                            ) : null}
-                            {renderSummaryBlock("Stock", dryRunResult.stock)}
-                            {renderSummaryBlock("Catalog", dryRunResult.catalog)}
-                        </Section>
-                    ) : null}
-
-                    {catalogPreviewResult ? (
-                        <Section title="Preview каталога" description="Payload строится поверх master_catalog и store mappings, но не отправляется в Tabletki.">
-                            {catalogPreviewResult.warnings?.length ? (
-                                <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
-                                    {JSON.stringify(catalogPreviewResult.warnings, null, 2)}
-                                </pre>
-                            ) : null}
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Код предприятия Tabletki" value={catalogPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
-                                <InfoItem label="Branch Tabletki" value={catalogPreviewResult.store?.tabletki_branch || emptyValue} />
-                                <InfoItem label="Scope остатков" value={catalogPreviewResult.store?.legacy_scope_key || emptyValue} />
-                                <InfoItem label="Источник каталога" value={catalogPreviewResult.summary?.catalog_source || emptyValue} />
-                                <InfoItem label="Товаров-кандидатов" value={catalogPreviewResult.summary?.candidate_products ?? emptyValue} />
-                                <InfoItem label="Товаров к выгрузке" value={catalogPreviewResult.summary?.exportable_products ?? emptyValue} />
-                                <InfoItem label="Нет code mapping" value={catalogPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
-                                <InfoItem label="Нет name mapping" value={catalogPreviewResult.summary?.missing_name_mapping ?? emptyValue} />
-                            </div>
-                            {catalogPreviewResult.not_exportable_samples?.length ? (
-                                <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
-                                    {JSON.stringify(catalogPreviewResult.not_exportable_samples, null, 2)}
-                                </pre>
-                            ) : null}
-                            <div style={{ overflow: "auto", maxHeight: "520px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
-                                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1320px" }}>
-                                    <thead>
-                                        <tr>
-                                            {[
-                                                "Внутренний код",
-                                                "Внешний код",
-                                                "Базовое название",
-                                                "Внешнее название",
-                                                "Штрихкод",
-                                                "Производитель",
-                                                "Бренд",
-                                                "К выгрузке",
-                                                "Причины",
-                                            ].map((header) => (
-                                                <th key={header} style={tableHeaderStyle}>{header}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {(catalogPreviewResult.payload_preview || []).map((item) => (
-                                            <tr key={`${item.internal_product_code}:${item.external_product_code || "missing"}`}>
-                                                <td style={tableCellStyle}>{item.internal_product_code || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.external_product_code || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.base_name || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.external_product_name || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.barcode || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.manufacturer || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.brand || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.exportable ? "Да" : "Нет"}</td>
-                                                <td style={tableCellStyle}>{(item.reasons || []).join(", ") || emptyValue}</td>
-                                            </tr>
-                                        ))}
-                                        {!catalogPreviewResult.payload_preview?.length ? (
-                                            <tr>
-                                                <td colSpan={9} style={{ ...tableCellStyle, textAlign: "center" }}>
-                                                    Preview rows отсутствуют.
-                                                </td>
-                                            </tr>
-                                        ) : null}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </Section>
-                    ) : null}
-
-                    {stockPreviewResult ? (
-                        <Section title="Preview остатков" description="Payload остатков строится поверх offers, code mappings и price adjustments, но не отправляется в Tabletki.">
-                            {stockPreviewResult.warnings?.length ? (
-                                <pre style={{ margin: 0, backgroundColor: "#fff7ed", padding: "12px", borderRadius: "10px", color: "#9a3412", fontSize: "12px" }}>
-                                    {JSON.stringify(stockPreviewResult.warnings, null, 2)}
-                                </pre>
-                            ) : null}
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-                                <InfoItem label="Код предприятия Tabletki" value={stockPreviewResult.store?.tabletki_enterprise_code || emptyValue} />
-                                <InfoItem label="Branch Tabletki" value={stockPreviewResult.store?.tabletki_branch || emptyValue} />
-                                <InfoItem label="Scope остатков" value={stockPreviewResult.store?.legacy_scope_key || emptyValue} />
-                                <InfoItem label="Источник остатков" value={stockPreviewResult.summary?.stock_source || emptyValue} />
-                                <InfoItem label="Всего offer-строк" value={stockPreviewResult.summary?.offer_rows_total ?? emptyValue} />
-                                <InfoItem label="Товаров-кандидатов" value={stockPreviewResult.summary?.candidate_products ?? emptyValue} />
-                                <InfoItem label="Товаров к выгрузке" value={stockPreviewResult.summary?.exportable_products ?? emptyValue} />
-                                <InfoItem label="Нет code mapping" value={stockPreviewResult.summary?.missing_code_mapping ?? emptyValue} />
-                                <InfoItem label="Нет наценки" value={stockPreviewResult.summary?.missing_price_adjustment ?? emptyValue} />
-                                <InfoItem label="С наценкой" value={stockPreviewResult.summary?.markup_applied_products ?? emptyValue} />
-                            </div>
-                            {stockPreviewResult.not_exportable_samples?.length ? (
-                                <pre style={{ margin: 0, backgroundColor: "#f8fafc", padding: "12px", borderRadius: "10px", color: "#0f172a", fontSize: "12px" }}>
-                                    {JSON.stringify(stockPreviewResult.not_exportable_samples, null, 2)}
-                                </pre>
-                            ) : null}
-                            <div style={{ overflow: "auto", maxHeight: "520px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
-                                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1400px" }}>
-                                    <thead>
-                                        <tr>
-                                            {[
-                                                "Внутренний код",
-                                                "Внешний код",
-                                                "Поставщик",
-                                                "Количество",
-                                                "Базовая цена",
-                                                "Наценка %",
-                                                "Итоговая цена магазина",
-                                                "К выгрузке",
-                                                "Причины",
-                                            ].map((header) => (
-                                                <th key={header} style={tableHeaderStyle}>{header}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {(stockPreviewResult.payload_preview || []).map((item) => (
-                                            <tr key={`${item.internal_product_code}:${item.external_product_code || "missing"}:${item.supplier_code || "nosupplier"}`}>
-                                                <td style={tableCellStyle}>{item.internal_product_code || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.external_product_code || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.supplier_code || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.qty ?? emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.base_price || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.markup_percent || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.final_store_price_preview || emptyValue}</td>
-                                                <td style={tableCellStyle}>{item.exportable ? "Да" : "Нет"}</td>
-                                                <td style={tableCellStyle}>{(item.reasons || []).join(", ") || emptyValue}</td>
-                                            </tr>
-                                        ))}
-                                        {!stockPreviewResult.payload_preview?.length ? (
-                                            <tr>
-                                                <td colSpan={9} style={{ ...tableCellStyle, textAlign: "center" }}>
-                                                    Preview rows отсутствуют.
-                                                </td>
-                                            </tr>
-                                        ) : null}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </Section>
-                    ) : null}
                 </>
             ) : null}
         </div>

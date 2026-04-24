@@ -138,11 +138,12 @@ async def _apply_store_aware_outbound_mapping_if_enabled(
 
     if mapping_status == "mapping_error":
         logger.warning(
-            "Store-aware outbound status mapping error: enterprise_code=%s branch=%s externalId=%s tabletkiOrder=%s missing=%s",
+            "Store-aware outbound status mapping error: enterprise_code=%s branch=%s externalId=%s tabletkiOrder=%s code_mapping_mode=%s missing=%s",
             enterprise_code,
             branch,
             data.get("externalId"),
             data.get("tabletkiOrder") or data.get("TabletkiOrder"),
+            mapping_result.get("code_mapping_mode"),
             mapping_result.get("missing_mappings"),
         )
         return None, mapping_result
@@ -153,12 +154,13 @@ async def _apply_store_aware_outbound_mapping_if_enabled(
         transformed_data_for_log = transformed_items[0] if transformed_items else data
         after_parameter, after_sku = _first_product_code_snapshot(transformed_data_for_log)
         logger.info(
-            "Store-aware outbound status mapping applied: enterprise_code=%s branch=%s externalId=%s store_id=%s store_code=%s mapped_products=%s first_parameter_before=%s first_parameter_after=%s first_sku_before=%s first_sku_after=%s",
+            "Store-aware outbound status mapping applied: enterprise_code=%s branch=%s externalId=%s store_id=%s store_code=%s code_mapping_mode=%s mapped_products=%s first_parameter_before=%s first_parameter_after=%s first_sku_before=%s first_sku_after=%s",
             enterprise_code,
             branch,
             data.get("externalId"),
             mapping_result.get("store_id"),
             mapping_result.get("store_code"),
+            mapping_result.get("code_mapping_mode"),
             mapping_result.get("mapped_products"),
             before_parameter,
             after_parameter,
@@ -284,11 +286,12 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
 
             if mapped_data is None and BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED:
                 logger.warning(
-                    "Store-aware outbound status send skipped due to mapping_error: enterprise_code=%s branch=%s externalId=%s tabletkiOrder=%s",
+                    "Store-aware outbound status send skipped due to mapping_error: enterprise_code=%s branch=%s externalId=%s tabletkiOrder=%s code_mapping_mode=%s",
                     enterprise_code,
                     branch_value,
                     external_id,
                     data.get("tabletkiOrder") or data.get("TabletkiOrder"),
+                    mapping_report.get("code_mapping_mode") if isinstance(mapping_report, dict) else None,
                 )
             elif status_in in (4, 10, 16):
                 try:

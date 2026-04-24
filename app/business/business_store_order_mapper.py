@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BusinessStore, BusinessStoreProductCode
+from app.models import BusinessEnterpriseProductCode, BusinessStore, BusinessStoreProductCode
 
 
 ORIGINAL_EXTERNAL_GOODS_CODE_FIELD = "originalGoodsCodeExternal"
@@ -18,6 +19,15 @@ def _clean_text(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _enterprise_order_code_mapping_enabled() -> bool:
+    return (os.getenv("BUSINESS_ENTERPRISE_ORDER_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 async def resolve_business_store_for_order(
@@ -90,41 +100,66 @@ async def resolve_business_store_for_order(
 async def map_external_order_code_to_internal(
     session: AsyncSession,
     *,
-    store_id: int,
+    store: BusinessStore,
     external_product_code: str,
 ) -> dict[str, Any]:
+    code_mapping_mode = "enterprise_level" if _enterprise_order_code_mapping_enabled() else "store_level"
     normalized_external_product_code = _clean_text(external_product_code)
     if not normalized_external_product_code:
         return {
             "status": "missing_mapping",
-            "store_id": int(store_id),
+            "code_mapping_mode": code_mapping_mode,
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
             "external_product_code": external_product_code,
             "internal_product_code": None,
-            "reason": "missing_external_code_mapping",
+            "reason": "missing_enterprise_external_code_mapping"
+            if code_mapping_mode == "enterprise_level"
+            else "missing_external_code_mapping",
         }
 
-    row = (
-        await session.execute(
-            select(BusinessStoreProductCode).where(
-                BusinessStoreProductCode.store_id == int(store_id),
-                BusinessStoreProductCode.external_product_code == normalized_external_product_code,
-                BusinessStoreProductCode.is_active.is_(True),
-            ).limit(1)
-        )
-    ).scalar_one_or_none()
+    if code_mapping_mode == "enterprise_level":
+        row = (
+            await session.execute(
+                select(BusinessEnterpriseProductCode).where(
+                    BusinessEnterpriseProductCode.enterprise_code == str(store.enterprise_code or "").strip(),
+                    BusinessEnterpriseProductCode.external_product_code == normalized_external_product_code,
+                    BusinessEnterpriseProductCode.is_active.is_(True),
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+    else:
+        row = (
+            await session.execute(
+                select(BusinessStoreProductCode).where(
+                    BusinessStoreProductCode.store_id == int(store.id),
+                    BusinessStoreProductCode.external_product_code == normalized_external_product_code,
+                    BusinessStoreProductCode.is_active.is_(True),
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
 
     if row is None:
         return {
             "status": "missing_mapping",
-            "store_id": int(store_id),
+            "code_mapping_mode": code_mapping_mode,
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
             "external_product_code": normalized_external_product_code,
             "internal_product_code": None,
-            "reason": "missing_external_code_mapping",
+            "reason": "missing_enterprise_external_code_mapping"
+            if code_mapping_mode == "enterprise_level"
+            else "missing_external_code_mapping",
         }
 
     return {
         "status": "ok",
-        "store_id": int(store_id),
+        "code_mapping_mode": code_mapping_mode,
+        "store_id": int(store.id),
+        "store_code": store.store_code,
+        "enterprise_code": store.enterprise_code,
         "external_product_code": normalized_external_product_code,
         "internal_product_code": str(row.internal_product_code),
     }
@@ -155,9 +190,11 @@ async def normalize_store_order_payload(
         warnings.append("BusinessStore was not resolved; order payload left unchanged.")
         return {
             "status": "legacy_passthrough",
+            "code_mapping_mode": "store_level",
             "store_found": False,
             "store_id": None,
             "store_code": None,
+            "enterprise_code": None,
             "mapped_rows": 0,
             "missing_mappings": [],
             "order": original_payload,
@@ -171,9 +208,11 @@ async def normalize_store_order_payload(
         errors.append("order_payload.rows must be a list")
         return {
             "status": "mapping_error",
+            "code_mapping_mode": "enterprise_level" if _enterprise_order_code_mapping_enabled() else "store_level",
             "store_found": True,
             "store_id": int(store.id),
             "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
             "mapped_rows": 0,
             "missing_mappings": [],
             "order": original_payload,
@@ -183,6 +222,7 @@ async def normalize_store_order_payload(
 
     missing_mappings: list[dict[str, Any]] = []
     mapped_rows = 0
+    code_mapping_mode = "enterprise_level" if _enterprise_order_code_mapping_enabled() else "store_level"
 
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -198,7 +238,7 @@ async def normalize_store_order_payload(
         original_goods_code = _clean_text(row.get("goodsCode"))
         mapping_result = await map_external_order_code_to_internal(
             session,
-            store_id=int(store.id),
+            store=store,
             external_product_code=original_goods_code or "",
         )
 
@@ -221,9 +261,12 @@ async def normalize_store_order_payload(
         errors.append("One or more order rows could not be reverse-mapped to internal product codes.")
         return {
             "status": "mapping_error",
+            "code_mapping_mode": code_mapping_mode,
             "store_found": True,
             "store_id": int(store.id),
             "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
+            "tabletki_branch": store.tabletki_branch,
             "mapped_rows": mapped_rows,
             "missing_mappings": missing_mappings,
             "order": normalized_order,
@@ -233,9 +276,12 @@ async def normalize_store_order_payload(
 
     return {
         "status": "ok",
+        "code_mapping_mode": code_mapping_mode,
         "store_found": True,
         "store_id": int(store.id),
         "store_code": store.store_code,
+        "enterprise_code": store.enterprise_code,
+        "tabletki_branch": store.tabletki_branch,
         "mapped_rows": mapped_rows,
         "missing_mappings": [],
         "order": normalized_order,
