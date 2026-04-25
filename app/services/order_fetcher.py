@@ -263,6 +263,10 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                             if response.status == 200:
                                 data = await response.json()
                                 if isinstance(data, list):
+                                    for order_data in data:
+                                        if isinstance(order_data, dict) and "customerEmail" not in order_data:
+                                            order_data["customerEmail"] = order_data.get("customerEmail")
+
                                     legacy_orders, store_aware_orders, _mapping_error_orders = await _normalize_business_orders_for_runtime(
                                         session,
                                         enterprise=enterprise,
@@ -357,6 +361,10 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                             if response.status == 200:
                                 data = await response.json()
                                 if isinstance(data, list):
+                                    for order_data in data:
+                                        if isinstance(order_data, dict) and "customerEmail" not in order_data:
+                                            order_data["customerEmail"] = order_data.get("customerEmail")
+
                                     legacy_orders, store_aware_orders, _mapping_error_orders = await _normalize_business_orders_for_runtime(
                                         session,
                                         enterprise=enterprise,

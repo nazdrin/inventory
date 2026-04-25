@@ -108,6 +108,10 @@ def _build_payload(order: Dict[str, Any]) -> Dict[str, Any]:
         "externalId": str(order.get("id") or ""),
         "organizationId": "1",
     }
+    if order.get("customerEmail"):
+        payload["email"] = order["customerEmail"]
+
+    payload["sajt"] = "Tabletki.ua"
 
     novaposhta = _build_novaposhta_block(delivery)
     if novaposhta:

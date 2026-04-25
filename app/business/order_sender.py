@@ -1558,6 +1558,9 @@ async def build_salesdrive_payload(
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
         "supplierlist": supplierlist_val,
     }
+    if order.get("customerEmail"):
+        payload["email"] = order["customerEmail"]
+
     if _is_d14_supplier(supplier_code):
         logger.info(
             "SalesDrive root stockId override applied: externalId=%s supplier=%s stockId=%s",
