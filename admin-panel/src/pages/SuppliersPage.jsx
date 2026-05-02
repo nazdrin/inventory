@@ -304,6 +304,7 @@ const SuppliersPage = () => {
     const [businessStores, setBusinessStores] = useState([]);
     const [storesLoading, setStoresLoading] = useState(true);
     const [storesError, setStoresError] = useState("");
+    const [selectedStoreEnterpriseCode, setSelectedStoreEnterpriseCode] = useState("");
     const [selectedStoreId, setSelectedStoreId] = useState("");
     const [storeSettingsDraft, setStoreSettingsDraft] = useState(defaultStoreSettingsDraft);
     const [storeSettingsOverview, setStoreSettingsOverview] = useState([]);
@@ -356,6 +357,7 @@ const SuppliersPage = () => {
     useEffect(() => {
         if (!selectedCode || isCreating) {
             setStoreSettingsOverview([]);
+            setSelectedStoreEnterpriseCode("");
             setSelectedStoreId("");
             setStoreSettingsDraft(defaultStoreSettingsDraft);
             return;
@@ -451,6 +453,33 @@ const SuppliersPage = () => {
         () => (showOnlyActive ? suppliers.filter((item) => item.is_active) : suppliers),
         [showOnlyActive, suppliers]
     );
+    const businessStoreEnterpriseOptions = useMemo(() => {
+        const seen = new Set();
+        const rows = [];
+
+        businessStores.forEach((store) => {
+            const enterpriseCode = String(store?.enterprise_code || "").trim();
+            if (!enterpriseCode || seen.has(enterpriseCode)) {
+                return;
+            }
+            seen.add(enterpriseCode);
+            rows.push({
+                enterprise_code: enterpriseCode,
+                label: `Предприятие ${enterpriseCode}`,
+            });
+        });
+
+        return rows.sort((left, right) => left.label.localeCompare(right.label));
+    }, [businessStores]);
+    const filteredBusinessStores = useMemo(() => {
+        const normalizedEnterpriseCode = String(selectedStoreEnterpriseCode || "").trim();
+        if (!normalizedEnterpriseCode) {
+            return businessStores;
+        }
+        return businessStores.filter(
+            (store) => String(store?.enterprise_code || "").trim() === normalizedEnterpriseCode,
+        );
+    }, [businessStores, selectedStoreEnterpriseCode]);
     const showEditor = isCreating || Boolean(detail);
     const overviewByStoreId = useMemo(() => {
         const map = new Map();
@@ -512,6 +541,7 @@ const SuppliersPage = () => {
         setSaveError("");
         setSaveSuccess("");
         setCustomCityInput("");
+        setSelectedStoreEnterpriseCode("");
         setDraft(defaultDraft);
         setSelectedStoreId("");
         setStoreSettingsOverview([]);
@@ -530,6 +560,7 @@ const SuppliersPage = () => {
         setStoreSettingsError("");
         setStoreSettingsSaveError("");
         setStoreSettingsSaveSuccess("");
+        setSelectedStoreEnterpriseCode("");
         setSelectedCode(code);
     };
 
@@ -680,6 +711,10 @@ const SuppliersPage = () => {
     };
 
     const handleStoreSelection = async (value) => {
+        const selectedStore = businessStores.find((item) => String(item.id) === String(value));
+        if (selectedStore?.enterprise_code) {
+            setSelectedStoreEnterpriseCode(String(selectedStore.enterprise_code));
+        }
         setSelectedStoreId(value);
         setStoreSettingsError("");
         setStoreSettingsSaveError("");
@@ -689,6 +724,31 @@ const SuppliersPage = () => {
             return;
         }
         await applyStoreSettingsDraft(value, selectedCode);
+    };
+
+    const handleStoreEnterpriseSelection = async (enterpriseCode) => {
+        setSelectedStoreEnterpriseCode(enterpriseCode);
+        setStoreSettingsError("");
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
+
+        const normalizedEnterpriseCode = String(enterpriseCode || "").trim();
+        if (!normalizedEnterpriseCode) {
+            setSelectedStoreId("");
+            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+            return;
+        }
+
+        const nextStore = businessStores.find(
+            (store) => String(store?.enterprise_code || "").trim() === normalizedEnterpriseCode,
+        );
+        if (!nextStore) {
+            setSelectedStoreId("");
+            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+            return;
+        }
+
+        await handleStoreSelection(String(nextStore.id));
     };
 
     const buildStoreSettingsPayload = () => {
@@ -797,6 +857,63 @@ const SuppliersPage = () => {
             setSaveError("Не удалось сохранить поставщика.");
         }
     };
+
+    useEffect(() => {
+        if (!selectedStoreId) {
+            return;
+        }
+        const selectedStore = businessStores.find((item) => String(item.id) === String(selectedStoreId));
+        if (!selectedStore?.enterprise_code) {
+            return;
+        }
+        const nextEnterpriseCode = String(selectedStore.enterprise_code);
+        if (nextEnterpriseCode !== String(selectedStoreEnterpriseCode || "")) {
+            setSelectedStoreEnterpriseCode(nextEnterpriseCode);
+        }
+    }, [businessStores, selectedStoreEnterpriseCode, selectedStoreId]);
+
+    useEffect(() => {
+        if (!selectedCode || !businessStores.length) {
+            return;
+        }
+
+        if (selectedStoreEnterpriseCode) {
+            const selectedStoreStillVisible = filteredBusinessStores.some(
+                (store) => String(store.id) === String(selectedStoreId),
+            );
+            if (selectedStoreStillVisible || filteredBusinessStores.length === 0) {
+                return;
+            }
+            const fallbackStoreId = String(filteredBusinessStores[0].id);
+            setSelectedStoreId(fallbackStoreId);
+            setStoreSettingsError("");
+            setStoreSettingsSaveError("");
+            setStoreSettingsSaveSuccess("");
+            void applyStoreSettingsDraft(fallbackStoreId, selectedCode);
+            return;
+        }
+
+        const preferredStore = selectedStoreId
+            ? businessStores.find((item) => String(item.id) === String(selectedStoreId))
+            : null;
+        const fallbackStore = preferredStore
+            || (storeSettingsOverview[0]
+                ? businessStores.find((item) => String(item.id) === String(storeSettingsOverview[0].store_id))
+                : null)
+            || businessStores[0];
+
+        if (fallbackStore?.enterprise_code) {
+            setSelectedStoreEnterpriseCode(String(fallbackStore.enterprise_code));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        businessStores,
+        filteredBusinessStores,
+        selectedCode,
+        selectedStoreEnterpriseCode,
+        selectedStoreId,
+        storeSettingsOverview,
+    ]);
 
     return (
         <div style={pageStyle}>
@@ -1091,22 +1208,40 @@ const SuppliersPage = () => {
                                 </p>
 
                                 <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "12px", alignItems: "end" }}>
-                                    <label style={{ display: "grid", gap: "6px" }}>
-                                        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Магазин</span>
-                                        <select
-                                            value={selectedStoreId}
-                                            onChange={(event) => handleStoreSelection(event.target.value)}
-                                            style={inputStyle}
-                                            disabled={storesLoading || !selectedCode}
-                                        >
-                                            <option value="">Выберите магазин</option>
-                                            {businessStores.map((store) => (
-                                                <option key={store.id} value={store.id}>
-                                                    {formatStoreLabel(store)}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
+                                    <div style={{ display: "grid", gap: "12px" }}>
+                                        <label style={{ display: "grid", gap: "6px" }}>
+                                            <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Предприятие</span>
+                                            <select
+                                                value={selectedStoreEnterpriseCode}
+                                                onChange={(event) => handleStoreEnterpriseSelection(event.target.value)}
+                                                style={inputStyle}
+                                                disabled={storesLoading || !selectedCode}
+                                            >
+                                                <option value="">Выберите предприятие</option>
+                                                {businessStoreEnterpriseOptions.map((enterprise) => (
+                                                    <option key={enterprise.enterprise_code} value={enterprise.enterprise_code}>
+                                                        {enterprise.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label style={{ display: "grid", gap: "6px" }}>
+                                            <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Магазин</span>
+                                            <select
+                                                value={selectedStoreId}
+                                                onChange={(event) => handleStoreSelection(event.target.value)}
+                                                style={inputStyle}
+                                                disabled={storesLoading || !selectedCode || !selectedStoreEnterpriseCode}
+                                            >
+                                                <option value="">Выберите магазин</option>
+                                                {filteredBusinessStores.map((store) => (
+                                                    <option key={store.id} value={store.id}>
+                                                        {formatStoreLabel(store)}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                    </div>
                                     <button
                                         type="button"
                                         onClick={handleStoreSettingsSave}

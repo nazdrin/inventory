@@ -89,6 +89,7 @@ SUPPLIER_CITY_TAG_MAP = {
 
 D14_SUPPLIER_CODE = "D14"
 D14_SALESDRIVE_STOCK_ID = 2
+SALESDRIVE_PAYMENT_METHOD_EXCLUDED_SUPPLIER_CODES = {"D3", "40"}
 
 def _notify_business(msg: str) -> None:
     try:
@@ -333,6 +334,16 @@ async def _fetch_supplier_name(session: AsyncSession, supplier_code: str) -> Opt
 
 def _is_d14_supplier(supplier_code: Optional[str]) -> bool:
     return str(supplier_code or "").strip().upper() == D14_SUPPLIER_CODE
+
+
+def _resolve_salesdrive_payment_method(
+    default_payment_method: Optional[str],
+    supplier_code: Optional[str],
+) -> str:
+    normalized_supplier_code = str(supplier_code or "").strip().upper()
+    if normalized_supplier_code in SALESDRIVE_PAYMENT_METHOD_EXCLUDED_SUPPLIER_CODES:
+        return ""
+    return str(default_payment_method or "").strip()
 async def _get_supplier_priority(session: AsyncSession, supplier_code: str) -> int:
     q = select(DropshipEnterprise.priority).where(DropshipEnterprise.code == str(supplier_code)).limit(1)
     res = await session.execute(q)
@@ -1712,6 +1723,11 @@ async def build_salesdrive_payload(
         else:
             city = f"{city} ({supplier_city_tag})"
 
+    payment_method_value = _resolve_salesdrive_payment_method(
+        salesdrive_context.get("payment_method"),
+        supplier_code,
+    )
+
     payload = {
         "getResultData": "1",
         "fName": fName,
@@ -1721,7 +1737,7 @@ async def build_salesdrive_payload(
         "email": "",
         "company": "",
         "products": products,
-        "payment_method": salesdrive_context["payment_method"],
+        "payment_method": payment_method_value,
         "shipping_method": d.get("DeliveryServiceName", ""),
         "shipping_address": d.get("ReceiverWhs", ""),
         "comment": comment_text,
@@ -1776,7 +1792,7 @@ async def build_salesdrive_payload(
         salesdrive_context.get("order_runtime_path"),
         salesdrive_context["organizationId_source"],
         salesdrive_context["organizationId_value"],
-        salesdrive_context["payment_method"],
+        payment_method_value,
         salesdrive_context.get("store_code"),
         salesdrive_context.get("enterprise_code"),
         salesdrive_context.get("warnings") or [],
