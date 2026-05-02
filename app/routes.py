@@ -228,6 +228,26 @@ def _supplier_display_name(item: DropshipEnterprise) -> str:
     return name or code or "Supplier"
 
 
+def _format_supplier_connected_store_label(store: BusinessStore) -> str:
+    parts: list[str] = [str(store.store_name or store.store_code or "Магазин")]
+    if getattr(store, "tabletki_branch", None):
+        parts.append(f"Branch {store.tabletki_branch}")
+    return " · ".join(parts)
+
+
+def _build_supplier_connected_store_summary(store_labels: list[str], inactive_links_count: int = 0) -> str:
+    if store_labels:
+        preview = store_labels[:3]
+        hidden_count = max(0, len(store_labels) - len(preview))
+        summary = ", ".join(preview)
+        if hidden_count:
+            summary = f"{summary} +{hidden_count}"
+        return summary
+    if inactive_links_count > 0:
+        return "Подключения есть, но выключены"
+    return "Магазины не подключены"
+
+
 def _supplier_sections() -> list[SupplierSectionVM]:
     return [
         SupplierSectionVM(key="main", title="Основное"),
@@ -239,7 +259,12 @@ def _supplier_sections() -> list[SupplierSectionVM]:
     ]
 
 
-def _build_supplier_list_item_vm(item: DropshipEnterprise) -> SupplierListItemVM:
+def _build_supplier_list_item_vm(
+    item: DropshipEnterprise,
+    store_labels: list[str] | None = None,
+    inactive_links_count: int = 0,
+) -> SupplierListItemVM:
+    resolved_store_labels = list(store_labels or [])
     return SupplierListItemVM(
         code=item.code,
         display_name=_supplier_display_name(item),
@@ -248,6 +273,12 @@ def _build_supplier_list_item_vm(item: DropshipEnterprise) -> SupplierListItemVM
         source_summary=_supplier_source_summary(item),
         pricing_summary=_supplier_pricing_summary(item),
         flags_summary=_supplier_flags_summary(item),
+        connected_stores_count=len(resolved_store_labels),
+        connected_store_labels=resolved_store_labels,
+        connected_stores_summary=_build_supplier_connected_store_summary(
+            resolved_store_labels,
+            inactive_links_count=inactive_links_count,
+        ),
     )
 
 
@@ -1835,7 +1866,38 @@ async def get_all_dropship_enterprises(db: AsyncSession = Depends(get_db)):
 async def get_suppliers_view(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DropshipEnterprise))
     items = result.scalars().all()
-    return [_build_supplier_list_item_vm(item) for item in items]
+    settings_rows = (
+        await db.execute(
+            select(BusinessStoreSupplierSettings, BusinessStore)
+            .join(BusinessStore, BusinessStore.id == BusinessStoreSupplierSettings.store_id)
+            .order_by(BusinessStore.store_name.asc(), BusinessStore.store_code.asc())
+        )
+    ).all()
+
+    active_store_labels_by_supplier: dict[str, list[str]] = {}
+    inactive_links_count_by_supplier: dict[str, int] = {}
+
+    for settings, store in settings_rows:
+        supplier_code = str(settings.supplier_code or "").strip()
+        if not supplier_code:
+            continue
+        if bool(settings.is_active) and bool(getattr(store, "is_active", True)):
+            active_store_labels_by_supplier.setdefault(supplier_code, []).append(
+                _format_supplier_connected_store_label(store)
+            )
+        else:
+            inactive_links_count_by_supplier[supplier_code] = (
+                inactive_links_count_by_supplier.get(supplier_code, 0) + 1
+            )
+
+    return [
+        _build_supplier_list_item_vm(
+            item,
+            store_labels=active_store_labels_by_supplier.get(str(item.code or "").strip(), []),
+            inactive_links_count=inactive_links_count_by_supplier.get(str(item.code or "").strip(), 0),
+        )
+        for item in items
+    ]
 
 
 @router.get("/suppliers/view/{code}", response_model=SupplierDetailVM, dependencies=[Depends(verify_token)])

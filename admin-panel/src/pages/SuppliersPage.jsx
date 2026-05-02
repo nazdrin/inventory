@@ -1024,10 +1024,10 @@ const SuppliersPage = () => {
                                         Код: {supplier.code}
                                     </div>
                                     <div style={{ fontSize: "13px", color: "#64748b" }}>
-                                        Города: {supplier.cities_list.length > 0 ? supplier.cities_list.join(", ") : "—"}
+                                        Магазины: {truncateText(supplier.connected_stores_summary || "Магазины не подключены", 88)}
                                     </div>
                                     <div style={{ fontSize: "13px", color: "#64748b" }}>
-                                        Цены: {truncateText(supplier.pricing_summary)}
+                                        Подключено магазинов: {supplier.connected_stores_count || 0}
                                     </div>
                                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                                         <span style={supplier.is_active ? badgeStyle : inactiveBadgeStyle}>
@@ -1396,7 +1396,7 @@ const SuppliersPage = () => {
                                 <h2 style={sectionTitleStyle}>Заказы</h2>
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
                                     <SupplierCheckbox
-                                        label="Участвует в обработке заказов Biotus"
+                                        label="Участвует в обработке заказов"
                                         checked={Boolean(draft.biotus_orders_enabled)}
                                         onChange={(value) => setField("biotus_orders_enabled", value)}
                                     />

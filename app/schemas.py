@@ -754,6 +754,9 @@ class SupplierListItemVM(BaseModel):
     source_summary: str
     pricing_summary: str
     flags_summary: str
+    connected_stores_count: int = 0
+    connected_store_labels: List[str] = Field(default_factory=list)
+    connected_stores_summary: str = ""
 
 
 class SupplierDetailVM(BaseModel):

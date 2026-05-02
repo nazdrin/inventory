@@ -1166,6 +1166,20 @@ const BusinessStoresPage = () => {
                                     />
                                     Магазин активен
                                 </label>
+                                {[
+                                    ["stock_enabled", "Остатки магазина включены"],
+                                    ["orders_enabled", "Заказы магазина включены"],
+                                ].map(([key, label]) => (
+                                    <label key={key} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                        <input
+                                            type="checkbox"
+                                            style={checkboxStyle}
+                                            checked={Boolean(storeDraft[key])}
+                                            onChange={(event) => onStoreChange(key, event.target.checked)}
+                                        />
+                                        {label}
+                                    </label>
+                                ))}
                             </div>
                         </div>
 
@@ -1236,28 +1250,6 @@ const BusinessStoresPage = () => {
                             </div>
                         </div>
 
-                        <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Участие магазина в процессах</h3>
-                            <p style={mutedTextStyle}>
-                                Каталог управляется на уровне предприятия. Здесь настраиваются остатки, заказы и store-level routing.
-                            </p>
-                            <div style={formGridStyle}>
-                                {[
-                                    ["stock_enabled", "Остатки магазина включены"],
-                                    ["orders_enabled", "Заказы магазина включены"],
-                                ].map(([key, label]) => (
-                                    <label key={key} style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                        <input
-                                            type="checkbox"
-                                            style={checkboxStyle}
-                                            checked={Boolean(storeDraft[key])}
-                                            onChange={(event) => onStoreChange(key, event.target.checked)}
-                                        />
-                                        {label}
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
                     </Section>
 
                     <Section
