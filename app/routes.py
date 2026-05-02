@@ -23,6 +23,8 @@ from app.schemas import (
     BusinessEnterpriseOperationalFieldsUpdateSchema, BusinessPricingSettingsUpdateSchema,
     BusinessStoreCreate, BusinessStoreUpdate, BusinessStoreOut, LegacyScopeOut,
     BusinessEnterpriseOptionOut, BusinessStoreMappingBranchOptionOut,
+    BusinessStoreSupplierSettingsUpsertSchema, BusinessStoreSupplierSettingsOut,
+    BusinessSupplierStoreSettingsOverviewOut,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -62,6 +64,7 @@ from app.models import (
     BusinessStoreProductCode,
     BusinessStoreProductName,
     BusinessStoreProductPriceAdjustment,
+    BusinessStoreSupplierSettings,
     BusinessEnterpriseProductCode,
     BusinessEnterpriseProductName,
 )
@@ -1843,6 +1846,49 @@ async def get_supplier_view_detail(code: str, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=404, detail="Supplier not found.")
     return _build_supplier_detail_vm(item)
 
+
+@router.get(
+    "/business-suppliers/{supplier_code}/store-settings",
+    response_model=List[BusinessSupplierStoreSettingsOverviewOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_supplier_store_settings_overview(
+    supplier_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    normalized_supplier_code = str(supplier_code or "").strip()
+    if not normalized_supplier_code:
+        raise HTTPException(status_code=400, detail="supplier_code is required.")
+
+    result = await db.execute(
+        select(BusinessStoreSupplierSettings, BusinessStore)
+        .join(BusinessStore, BusinessStore.id == BusinessStoreSupplierSettings.store_id)
+        .where(BusinessStoreSupplierSettings.supplier_code == normalized_supplier_code)
+        .order_by(BusinessStore.store_name.asc(), BusinessStore.store_code.asc())
+    )
+    rows = result.all()
+    return [
+        BusinessSupplierStoreSettingsOverviewOut(
+            id=int(settings.id),
+            store_id=int(store.id),
+            store_code=store.store_code,
+            store_name=store.store_name,
+            enterprise_code=store.enterprise_code,
+            tabletki_branch=store.tabletki_branch,
+            is_active=bool(settings.is_active),
+            priority_override=settings.priority_override,
+            min_markup_threshold=settings.min_markup_threshold,
+            extra_markup_enabled=bool(settings.extra_markup_enabled),
+            extra_markup_mode=settings.extra_markup_mode,
+            extra_markup_value=settings.extra_markup_value,
+            extra_markup_min=settings.extra_markup_min,
+            extra_markup_max=settings.extra_markup_max,
+            dumping_mode=settings.dumping_mode,
+            updated_at=settings.updated_at,
+        )
+        for settings, store in rows
+    ]
+
 # Get by code
 @router.get("/dropship/enterprises/{code}", dependencies=[Depends(verify_token)])
 async def get_dropship_enterprise(code: str, db: AsyncSession = Depends(get_db)):
@@ -2565,6 +2611,85 @@ async def apply_business_store_branch_sync_route(
 async def get_business_store(store_id: int, db: AsyncSession = Depends(get_db)):
     store = await _get_business_store_or_404(db, store_id)
     return BusinessStoreOut.model_validate(store, from_attributes=True)
+
+
+@router.get(
+    "/business-stores/{store_id}/supplier-settings",
+    response_model=List[BusinessStoreSupplierSettingsOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_supplier_settings(
+    store_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    result = await db.execute(
+        select(BusinessStoreSupplierSettings)
+        .where(BusinessStoreSupplierSettings.store_id == int(store_id))
+        .order_by(
+            BusinessStoreSupplierSettings.supplier_code.asc(),
+            BusinessStoreSupplierSettings.id.asc(),
+        )
+    )
+    return [
+        BusinessStoreSupplierSettingsOut.model_validate(row, from_attributes=True)
+        for row in result.scalars().all()
+    ]
+
+
+@router.put(
+    "/business-stores/{store_id}/supplier-settings/{supplier_code}",
+    response_model=BusinessStoreSupplierSettingsOut,
+    dependencies=[Depends(verify_token)],
+)
+async def upsert_business_store_supplier_settings(
+    store_id: int,
+    supplier_code: str,
+    payload: BusinessStoreSupplierSettingsUpsertSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    result = await db.execute(
+        select(DropshipEnterprise.code).where(DropshipEnterprise.code == str(payload.supplier_code or "").strip()).limit(1)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+    normalized_supplier_code = str(supplier_code or "").strip()
+    if not normalized_supplier_code:
+        raise HTTPException(status_code=400, detail="supplier_code is required.")
+    if normalized_supplier_code != str(payload.supplier_code or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="supplier_code in path must match supplier_code in payload.",
+        )
+
+    existing = (
+        await db.execute(
+            select(BusinessStoreSupplierSettings)
+            .where(
+                BusinessStoreSupplierSettings.store_id == int(store_id),
+                BusinessStoreSupplierSettings.supplier_code == normalized_supplier_code,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    values = payload.model_dump(exclude={"supplier_code"})
+    if existing is None:
+        obj = BusinessStoreSupplierSettings(
+            store_id=int(store_id),
+            supplier_code=normalized_supplier_code,
+            **values,
+        )
+        db.add(obj)
+    else:
+        obj = existing
+        for key, value in values.items():
+            setattr(obj, key, value)
+
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessStoreSupplierSettingsOut.model_validate(obj, from_attributes=True)
 
 
 @router.post(

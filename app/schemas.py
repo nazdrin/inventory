@@ -564,6 +564,105 @@ class LegacyScopeOut(BaseModel):
     products_count: int
 
 
+class BusinessStoreSupplierSettingsBase(BaseModel):
+    is_active: bool = True
+    priority_override: Optional[int] = None
+    min_markup_threshold: Optional[Decimal] = None
+    extra_markup_enabled: bool = False
+    extra_markup_mode: Optional[Literal["percent"]] = None
+    extra_markup_value: Optional[Decimal] = None
+    extra_markup_min: Optional[Decimal] = None
+    extra_markup_max: Optional[Decimal] = None
+    dumping_mode: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _validate_markup_fields(self) -> "BusinessStoreSupplierSettingsBase":
+        if self.priority_override is not None and self.priority_override < 0:
+            raise ValueError("priority_override must be >= 0")
+        if self.min_markup_threshold is not None and self.min_markup_threshold < 0:
+            raise ValueError("min_markup_threshold must be >= 0")
+        for field_name in ("extra_markup_value", "extra_markup_min", "extra_markup_max"):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must be >= 0")
+        if self.extra_markup_min is not None and self.extra_markup_max is not None:
+            if self.extra_markup_max < self.extra_markup_min:
+                raise ValueError("extra_markup_max must be >= extra_markup_min")
+        if self.extra_markup_enabled and self.extra_markup_mode is None:
+            raise ValueError("extra_markup_mode is required when extra_markup_enabled=true")
+        return self
+
+
+class BusinessStoreSupplierSettingsUpsertSchema(BusinessStoreSupplierSettingsBase):
+    supplier_code: str
+
+    @field_validator("supplier_code", mode="before")
+    @classmethod
+    def _normalize_supplier_code(cls, value: Any) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("supplier_code is required")
+        return normalized
+
+    @model_validator(mode="after")
+    def _require_min_markup_threshold(self) -> "BusinessStoreSupplierSettingsUpsertSchema":
+        if self.min_markup_threshold is None:
+            raise ValueError("min_markup_threshold is required")
+        return self
+
+
+class BusinessStoreSupplierSettingsOut(BusinessStoreSupplierSettingsBase):
+    id: int
+    store_id: int
+    supplier_code: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BusinessStoreOfferSchema(BaseModel):
+    id: int
+    store_id: int
+    enterprise_code: str
+    tabletki_branch: str
+    supplier_code: str
+    product_code: str
+    market_scope_key: Optional[str] = None
+    base_price: Optional[Decimal] = None
+    effective_price: Decimal
+    wholesale_price: Optional[Decimal] = None
+    stock: int
+    priority_used: Optional[int] = None
+    price_source: Optional[str] = None
+    pricing_context: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BusinessSupplierStoreSettingsOverviewOut(BaseModel):
+    id: int
+    store_id: int
+    store_code: str
+    store_name: str
+    enterprise_code: Optional[str] = None
+    tabletki_branch: Optional[str] = None
+    is_active: bool
+    priority_override: Optional[int] = None
+    min_markup_threshold: Optional[Decimal] = None
+    extra_markup_enabled: bool
+    extra_markup_mode: Optional[str] = None
+    extra_markup_value: Optional[Decimal] = None
+    extra_markup_min: Optional[Decimal] = None
+    extra_markup_max: Optional[Decimal] = None
+    dumping_mode: Optional[bool] = None
+    updated_at: datetime
+
+
 class BusinessEnterpriseOptionOut(BaseModel):
     enterprise_code: str
     enterprise_name: str

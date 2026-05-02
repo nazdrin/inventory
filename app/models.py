@@ -543,6 +543,143 @@ class BusinessStoreProductPriceAdjustment(Base):
     )
 
 
+class BusinessStoreSupplierSettings(Base):
+    __tablename__ = "business_store_supplier_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    supplier_code = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    priority_override = Column(Integer, nullable=True)
+    min_markup_threshold = Column(Numeric(12, 4), nullable=True)
+    extra_markup_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    extra_markup_mode = Column(String(32), nullable=True)
+    extra_markup_value = Column(Numeric(12, 4), nullable=True)
+    extra_markup_min = Column(Numeric(12, 4), nullable=True)
+    extra_markup_max = Column(Numeric(12, 4), nullable=True)
+    dumping_mode = Column(Boolean, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "supplier_code",
+            name="uq_business_store_supplier_settings_store_supplier",
+        ),
+        Index("ix_bsss_store_id", "store_id"),
+        Index("ix_bsss_supplier_code", "supplier_code"),
+        Index("ix_bsss_store_active", "store_id", "is_active"),
+        CheckConstraint(
+            "(priority_override IS NULL) OR (priority_override >= 0)",
+            name="ck_bsss_priority_nn",
+        ),
+        CheckConstraint(
+            "(min_markup_threshold IS NULL) OR (min_markup_threshold >= 0)",
+            name="ck_bsss_min_thr_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_mode IS NULL) OR (extra_markup_mode IN ('percent'))",
+            name="ck_bsss_markup_mode",
+        ),
+        CheckConstraint(
+            "(extra_markup_value IS NULL) OR (extra_markup_value >= 0)",
+            name="ck_bsss_markup_value_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_min >= 0)",
+            name="ck_bsss_markup_min_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_max IS NULL) OR (extra_markup_max >= 0)",
+            name="ck_bsss_markup_max_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_max IS NULL) OR (extra_markup_max >= extra_markup_min)",
+            name="ck_bsss_markup_max_ge_min",
+        ),
+    )
+
+
+class BusinessStoreOffer(Base):
+    __tablename__ = "business_store_offers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    tabletki_branch = Column(String(255), nullable=False)
+    supplier_code = Column(String(255), nullable=False)
+    product_code = Column(String(255), nullable=False)
+    market_scope_key = Column(String(255), nullable=True)
+    base_price = Column(Numeric(12, 2), nullable=True)
+    effective_price = Column(Numeric(12, 2), nullable=False)
+    wholesale_price = Column(Numeric(12, 2), nullable=True)
+    stock = Column(Integer, nullable=False, server_default=text("0"))
+    priority_used = Column(Integer, nullable=True)
+    price_source = Column(String(128), nullable=True)
+    pricing_context = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "supplier_code",
+            "product_code",
+            name="uq_business_store_offers_store_supplier_product",
+        ),
+        Index("ix_bso_store_id", "store_id"),
+        Index("ix_bso_enterprise_code", "enterprise_code"),
+        Index("ix_bso_tabletki_branch", "tabletki_branch"),
+        Index("ix_bso_supplier_code", "supplier_code"),
+        Index("ix_bso_product_code", "product_code"),
+        Index("ix_bso_store_product", "store_id", "product_code"),
+        Index("ix_bso_enterprise_branch", "enterprise_code", "tabletki_branch"),
+        CheckConstraint(
+            "effective_price >= 0",
+            name="ck_bso_effective_price_nn",
+        ),
+        CheckConstraint(
+            "(base_price IS NULL) OR (base_price >= 0)",
+            name="ck_bso_base_price_nn",
+        ),
+        CheckConstraint(
+            "(wholesale_price IS NULL) OR (wholesale_price >= 0)",
+            name="ck_bso_wholesale_price_nn",
+        ),
+        CheckConstraint(
+            "stock >= 0",
+            name="ck_bso_stock_nn",
+        ),
+        CheckConstraint(
+            "(priority_used IS NULL) OR (priority_used >= 0)",
+            name="ck_bso_priority_nn",
+        ),
+    )
+
+
 class BusinessEnterpriseProductCode(Base):
     __tablename__ = "business_enterprise_product_codes"
 

@@ -92,9 +92,10 @@ async def _run_business_stock_for_enterprise(
 
     try:
         logger.info(
-            "Business stock: start enterprise_code=%s stock_mode=%s",
+            "Business stock: start enterprise_code=%s stock_mode=%s requested_runtime_path=%s",
             enterprise_code,
             runtime_mode_report.get("stock_runtime_path"),
+            "auto",
         )
         async with get_async_db(commit_on_exit=False) as db:
             result = await publish_business_stock_for_enterprise(
@@ -105,10 +106,12 @@ async def _run_business_stock_for_enterprise(
                 confirm=True,
             )
         logger.info(
-            "Business stock: success enterprise_code=%s stock_mode=%s status=%s",
+            "Business stock: success enterprise_code=%s stock_mode=%s status=%s effective_runtime_path=%s resolution_reason=%s",
             enterprise_code,
             result.get("stock_mode"),
             result.get("status"),
+            result.get("effective_runtime_path"),
+            result.get("runtime_path_resolution_reason"),
         )
         return True
     except Exception as exc:

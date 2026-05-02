@@ -18,6 +18,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--confirm", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--include-legacy-default", action="store_true")
+    parser.add_argument("--runtime-path", choices=("auto", "legacy", "store_native"), default="auto")
+    parser.add_argument("--compare-legacy", action="store_true")
     parser.add_argument("--output-json", action="store_true")
     return parser.parse_args()
 
@@ -52,6 +54,8 @@ async def _amain() -> None:
             include_legacy_default=bool(args.include_legacy_default),
             require_confirm=not bool(args.confirm),
             confirm=bool(args.confirm),
+            runtime_path=str(args.runtime_path or "auto"),
+            compare_legacy=bool(args.compare_legacy),
         )
 
     print(json.dumps(result, ensure_ascii=False, indent=2, default=_json_default))

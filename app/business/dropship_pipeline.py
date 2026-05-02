@@ -155,6 +155,9 @@ from app.services.business_pricing_settings_resolver import (
     BusinessPricingSettingsSnapshot,
     load_business_pricing_settings_snapshot,
 )
+from app.services.business_baseline_store_markup_overlay_service import (
+    apply_store_markup_overlay_to_baseline_stock_payload,
+)
 # опционально: сервис "куда отдать массив"
 try:
     from app.services.database_service import process_database_service
@@ -1992,7 +1995,10 @@ async def build_best_offers_by_city(session: AsyncSession) -> List[dict]:
     return [dict(r._mapping) for r in res.fetchall()]
 
 # --- ВМЕСТО старой build_stock_payload ---
-async def build_stock_payload(session: AsyncSession, enterprise_code: str) -> List[dict]:
+async def build_stock_payload_with_markup_overlay_report(
+    session: AsyncSession,
+    enterprise_code: str,
+) -> tuple[List[dict], dict[str, Any]]:
     """
     Формирует массив для process_database_service:
       [{"branch": "...", "code": <product_code>, "price": <min_price>, "qty": <stock>, "price_reserve": <min_price>}]
@@ -2030,7 +2036,23 @@ async def build_stock_payload(session: AsyncSession, enterprise_code: str) -> Li
     if skipped_zero_stock:
         logger.warning("Пропущено позиций с нулевым остатком (safety): %d", skipped_zero_stock)
 
-    logger.info("Stock payload size: %d", len(payload))
+    payload, markup_overlay_report = await apply_store_markup_overlay_to_baseline_stock_payload(
+        session,
+        enterprise_code=enterprise_code,
+        payload_rows=payload,
+    )
+    logger.info(
+        "Stock payload size: %d overlay_rows_changed=%d overlay_branches_used=%d overlay_branches_skipped=%d",
+        len(payload),
+        int(markup_overlay_report.get("store_markup_rows_changed", 0) or 0),
+        len(markup_overlay_report.get("store_markup_branches_used") or []),
+        len(markup_overlay_report.get("store_markup_branches_skipped") or []),
+    )
+    return payload, markup_overlay_report
+
+
+async def build_stock_payload(session: AsyncSession, enterprise_code: str) -> List[dict]:
+    payload, _overlay_report = await build_stock_payload_with_markup_overlay_report(session, enterprise_code)
     return payload
 
 def _dump_payload_to_file(payload: list[dict], enterprise_code: str, file_type: str) -> Path:
@@ -2048,11 +2070,15 @@ def _dump_payload_to_file(payload: list[dict], enterprise_code: str, file_type: 
     logger.info("Сохранил %s (%d позиций) в %s", file_type, len(payload), path)
     return path
 
-async def generate_and_send_stock(session: AsyncSession, enterprise_code: str) -> None:
-    data = await build_stock_payload(session, enterprise_code)
+async def generate_and_send_stock(session: AsyncSession, enterprise_code: str) -> dict[str, Any]:
+    data, markup_overlay_report = await build_stock_payload_with_markup_overlay_report(session, enterprise_code)
     json_path = _dump_payload_to_file(data, enterprise_code, "stock")
     # сервис ожидает путь к файлу
     await process_database_service(str(json_path), "stock", enterprise_code)
+    return {
+        "rows_total": len(data),
+        **markup_overlay_report,
+    }
 
 # --------------------------------------------------------------------------------------
 # 7) Главный раннер с аргументами (enterprise_code, file_type, optional --supplier)
@@ -2060,7 +2086,7 @@ async def generate_and_send_stock(session: AsyncSession, enterprise_code: str) -
 async def run_pipeline(
     enterprise_code: Optional[str] = None,
     file_type: Optional[str] = None,
-) -> None:
+) -> dict[str, Any] | None:
     async with get_async_db() as session:
         refresh_report = await _refresh_business_offers_in_session(
             session,
@@ -2084,12 +2110,13 @@ async def run_pipeline(
             ft = file_type.lower()
             if ft == "stock":
                 try:
-                    await generate_and_send_stock(session, enterprise_code)
+                    return await generate_and_send_stock(session, enterprise_code)
                 except Exception as exc:
                     logger.exception("Build/send stock payload failed: %s", exc)
                     await session.rollback()
             else:
                 logger.warning("Неизвестный file_type: %s (поддерживается только 'stock')", file_type)
+    return None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Dropship pipeline runner")

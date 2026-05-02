@@ -10,6 +10,7 @@ from app.business.business_baseline_catalog_preview import (
 )
 from app.models import (
     BusinessStore,
+    BusinessStoreOffer,
     BusinessStoreProductCode,
     BusinessStoreProductName,
     MasterCatalog,
@@ -94,18 +95,67 @@ async def _stock_limited_product_codes(
     return product_codes, warnings
 
 
+async def _store_native_product_codes(
+    session: AsyncSession,
+    store: BusinessStore,
+    *,
+    stock_only: bool | None = None,
+) -> tuple[set[str], list[str]]:
+    warnings: list[str] = []
+
+    stmt = select(BusinessStoreOffer.product_code).where(
+        BusinessStoreOffer.store_id == int(store.id),
+    )
+    use_stock_only = bool(store.catalog_only_in_stock) if stock_only is None else bool(stock_only)
+    if use_stock_only:
+        stmt = stmt.where(func.coalesce(BusinessStoreOffer.stock, 0) > 0)
+
+    rows = (await session.execute(stmt.distinct())).scalars().all()
+    product_codes = {
+        str(value or "").strip()
+        for value in rows
+        if str(value or "").strip()
+    }
+    if not product_codes:
+        warnings.append(
+            "No business_store_offers rows found for store-native catalog scope."
+        )
+    return product_codes, warnings
+
+
 async def resolve_store_catalog_candidate_scope(
     session: AsyncSession,
     store_id: int,
+    *,
+    preferred_source: str | None = None,
+    respect_catalog_only_in_stock: bool = True,
 ) -> dict[str, Any]:
     store = await _get_store_or_fail(session, int(store_id))
 
     warnings: list[str] = []
-    catalog_source = "stock_limited" if bool(store.catalog_only_in_stock) else "all_products"
-    stock_codes: set[str] = set()
-    if store.catalog_only_in_stock:
-        stock_codes, stock_warnings = await _stock_limited_product_codes(session, store)
+    normalized_source = str(preferred_source or "").strip().lower() or "legacy_offers"
+    if normalized_source not in {"legacy_offers", "store_native_offers"}:
+        raise ValueError(f"Unsupported preferred_source={preferred_source!r}")
+
+    candidate_product_codes: set[str] = set()
+    if normalized_source == "store_native_offers":
+        use_stock_only = bool(store.catalog_only_in_stock) and bool(respect_catalog_only_in_stock)
+        candidate_product_codes, stock_warnings = await _store_native_product_codes(
+            session,
+            store,
+            stock_only=use_stock_only,
+        )
         warnings.extend(stock_warnings)
+        catalog_source = (
+            "stock_limited_store_native_offers"
+            if use_stock_only
+            else "all_store_native_offers"
+        )
+    else:
+        catalog_source = "stock_limited" if bool(store.catalog_only_in_stock) else "all_products"
+        if store.catalog_only_in_stock:
+            candidate_product_codes, stock_warnings = await _stock_limited_product_codes(session, store)
+            warnings.extend(stock_warnings)
 
     stmt = select(MasterCatalog)
     if hasattr(MasterCatalog, "is_archived"):
@@ -114,8 +164,11 @@ async def resolve_store_catalog_candidate_scope(
     master_rows = list((await session.execute(stmt)).scalars().all())
 
     candidate_rows = master_rows
-    if store.catalog_only_in_stock:
-        candidate_rows = [row for row in master_rows if str(row.sku or "").strip() in stock_codes]
+    if normalized_source == "store_native_offers" or store.catalog_only_in_stock:
+        candidate_rows = [
+            row for row in master_rows
+            if str(row.sku or "").strip() in candidate_product_codes
+        ]
 
     return {
         "store": store,
@@ -123,6 +176,8 @@ async def resolve_store_catalog_candidate_scope(
         "catalog_source": catalog_source,
         "master_rows": master_rows,
         "candidate_rows": candidate_rows,
+        "candidate_product_codes": candidate_product_codes,
+        "candidate_source_type": normalized_source,
     }
 
 

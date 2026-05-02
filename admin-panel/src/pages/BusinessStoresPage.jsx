@@ -113,6 +113,16 @@ const successCardStyle = {
     color: "#166534",
 };
 
+const neutralInfoCardStyle = {
+    border: "1px solid #dbeafe",
+    backgroundColor: "#f8fbff",
+    color: "#1e40af",
+    borderRadius: "10px",
+    padding: "12px 14px",
+    fontSize: "14px",
+    lineHeight: 1.5,
+};
+
 const formGridStyle = {
     display: "grid",
     gap: "16px 20px",
@@ -477,7 +487,6 @@ const InfoItem = ({ label, value }) => (
 const BusinessStoresPage = () => {
     const [businessEnterprises, setBusinessEnterprises] = useState([]);
     const [stores, setStores] = useState([]);
-    const [legacyScopes, setLegacyScopes] = useState([]);
     const [mappingBranches, setMappingBranches] = useState([]);
     const [selectedEnterpriseCode, setSelectedEnterpriseCode] = useState("");
     const [selectedStoreId, setSelectedStoreId] = useState(null);
@@ -508,16 +517,6 @@ const BusinessStoresPage = () => {
         return rows;
     }, []);
 
-    const loadLegacyScopes = useCallback(async () => {
-        const response = await axios.get(
-            `${API_BASE_URL}/business-stores/meta/legacy-scopes`,
-            getAuthHeaders(),
-        );
-        const rows = response.data || [];
-        setLegacyScopes(rows);
-        return rows;
-    }, []);
-
     const loadStores = useCallback(async () => {
         const response = await axios.get(`${API_BASE_URL}/business-stores`, getAuthHeaders());
         const rows = response.data || [];
@@ -545,11 +544,10 @@ const BusinessStoresPage = () => {
     const reloadMeta = useCallback(async () => {
         const [enterpriseRows] = await Promise.all([
             loadBusinessEnterprises(),
-            loadLegacyScopes(),
             loadStores(),
         ]);
         return enterpriseRows;
-    }, [loadBusinessEnterprises, loadLegacyScopes, loadStores]);
+    }, [loadBusinessEnterprises, loadStores]);
 
     useEffect(() => {
         async function bootstrap() {
@@ -640,29 +638,6 @@ const BusinessStoresPage = () => {
         [catalogScopeStoreCandidates],
     );
 
-    const catalogScopeWarning = useMemo(() => {
-        const targetBranch = String(enterpriseDraft.branch_id || "").trim();
-        if (!selectedEnterpriseCode || !targetBranch) {
-            return "";
-        }
-        if (catalogScopeStoreCandidates.length === 0) {
-            return "Главный магазин каталога не найден. Для режима ограничения по остаткам нужен активный магазин, Branch которого совпадает с основным Branch предприятия.";
-        }
-        if (catalogScopeStoreCandidates.length > 1) {
-            return "Найдено несколько главных магазинов каталога с тем же Branch. Нужно оставить один активный магазин.";
-        }
-        return "";
-    }, [catalogScopeStoreCandidates, enterpriseDraft.branch_id, selectedEnterpriseCode]);
-
-    const selectedCodeStrategy = useMemo(
-        () => codeStrategyOptions.find((item) => item.value === storeDraft.code_strategy) || codeStrategyOptions[1],
-        [storeDraft.code_strategy],
-    );
-
-    const selectedNameStrategy = useMemo(
-        () => nameStrategyOptions.find((item) => item.value === storeDraft.name_strategy) || nameStrategyOptions[0],
-        [storeDraft.name_strategy],
-    );
 
     const isNewStoreDraft = !selectedStoreId;
     const isBaselineEnterprise = enterpriseDraft.business_runtime_mode !== "custom";
@@ -671,6 +646,11 @@ const BusinessStoresPage = () => {
     const catalogIdentityControlsDisabled = isBaselineEnterprise;
     const storeRoutingReadOnly = isBaselineEnterprise;
     const enterpriseStrategyStoreId = catalogScopeStore?.id || selectedStoreId || null;
+    const runtimeModeHelpText = isRuntimeModeLocked
+        ? (enterpriseDraft.runtime_mode_switch_lock_reason || "Для підприємства вже створені індивідуальні коди або назви каталогу. Зміну режиму заблоковано.")
+        : (isCustomEnterprise
+            ? "Каталог и остатки работают по настраиваемой business-логике. Используются настройки каталога предприятия и магазинов."
+            : "Каталог и остатки работают по стандартной старой логике. Настройки магазинов для каталога и остатков не используются.");
 
     useEffect(() => {
         if (catalogScopeStore) {
@@ -896,15 +876,18 @@ const BusinessStoresPage = () => {
             <div style={{ ...cardStyle, padding: "20px 24px", display: "grid", gap: "10px" }}>
                 <h1 style={{ margin: 0, fontSize: "28px", color: "#111827" }}>Business-магазины</h1>
                 <p style={mutedTextStyle}>
-                    Настройка режима предприятия и рабочих параметров магазинов Business-контура.
+                    Основная operational page для enterprise runtime и store overlays Business-контура.
+                </p>
+                <p style={{ ...mutedTextStyle, fontSize: "13px" }}>
+                    Сначала настраивается предприятие, затем — конкретные магазины.
                 </p>
             </div>
 
             {pageError ? <div style={redWarningCardStyle}>{pageError}</div> : null}
 
             <Section
-                title="1. Предприятие"
-                description="Выберите Business-предприятие. Ниже редактируются его базовые настройки и список магазинов."
+                title="1. Выбор предприятия"
+                description="Выберите Business-предприятие, для которого редактируются runtime-настройки и store overlays."
             >
                 <div style={{ ...formGridStyle, gridTemplateColumns: "minmax(320px, 480px) 1fr" }}>
                     <Field label="Business-предприятие">
@@ -930,21 +913,22 @@ const BusinessStoresPage = () => {
                             ))}
                         </select>
                     </Field>
-                    <InfoItem
-                        label="Порядок работы"
-                        value="Сначала настраивается предприятие, затем — конкретные магазины."
-                    />
+                    <div style={{ ...neutralInfoCardStyle, display: "grid", alignContent: "center" }}>
+                        Сначала настраивается предприятие, затем — конкретные магазины.
+                    </div>
                 </div>
 
                 {selectedEnterpriseMeta ? (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "12px" }}>
                         <InfoItem label="Код предприятия" value={selectedEnterpriseMeta.enterprise_code} />
                         <InfoItem label="Название" value={selectedEnterpriseMeta.enterprise_name} />
+                        <InfoItem label="Режим" value={isCustomEnterprise ? "Настраиваемый" : "Базовый"} />
                         <InfoItem label="Каталог предприятия" value={boolOnOff(selectedEnterpriseMeta.catalog_enabled)} />
                         <InfoItem
                             label="Остатки / заказы предприятия"
                             value={`остатки: ${boolOnOff(selectedEnterpriseMeta.stock_enabled)} / заказы: ${boolOnOff(selectedEnterpriseMeta.order_fetcher)}`}
                         />
+                        <InfoItem label="Branch каталога" value={enterpriseDraft.branch_id || emptyValue} />
                     </div>
                 ) : null}
 
@@ -960,7 +944,7 @@ const BusinessStoresPage = () => {
 
                     <Section
                         title="2. Основные настройки предприятия"
-                        description="Источник: enterprise_settings. Здесь управляется реальный runtime-режим предприятия."
+                        description="Источник: enterprise_settings. Здесь управляются enterprise-level flags и настройки каталога."
                         actions={(
                             <button
                                 type="button"
@@ -973,22 +957,6 @@ const BusinessStoresPage = () => {
                         )}
                     >
                         <div style={formGridStyle}>
-                            <Field
-                                label="Режим предприятия"
-                                helpText={isCustomEnterprise
-                                    ? "Каталог и остатки работают по настраиваемой business-логике. Используются настройки каталога предприятия и магазинов."
-                                    : "Каталог и остатки работают по стандартной старой логике. Настройки магазинов для каталога и остатков не используются."}
-                            >
-                                <select
-                                    style={inputStyle}
-                                    value={enterpriseDraft.business_runtime_mode || "baseline"}
-                                    onChange={(event) => onEnterpriseChange("business_runtime_mode", event.target.value)}
-                                    disabled={isRuntimeModeLocked}
-                                >
-                                    <option value="baseline">Базовый</option>
-                                    <option value="custom">Настраиваемый</option>
-                                </select>
-                            </Field>
                             <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                 <input
                                     type="checkbox"
@@ -998,55 +966,60 @@ const BusinessStoresPage = () => {
                                 />
                                 Каталог предприятия включён
                             </label>
-                            <Field label="Branch каталога / основной branch предприятия">
+                            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
                                 <input
-                                    style={inputStyle}
-                                    value={enterpriseDraft.branch_id}
-                                    onChange={(event) => onEnterpriseChange("branch_id", event.target.value)}
+                                    type="checkbox"
+                                    style={checkboxStyle}
+                                    checked={Boolean(enterpriseDraft.stock_enabled)}
+                                    onChange={(event) => onEnterpriseChange("stock_enabled", event.target.checked)}
                                 />
-                            </Field>
-                        </div>
-                        {isBaselineEnterprise ? (
-                            <div style={warningCardStyle}>
-                                В базовом режиме используется стандартный контур каталога предприятия.
-                            </div>
-                        ) : null}
-                        {isRuntimeModeLocked ? (
-                            <div style={redWarningCardStyle}>
-                                {enterpriseDraft.runtime_mode_switch_lock_reason || "Для підприємства вже створені індивідуальні коди або назви каталогу. Зміну режиму заблоковано."}
-                            </div>
-                        ) : null}
-                        <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Ограничение ассортимента каталога</h3>
-                            <div style={formGridStyle}>
-                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input
-                                        type="checkbox"
-                                        style={checkboxStyle}
-                                        checked={Boolean(enterpriseCatalogOnlyInStockDraft)}
-                                        onChange={(event) => setEnterpriseCatalogOnlyInStockDraft(event.target.checked)}
-                                        disabled={!catalogScopeStore}
-                                    />
-                                    В каталог только товары с остатком главного магазина
-                                </label>
-                            </div>
-                            {catalogScopeStore ? (
-                                <div style={infoCardStyle}>
-                                    <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>
-                                        Главный магазин каталога
-                                    </div>
-                                    <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>
-                                        {`${catalogScopeStore.store_code} · Branch ${catalogScopeStore.tabletki_branch || emptyValue} · Scope ${catalogScopeStore.legacy_scope_key || emptyValue}`}
-                                    </div>
-                                </div>
-                            ) : null}
-                            {catalogScopeWarning ? (
-                                <div style={redWarningCardStyle}>{catalogScopeWarning}</div>
-                            ) : null}
+                                Остатки предприятия включены
+                            </label>
+                            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                <input
+                                    type="checkbox"
+                                    style={checkboxStyle}
+                                    checked={Boolean(enterpriseDraft.order_fetcher)}
+                                    onChange={(event) => onEnterpriseChange("order_fetcher", event.target.checked)}
+                                />
+                                Получение заказов предприятия
+                            </label>
+                            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                <input
+                                    type="checkbox"
+                                    style={checkboxStyle}
+                                    checked={Boolean(enterpriseDraft.auto_confirm)}
+                                    onChange={(event) => onEnterpriseChange("auto_confirm", event.target.checked)}
+                                />
+                                Автобронирование
+                            </label>
+                            <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
+                                <input
+                                    type="checkbox"
+                                    style={checkboxStyle}
+                                    checked={Boolean(enterpriseDraft.stock_correction)}
+                                    onChange={(event) => onEnterpriseChange("stock_correction", event.target.checked)}
+                                />
+                                Коррекция остатков
+                            </label>
                         </div>
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Параметры catalog identity</h3>
-                            <div style={formGridStyle}>
+                            <h3 style={subSectionTitleStyle}>Дополнительные настройки каталога</h3>
+                            <div style={{ display: "grid", gap: "16px", maxWidth: "980px" }}>
+                                <Field
+                                    label="Режим"
+                                    helpText={runtimeModeHelpText}
+                                >
+                                    <select
+                                        style={inputStyle}
+                                        value={enterpriseDraft.business_runtime_mode || "baseline"}
+                                        onChange={(event) => onEnterpriseChange("business_runtime_mode", event.target.value)}
+                                        disabled={isRuntimeModeLocked}
+                                    >
+                                        <option value="baseline">Базовый</option>
+                                        <option value="custom">Настраиваемый</option>
+                                    </select>
+                                </Field>
                                 <Field label="Стратегия кодов каталога">
                                     <select
                                         style={inputStyle}
@@ -1071,7 +1044,19 @@ const BusinessStoresPage = () => {
                                         ))}
                                     </select>
                                 </Field>
-                                {storeDraft.code_strategy === "prefix_mapping" ? (
+                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px", minHeight: "42px" }}>
+                                    <input
+                                        type="checkbox"
+                                        style={checkboxStyle}
+                                        checked={Boolean(enterpriseCatalogOnlyInStockDraft)}
+                                        onChange={(event) => setEnterpriseCatalogOnlyInStockDraft(event.target.checked)}
+                                        disabled={!catalogScopeStore}
+                                    />
+                                    В каталог только товары с остатком главного магазина
+                                </label>
+                            </div>
+                            {storeDraft.code_strategy === "prefix_mapping" ? (
+                                <div style={{ display: "grid", gap: "16px", maxWidth: "980px" }}>
                                     <Field label="Префикс кода каталога">
                                         <input
                                             style={inputStyle}
@@ -1080,17 +1065,36 @@ const BusinessStoresPage = () => {
                                             disabled={catalogIdentityControlsDisabled}
                                         />
                                     </Field>
-                                ) : <div />}
-                            </div>
+                                </div>
+                            ) : null}
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
-                            <div style={infoCardStyle}>
-                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Стратегия кодов каталога</div>
-                                <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedCodeStrategy.label}</div>
-                            </div>
-                            <div style={infoCardStyle}>
-                                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Стратегия названий каталога</div>
-                                <div style={{ fontSize: "15px", color: "#111827", fontWeight: 700 }}>{selectedNameStrategy.label}</div>
+                        <div style={{ display: "grid", gap: "16px" }}>
+                            <h3 style={subSectionTitleStyle}>Доступ предприятия</h3>
+                            <div style={formGridStyle}>
+                                <Field label="Логин Tabletki">
+                                    <input
+                                        style={inputStyle}
+                                        value={enterpriseDraft.tabletki_login}
+                                        onChange={(event) => onEnterpriseChange("tabletki_login", event.target.value)}
+                                    />
+                                </Field>
+                                <Field label="Пароль Tabletki">
+                                    <input
+                                        type="password"
+                                        style={inputStyle}
+                                        value={enterpriseDraft.tabletki_password}
+                                        onChange={(event) => onEnterpriseChange("tabletki_password", event.target.value)}
+                                    />
+                                </Field>
+                                <Field label="SalesDrive API key" helpText="Оставьте поле пустым, чтобы не менять текущий токен.">
+                                    <input
+                                        type="password"
+                                        style={inputStyle}
+                                        value={enterpriseDraft.token}
+                                        onChange={(event) => onEnterpriseChange("token", event.target.value)}
+                                        placeholder="Введите новый токен"
+                                    />
+                                </Field>
                             </div>
                         </div>
                     </Section>
@@ -1099,7 +1103,7 @@ const BusinessStoresPage = () => {
                     {storeSuccess ? <div style={successCardStyle}>{storeSuccess}</div> : null}
 
                     <Section
-                        title={isNewStoreDraft ? "4. Новый магазин Business-контура" : "4. Магазин Business-контура"}
+                        title={isNewStoreDraft ? "3. Новый магазин Business-контура" : "3. Магазин Business-контура"}
                         description={isNewStoreDraft
                             ? "Магазин ещё не сохранён. Он будет создан после нажатия «Сохранить магазин»."
                             : `Редактируется магазин: ${storeDraft.store_code || emptyValue}`}
@@ -1117,7 +1121,7 @@ const BusinessStoresPage = () => {
                         )}
                     >
                         {enterpriseDraft.business_runtime_mode === "baseline" ? (
-                            <div style={warningCardStyle}>
+                            <div style={neutralInfoCardStyle}>
                                 Для предприятия в базовом режиме настройки магазинов не влияют на каталог и остатки.
                             </div>
                         ) : null}
@@ -1166,27 +1170,12 @@ const BusinessStoresPage = () => {
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Routing и заказы</h3>
+                            <h3 style={subSectionTitleStyle}>Branch и интеграции</h3>
                             <p style={mutedTextStyle}>
-                                Branch магазина используется для остатков и заказов.
+                                Branch магазина используется как branch в stock payload и routing заказов.
                             </p>
                             <div style={formGridStyle}>
-                                <Field label="Scope остатков">
-                                    <select
-                                        style={inputStyle}
-                                        value={storeDraft.legacy_scope_key}
-                                        onChange={(event) => onStoreChange("legacy_scope_key", event.target.value)}
-                                        disabled={storeRoutingReadOnly}
-                                    >
-                                        <option value="">Выберите legacy scope</option>
-                                        {legacyScopes.map((item) => (
-                                            <option key={item.legacy_scope_key} value={item.legacy_scope_key}>
-                                                {item.legacy_scope_key} — {item.rows_count} rows / {item.products_count} products
-                                            </option>
-                                        ))}
-                                    </select>
-                                </Field>
-                                <Field label="Branch магазина для остатков и заказов">
+                                <Field label="Branch магазина">
                                     <select
                                         style={inputStyle}
                                         value={storeDraft.tabletki_branch}
@@ -1239,43 +1228,11 @@ const BusinessStoresPage = () => {
                         </div>
 
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Цены</h3>
-                            <div style={formGridStyle}>
-                                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
-                                    <input
-                                        type="checkbox"
-                                        style={checkboxStyle}
-                                        checked={Boolean(storeDraft.extra_markup_enabled)}
-                                        onChange={(event) => onStoreChange("extra_markup_enabled", event.target.checked)}
-                                    />
-                                    Дополнительная наценка включена
-                                </label>
-                                <Field label="Режим наценки">
-                                    <input style={readonlyInputStyle} value={storeDraft.extra_markup_mode} readOnly />
-                                </Field>
-                                <Field label="Минимальная наценка (%)">
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        style={inputStyle}
-                                        value={storeDraft.extra_markup_min}
-                                        onChange={(event) => onStoreChange("extra_markup_min", event.target.value)}
-                                    />
-                                </Field>
-                                <Field label="Максимальная наценка (%)">
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        style={inputStyle}
-                                        value={storeDraft.extra_markup_max}
-                                        onChange={(event) => onStoreChange("extra_markup_max", event.target.value)}
-                                    />
-                                </Field>
-                                <Field label="Стратегия наценки">
-                                    <input style={readonlyInputStyle} value={storeDraft.extra_markup_strategy} readOnly />
-                                </Field>
+                            <h3 style={subSectionTitleStyle}>Store-specific pricing</h3>
+                            <div style={neutralInfoCardStyle}>
+                                Дополнительная наценка для нового stock-контура настраивается на странице поставщика
+                                в блоке `Настройки поставщика по магазину`. Store-level поля наценки на этой странице
+                                больше не являются основным рабочим интерфейсом.
                             </div>
                         </div>
 
@@ -1304,18 +1261,17 @@ const BusinessStoresPage = () => {
                     </Section>
 
                     <Section
-                        title="Список магазинов выбранного предприятия"
-                        description="Операционный список магазинов выбранного Business-предприятия."
+                        title="4. Магазины предприятия"
+                        description="Операционный список store overlays выбранного Business-предприятия."
                     >
                         {storesForSelectedEnterprise.length > 0 ? (
                         <div style={{ overflow: "auto", maxHeight: "420px", border: "1px solid #e2e8f0", borderRadius: "12px" }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1120px" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1000px" }}>
                                 <thead>
                                     <tr>
                                         {[
                                             "Код магазина",
-                                            "Branch магазина",
-                                            "Scope",
+                                            "Branch",
                                             "Активен",
                                             "Остатки",
                                             "Заказы",
@@ -1335,7 +1291,6 @@ const BusinessStoresPage = () => {
                                         >
                                             <td style={tableCellStyle}>{item.store_code}</td>
                                             <td style={tableCellStyle}>{item.tabletki_branch || emptyValue}</td>
-                                            <td style={tableCellStyle}>{item.legacy_scope_key || emptyValue}</td>
                                             <td style={tableCellStyle}>{item.is_active ? "Да" : "Нет"}</td>
                                             <td style={tableCellStyle}>{boolShort(item.stock_enabled)}</td>
                                             <td style={tableCellStyle}>{boolShort(item.orders_enabled)}</td>
@@ -1351,8 +1306,8 @@ const BusinessStoresPage = () => {
                             </table>
                         </div>
                         ) : (
-                            <div style={warningCardStyle}>
-                                Для выбранного предприятия пока нет сохранённых магазинов. Заполните форму выше и нажмите «Сохранить магазин».
+                            <div style={neutralInfoCardStyle}>
+                                Для выбранного предприятия пока нет сохранённых магазинов. Заполните форму выше и сохраните первый store overlay.
                             </div>
                         )}
                     </Section>

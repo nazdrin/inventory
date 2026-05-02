@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from sqlalchemy import select
@@ -8,11 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.business.business_baseline_catalog_exporter import export_business_baseline_catalog
 from app.business.business_enterprise_catalog_exporter import export_business_enterprise_catalog
 from app.models import BusinessStore, EnterpriseSettings
+from app.services.business_custom_catalog_identity_refresh_service import (
+    refresh_custom_catalog_identity_mappings,
+)
 from app.services.business_runtime_mode_service import (
     BASELINE_BUSINESS_RUNTIME_MODE,
     CUSTOM_BUSINESS_RUNTIME_MODE,
     resolve_business_runtime_mode_from_db,
 )
+from app.services.business_store_offers_builder import build_business_store_offers
 
 
 PUBLISH_READY_DRY_RUN_STATES = {"dry_run"}
@@ -23,6 +28,54 @@ def _clean_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _should_refresh_store_native_offers_before_catalog() -> bool:
+    raw_value = _clean_text(os.getenv("BUSINESS_STORE_NATIVE_REFRESH_OFFERS_BEFORE_CATALOG")).lower()
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+async def _refresh_store_native_offers_for_catalog_runtime(
+    session: AsyncSession,
+    *,
+    store_id: int,
+    dry_run: bool,
+) -> dict[str, Any]:
+    store = (
+        await session.execute(
+            select(BusinessStore).where(BusinessStore.id == int(store_id)).limit(1)
+        )
+    ).scalar_one_or_none()
+    if store is None:
+        return {
+            "status": "error",
+            "store_id": int(store_id),
+            "errors": [f"BusinessStore not found for store_id={store_id}"],
+        }
+    if not _should_refresh_store_native_offers_before_catalog():
+        return {
+            "status": "skipped",
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
+            "skip_reason": "disabled_by_env",
+        }
+    result = await build_business_store_offers(
+        session,
+        dry_run=False,
+        store_id=int(store.id),
+        enterprise_code=_clean_text(store.enterprise_code),
+        compare_legacy=False,
+    )
+    if not bool(dry_run):
+        offers_changes = int(result.get("upsert_rows", 0) or 0) + int(
+            result.get("stale_rows_deleted", 0) or 0
+        )
+        if offers_changes > 0:
+            await session.commit()
+    return result
 
 
 def _empty_store_report_row(
@@ -72,6 +125,21 @@ def _empty_store_report_row(
         "endpoint_preview": None,
         "warnings": list(warnings or []),
         "errors": list(errors or []),
+        "identity_refresh_status": None,
+        "offers_refresh_status": None,
+        "offers_refresh_candidate_products": 0,
+        "offers_refresh_upsert_rows": 0,
+        "offers_refresh_stale_rows_deleted": 0,
+        "offers_refresh_supplier_links_processed": 0,
+        "offers_refresh_supplier_links_skipped": 0,
+        "identity_refresh_candidate_source": None,
+        "identity_refresh_candidate_products": 0,
+        "identity_refresh_created_store_codes": 0,
+        "identity_refresh_created_store_names": 0,
+        "identity_refresh_created_enterprise_codes": 0,
+        "identity_refresh_created_enterprise_names": 0,
+        "identity_refresh_skipped_enterprise_codes": 0,
+        "identity_refresh_skipped_enterprise_names": 0,
     }
 
 
@@ -275,14 +343,90 @@ async def publish_enabled_business_store_catalogs(
                 limit=limit,
                 require_confirm=effective_require_confirm,
             )
+            offers_refresh = None
+            identity_refresh = None
         else:
-            result = await export_business_enterprise_catalog(
+            offers_refresh = await _refresh_store_native_offers_for_catalog_runtime(
                 session,
                 store_id=int(entry["store_id"]),
                 dry_run=bool(dry_run),
-                limit=limit,
-                require_confirm=effective_require_confirm,
             )
+            if offers_refresh.get("status") == "error":
+                result = {
+                    "status": "error",
+                    "identity_mode": "enterprise_level",
+                    "assortment_mode": "store_compatible",
+                    "catalog_runtime_path": "enterprise_identity",
+                    "candidate_source": None,
+                    "total_candidates": int(offers_refresh.get("candidate_products", 0) or 0),
+                    "exportable_products": 0,
+                    "skipped_products": int(offers_refresh.get("candidate_products", 0) or 0),
+                    "sent_products": 0,
+                    "warnings": list(offers_refresh.get("warnings") or []),
+                    "errors": list(offers_refresh.get("errors") or []),
+                    "endpoint_preview": None,
+                    "catalog_scope_store_id": int(entry["store_id"]),
+                    "catalog_scope_store_code": entry.get("store_code"),
+                    "catalog_scope_branch": entry.get("tabletki_branch"),
+                    "catalog_scope_key": None,
+                    "catalog_scope_source": "enterprise_branch_match",
+                    "catalog_scope_error_reason": None,
+                    "catalog_only_in_stock_source": "catalog_scope_store",
+                    "catalog_only_in_stock": None,
+                    "target_branch": entry.get("target_branch"),
+                    "target_branch_source": "enterprise_settings",
+                }
+                identity_refresh = None
+            else:
+                identity_refresh = await refresh_custom_catalog_identity_mappings(
+                    session,
+                    store_id=int(entry["store_id"]),
+                    dry_run=bool(dry_run),
+                )
+                if identity_refresh.get("status") == "error":
+                    result = {
+                        "status": "error",
+                        "identity_mode": "enterprise_level",
+                        "assortment_mode": "store_compatible",
+                        "catalog_runtime_path": "enterprise_identity",
+                        "candidate_source": identity_refresh.get("candidate_source"),
+                        "total_candidates": identity_refresh.get("candidate_products", 0),
+                        "exportable_products": 0,
+                        "skipped_products": int(identity_refresh.get("candidate_products", 0) or 0),
+                        "sent_products": 0,
+                        "warnings": list(identity_refresh.get("warnings") or []),
+                        "errors": list(identity_refresh.get("errors") or []),
+                        "endpoint_preview": None,
+                        "catalog_scope_store_id": int(entry["store_id"]),
+                        "catalog_scope_store_code": entry.get("store_code"),
+                        "catalog_scope_branch": entry.get("tabletki_branch"),
+                        "catalog_scope_key": None,
+                        "catalog_scope_source": "enterprise_branch_match",
+                        "catalog_scope_error_reason": None,
+                        "catalog_only_in_stock_source": "catalog_scope_store",
+                        "catalog_only_in_stock": None,
+                        "target_branch": entry.get("target_branch"),
+                        "target_branch_source": "enterprise_settings",
+                    }
+                else:
+                    if not bool(dry_run):
+                        created_total = (
+                            int(offers_refresh.get("upsert_rows", 0) or 0)
+                            + int(offers_refresh.get("stale_rows_deleted", 0) or 0)
+                            + int(identity_refresh.get("created_store_codes", 0) or 0)
+                            + int(identity_refresh.get("created_store_names", 0) or 0)
+                            + int(identity_refresh.get("created_enterprise_codes", 0) or 0)
+                            + int(identity_refresh.get("created_enterprise_names", 0) or 0)
+                        )
+                        if created_total > 0:
+                            await session.commit()
+                    result = await export_business_enterprise_catalog(
+                        session,
+                        store_id=int(entry["store_id"]),
+                        dry_run=bool(dry_run),
+                        limit=limit,
+                        require_confirm=effective_require_confirm,
+                    )
         merged = {
             **entry,
             "status": result.get("status"),
@@ -320,6 +464,21 @@ async def publish_enabled_business_store_catalogs(
             "endpoint_preview": result.get("endpoint_preview"),
             "warnings": list(result.get("warnings") or []),
             "errors": list(result.get("errors") or []),
+            "offers_refresh_status": None if offers_refresh is None else offers_refresh.get("status"),
+            "offers_refresh_candidate_products": 0 if offers_refresh is None else int(offers_refresh.get("candidate_products", 0) or 0),
+            "offers_refresh_upsert_rows": 0 if offers_refresh is None else int(offers_refresh.get("upsert_rows", 0) or 0),
+            "offers_refresh_stale_rows_deleted": 0 if offers_refresh is None else int(offers_refresh.get("stale_rows_deleted", 0) or 0),
+            "offers_refresh_supplier_links_processed": 0 if offers_refresh is None else int(offers_refresh.get("supplier_links_processed", 0) or 0),
+            "offers_refresh_supplier_links_skipped": 0 if offers_refresh is None else int(offers_refresh.get("supplier_links_skipped", 0) or 0),
+            "identity_refresh_status": None if identity_refresh is None else identity_refresh.get("status"),
+            "identity_refresh_candidate_source": None if identity_refresh is None else identity_refresh.get("candidate_source"),
+            "identity_refresh_candidate_products": 0 if identity_refresh is None else int(identity_refresh.get("candidate_products", 0) or 0),
+            "identity_refresh_created_store_codes": 0 if identity_refresh is None else int(identity_refresh.get("created_store_codes", 0) or 0),
+            "identity_refresh_created_store_names": 0 if identity_refresh is None else int(identity_refresh.get("created_store_names", 0) or 0),
+            "identity_refresh_created_enterprise_codes": 0 if identity_refresh is None else int(identity_refresh.get("created_enterprise_codes", 0) or 0),
+            "identity_refresh_created_enterprise_names": 0 if identity_refresh is None else int(identity_refresh.get("created_enterprise_names", 0) or 0),
+            "identity_refresh_skipped_enterprise_codes": 0 if identity_refresh is None else int(identity_refresh.get("skipped_enterprise_codes", 0) or 0),
+            "identity_refresh_skipped_enterprise_names": 0 if identity_refresh is None else int(identity_refresh.get("skipped_enterprise_names", 0) or 0),
         }
         report_rows.append(merged)
         if result.get("status") in {"ok", "sent"}:

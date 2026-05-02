@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.business.dropship_pipeline import (
     _load_branch_mapping,
     build_best_offers_by_city,
-    build_stock_payload,
+    build_stock_payload_with_markup_overlay_report,
 )
 from app.database import EnterpriseSettings, MappingBranch
 
@@ -104,6 +104,12 @@ async def build_business_baseline_stock_preview(
             "errors": ["enterprise_code is required"],
             "price_source": "legacy_algorithm",
             "depends_on_business_stores": False,
+            "store_markup_overlay_applied": False,
+            "store_markup_rows_changed": 0,
+            "store_markup_branches_used": [],
+            "store_markup_branches_skipped": [],
+            "store_markup_warnings": [],
+            "store_markup_sample_changes": [],
         }
 
     enterprise = await _load_enterprise(session, normalized_enterprise_code)
@@ -121,13 +127,22 @@ async def build_business_baseline_stock_preview(
             "errors": [f"EnterpriseSettings not found for enterprise_code={normalized_enterprise_code}"],
             "price_source": "legacy_algorithm",
             "depends_on_business_stores": False,
+            "store_markup_overlay_applied": False,
+            "store_markup_rows_changed": 0,
+            "store_markup_branches_used": [],
+            "store_markup_branches_skipped": [],
+            "store_markup_warnings": [],
+            "store_markup_sample_changes": [],
         }
 
     mapping_branch_rows = await _load_mapping_branch_rows(session, normalized_enterprise_code)
     if not mapping_branch_rows:
         warnings.append("No mapping_branch rows found for enterprise.")
 
-    payload_rows = await build_stock_payload(session, normalized_enterprise_code)
+    payload_rows, markup_overlay_report = await build_stock_payload_with_markup_overlay_report(
+        session,
+        normalized_enterprise_code,
+    )
     rows_total = len(payload_rows)
     limited_payload_rows = _limit_rows(payload_rows, limit)
     preview_rows = limited_payload_rows if limit is not None else payload_rows[:20]
@@ -145,6 +160,7 @@ async def build_business_baseline_stock_preview(
         warnings.append(
             f"Legacy algorithm skipped {missing_mapping_rows_count} best-offer rows without mapping_branch city mapping."
         )
+    warnings.extend(list(markup_overlay_report.get("store_markup_warnings") or []))
 
     status = "ok"
     if errors:
@@ -176,10 +192,16 @@ async def build_business_baseline_stock_preview(
         "is_limited": bool(limit is not None and rows_total > len(limited_payload_rows)),
         "sample_rows": preview_rows[:20],
         "payload_preview": preview_rows,
-        "price_source": "legacy_algorithm",
-        "depends_on_business_stores": False,
+        "price_source": "legacy_algorithm_plus_store_markup_overlay",
+        "depends_on_business_stores": True,
         "uses_process_database_service": False,
         "external_api_calls": False,
+        "store_markup_overlay_applied": bool(markup_overlay_report.get("store_markup_overlay_applied")),
+        "store_markup_rows_changed": int(markup_overlay_report.get("store_markup_rows_changed", 0) or 0),
+        "store_markup_branches_used": list(markup_overlay_report.get("store_markup_branches_used") or []),
+        "store_markup_branches_skipped": list(markup_overlay_report.get("store_markup_branches_skipped") or []),
+        "store_markup_warnings": list(markup_overlay_report.get("store_markup_warnings") or []),
+        "store_markup_sample_changes": list(markup_overlay_report.get("store_markup_sample_changes") or []),
         "warnings": warnings,
         "errors": errors,
     }

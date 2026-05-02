@@ -223,7 +223,11 @@ async def build_enterprise_catalog_payload_preview(
             candidate_rows = []
         else:
             catalog_only_in_stock = bool(catalog_scope_store.catalog_only_in_stock)
-            scope = await resolve_store_catalog_candidate_scope(session, int(catalog_scope_store.id))
+            scope = await resolve_store_catalog_candidate_scope(
+                session,
+                int(catalog_scope_store.id),
+                preferred_source="store_native_offers",
+            )
             store = scope["store"]
             store_enterprise_code = _clean_text(store.enterprise_code)
             if store_enterprise_code and store_enterprise_code != normalized_enterprise_code:

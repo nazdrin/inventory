@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     BusinessStore,
+    BusinessStoreOffer,
     BusinessStoreProductName,
     CatalogSupplierMapping,
     Offer,
@@ -51,27 +52,46 @@ async def get_supplier_name_candidates_for_store_product(
     internal_product_code: str,
 ) -> list[dict[str, Any]]:
     normalized_code = str(internal_product_code or "").strip()
-    legacy_scope_key = str(store.legacy_scope_key or "").strip()
-    if not normalized_code or not legacy_scope_key:
+    if not normalized_code:
         return []
 
     offer_rows = (
         await session.execute(
-            select(Offer.supplier_code)
+            select(BusinessStoreOffer.supplier_code)
             .where(
-                Offer.city == legacy_scope_key,
-                Offer.product_code == normalized_code,
+                BusinessStoreOffer.store_id == int(store.id),
+                BusinessStoreOffer.product_code == normalized_code,
             )
             .distinct()
         )
     ).scalars().all()
-    supplier_codes = sorted(
-        {
-            str(value or "").strip().upper()
-            for value in offer_rows
-            if str(value or "").strip()
-        }
-    )
+    supplier_codes = {
+        str(value or "").strip().upper()
+        for value in offer_rows
+        if str(value or "").strip()
+    }
+
+    legacy_scope_key = str(store.legacy_scope_key or "").strip()
+    if legacy_scope_key:
+        legacy_offer_rows = (
+            await session.execute(
+                select(Offer.supplier_code)
+                .where(
+                    Offer.city == legacy_scope_key,
+                    Offer.product_code == normalized_code,
+                )
+                .distinct()
+            )
+        ).scalars().all()
+        supplier_codes.update(
+            {
+                str(value or "").strip().upper()
+                for value in legacy_offer_rows
+                if str(value or "").strip()
+            }
+        )
+
+    supplier_codes = sorted(supplier_codes)
     if not supplier_codes:
         return []
 
