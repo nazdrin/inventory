@@ -42,6 +42,43 @@ class InventoryStockSchema(BaseModel):
         from_attributes = True
 
 
+class PaymentPeriodRequest(BaseModel):
+    period_from: str
+    period_to: str
+
+
+class SalesDrivePaymentImportRequest(PaymentPeriodRequest):
+    payment_type: Literal["incoming", "outcoming", "all"] = "all"
+
+
+class AccountBalanceAdjustmentUpsert(BaseModel):
+    account_id: int
+    period_month: Optional[str] = None
+    balance_date: Optional[str] = None
+    actual_balance: Optional[Decimal] = None
+    opening_balance_adjustment: Decimal = Decimal("0")
+    closing_balance_adjustment: Decimal = Decimal("0")
+    actual_opening_balance: Optional[Decimal] = None
+    actual_closing_balance: Optional[Decimal] = None
+    comment: Optional[str] = None
+    created_by: Optional[str] = None
+    approved_by: Optional[str] = None
+
+
+class PaymentCounterpartySupplierMappingUpsert(BaseModel):
+    supplier_code: str
+    supplier_salesdrive_id: Optional[int] = None
+    match_type: Literal["tax_id", "exact", "contains", "search_text_contains"] = "exact"
+    field_scope: Literal["tax_id", "counterparty_name", "purpose", "comment", "search_text"] = "counterparty_name"
+    counterparty_pattern: Optional[str] = None
+    counterparty_tax_id: Optional[str] = None
+    priority: int = 100
+    is_active: bool = True
+    notes: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
 # Схема для забронированных товаров
 class ReservedItemsSchema(BaseModel):
     branch: str

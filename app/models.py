@@ -1452,3 +1452,325 @@ class CatalogContent(Base, TimestampMixin):
         Index("ix_catalog_content_sku_language_code", "sku", "language_code"),
         Index("ix_catalog_content_sku_is_selected", "sku", "is_selected"),
     )
+
+
+class PaymentBusinessEntity(Base, TimestampMixin):
+    __tablename__ = "payment_business_entities"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    salesdrive_organization_id = Column(String(128), nullable=True)
+    short_name = Column(String(500), nullable=False)
+    full_name = Column(String(1000), nullable=True)
+    normalized_name = Column(String(1000), nullable=True)
+    tax_id = Column(String(64), nullable=True)
+    entity_type = Column(String(32), nullable=False, server_default=text("'other'"))
+    verification_status = Column(String(32), nullable=False, server_default=text("'needs_review'"))
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    verified_by = Column(String(255), nullable=True)
+    vat_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    vat_payer = Column(Boolean, nullable=False, server_default=text("false"))
+    without_stamp = Column(Boolean, nullable=False, server_default=text("false"))
+    signer_name = Column(String(500), nullable=True)
+    signer_position = Column(String(500), nullable=True)
+    chief_accountant_name = Column(String(500), nullable=True)
+    cashier_name = Column(String(500), nullable=True)
+    signature_stamp_image_url = Column(String(1000), nullable=True)
+    logo_image_url = Column(String(1000), nullable=True)
+    address = Column(String(1000), nullable=True)
+    postal_code = Column(String(64), nullable=True)
+    city = Column(String(255), nullable=True)
+    region = Column(String(255), nullable=True)
+    country = Column(String(255), nullable=True)
+    phone = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("salesdrive_organization_id", name="uq_payment_business_entities_salesdrive_org_id"),
+        Index("ix_payment_business_entities_tax_id", "tax_id"),
+        Index("ix_payment_business_entities_verification_status", "verification_status"),
+        CheckConstraint(
+            "entity_type IN ('fop', 'company', 'individual', 'other')",
+            name="ck_payment_business_entities_entity_type",
+        ),
+        CheckConstraint(
+            "verification_status IN ('draft', 'needs_review', 'verified', 'archived')",
+            name="ck_payment_business_entities_verification_status",
+        ),
+    )
+
+
+class PaymentBusinessAccount(Base, TimestampMixin):
+    __tablename__ = "payment_business_accounts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    salesdrive_account_id = Column(String(128), nullable=True)
+    account_number = Column(String(128), nullable=False)
+    account_title = Column(String(500), nullable=True)
+    label = Column(String(255), nullable=True)
+    card_mask = Column(String(64), nullable=True)
+    currency = Column(String(16), nullable=False, server_default=text("'UAH'"))
+    bank_name = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+
+    __table_args__ = (
+        UniqueConstraint("account_number", name="uq_payment_business_accounts_account_number"),
+        UniqueConstraint("salesdrive_account_id", name="uq_payment_business_accounts_salesdrive_account_id"),
+        Index("ix_payment_business_accounts_entity_id", "business_entity_id"),
+        Index("ix_payment_business_accounts_is_active", "is_active"),
+    )
+
+
+class PaymentImportRun(Base, TimestampMixin):
+    __tablename__ = "payment_import_runs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source_system = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    period_from = Column(DateTime(timezone=True), nullable=False)
+    period_to = Column(DateTime(timezone=True), nullable=False)
+    payment_type = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False, server_default=text("'running'"))
+    started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    incoming_count = Column(Integer, nullable=False, server_default=text("0"))
+    outcoming_count = Column(Integer, nullable=False, server_default=text("0"))
+    created_count = Column(Integer, nullable=False, server_default=text("0"))
+    updated_count = Column(Integer, nullable=False, server_default=text("0"))
+    error_message = Column(Text, nullable=True)
+    request_params = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("ix_payment_import_runs_period", "period_from", "period_to"),
+        Index("ix_payment_import_runs_status", "status"),
+        CheckConstraint(
+            "payment_type IN ('incoming', 'outcoming', 'all')",
+            name="ck_payment_import_runs_payment_type",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'success', 'failed', 'partial')",
+            name="ck_payment_import_runs_status",
+        ),
+    )
+
+
+class PaymentCategory(Base, TimestampMixin):
+    __tablename__ = "payment_categories"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(64), nullable=False)
+    name = Column(String(255), nullable=False)
+    direction = Column(String(16), nullable=False)
+    is_system = Column(Boolean, nullable=False, server_default=text("true"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    sort_order = Column(Integer, nullable=False, server_default=text("0"))
+    description = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_payment_categories_code"),
+        Index("ix_payment_categories_direction", "direction"),
+        CheckConstraint(
+            "direction IN ('incoming', 'outgoing', 'both')",
+            name="ck_payment_categories_direction",
+        ),
+    )
+
+
+class PaymentCounterpartySupplierMapping(Base, TimestampMixin):
+    __tablename__ = "payment_counterparty_supplier_mappings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    supplier_code = Column(String, ForeignKey("dropship_enterprises.code"), nullable=False)
+    supplier_salesdrive_id = Column(Integer, nullable=True)
+    match_type = Column(String(32), nullable=False)
+    field_scope = Column(String(32), nullable=False)
+    counterparty_pattern = Column(String(1000), nullable=True)
+    normalized_pattern = Column(String(1000), nullable=True)
+    counterparty_tax_id = Column(String(64), nullable=True)
+    priority = Column(Integer, nullable=False, server_default=text("100"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    valid_from = Column(Date, nullable=True)
+    valid_to = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=True)
+    updated_by = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("ix_payment_counterparty_supplier_mappings_supplier_code", "supplier_code"),
+        Index("ix_payment_counterparty_supplier_mappings_tax_id", "counterparty_tax_id"),
+        Index("ix_payment_counterparty_supplier_mappings_active_priority", "is_active", "priority"),
+        CheckConstraint(
+            "match_type IN ('tax_id', 'exact', 'contains', 'search_text_contains')",
+            name="ck_payment_counterparty_supplier_mappings_match_type",
+        ),
+        CheckConstraint(
+            "field_scope IN ('tax_id', 'counterparty_name', 'purpose', 'comment', 'search_text')",
+            name="ck_payment_counterparty_supplier_mappings_field_scope",
+        ),
+    )
+
+
+class SalesDrivePayment(Base, TimestampMixin):
+    __tablename__ = "salesdrive_payments"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source_system = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    source_payment_id = Column(String(128), nullable=False)
+    payment_type = Column(String(32), nullable=False)
+    payment_date = Column(DateTime(timezone=True), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(String(16), nullable=False, server_default=text("'UAH'"))
+    counterparty_source_id = Column(String(128), nullable=True)
+    counterparty_name = Column(String(1000), nullable=True)
+    counterparty_normalized_name = Column(String(1000), nullable=True)
+    counterparty_tax_id = Column(String(64), nullable=True)
+    organization_source_id = Column(String(128), nullable=True)
+    organization_name = Column(String(1000), nullable=True)
+    organization_tax_id = Column(String(64), nullable=True)
+    organization_account_source_id = Column(String(128), nullable=True)
+    account_reference = Column(String(128), nullable=True)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    business_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=True)
+    comment = Column(Text, nullable=True)
+    purpose = Column(Text, nullable=True)
+    search_text = Column(Text, nullable=True)
+    incoming_category = Column(String(64), ForeignKey("payment_categories.code"), nullable=True)
+    outgoing_category = Column(String(64), ForeignKey("payment_categories.code"), nullable=True)
+    payment_category = Column(String(64), ForeignKey("payment_categories.code"), nullable=True)
+    is_internal_transfer = Column(Boolean, nullable=False, server_default=text("false"))
+    internal_transfer_pair_id = Column(
+        BigInteger,
+        ForeignKey(
+            "internal_transfer_pairs.id",
+            use_alter=True,
+            name="fk_salesdrive_payments_internal_transfer_pair_id",
+        ),
+        nullable=True,
+    )
+    internal_transfer_reason = Column(Text, nullable=True)
+    supplier_code = Column(String, ForeignKey("dropship_enterprises.code"), nullable=True)
+    supplier_salesdrive_id = Column(Integer, nullable=True)
+    counterparty_supplier_mapping_id = Column(
+        BigInteger,
+        ForeignKey("payment_counterparty_supplier_mappings.id"),
+        nullable=True,
+    )
+    mapping_source = Column(String(64), nullable=True)
+    mapping_status = Column(String(32), nullable=False, server_default=text("'not_applicable'"))
+    raw_status = Column(String(64), nullable=True)
+    raw_payload = Column(JSONB, nullable=False)
+    import_run_id = Column(BigInteger, ForeignKey("payment_import_runs.id"), nullable=True)
+    is_locked = Column(Boolean, nullable=False, server_default=text("false"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_system",
+            "source_payment_id",
+            "payment_type",
+            name="uq_salesdrive_payments_source_payment_type",
+        ),
+        Index("ix_salesdrive_payments_payment_date", "payment_date"),
+        Index("ix_salesdrive_payments_type_date", "payment_type", "payment_date"),
+        Index("ix_salesdrive_payments_counterparty_tax_id", "counterparty_tax_id"),
+        Index("ix_salesdrive_payments_counterparty_normalized_name", "counterparty_normalized_name"),
+        Index("ix_salesdrive_payments_business_account_date", "business_account_id", "payment_date"),
+        Index("ix_salesdrive_payments_supplier_date", "supplier_code", "payment_date"),
+        Index("ix_salesdrive_payments_mapping_status", "mapping_status"),
+        Index("ix_salesdrive_payments_internal_transfer", "is_internal_transfer"),
+        CheckConstraint(
+            "payment_type IN ('incoming', 'outcoming')",
+            name="ck_salesdrive_payments_payment_type",
+        ),
+        CheckConstraint(
+            "mapping_status IN ('mapped', 'unmapped', 'not_applicable', 'ignored')",
+            name="ck_salesdrive_payments_mapping_status",
+        ),
+    )
+
+
+class InternalTransferPair(Base):
+    __tablename__ = "internal_transfer_pairs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    pair_key = Column(String(255), nullable=False)
+    outcoming_payment_id = Column(BigInteger, ForeignKey("salesdrive_payments.id"), nullable=False)
+    incoming_payment_id = Column(BigInteger, ForeignKey("salesdrive_payments.id"), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    outcoming_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    incoming_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    outcoming_date = Column(DateTime(timezone=True), nullable=False)
+    incoming_date = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(Text, nullable=True)
+    match_confidence = Column(Numeric(5, 4), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("pair_key", name="uq_internal_transfer_pairs_pair_key"),
+        UniqueConstraint("outcoming_payment_id", name="uq_internal_transfer_pairs_outcoming_payment_id"),
+        UniqueConstraint("incoming_payment_id", name="uq_internal_transfer_pairs_incoming_payment_id"),
+        Index("ix_internal_transfer_pairs_outcoming_account_id", "outcoming_account_id"),
+        Index("ix_internal_transfer_pairs_incoming_account_id", "incoming_account_id"),
+    )
+
+
+class InternalTransferRule(Base, TimestampMixin):
+    __tablename__ = "internal_transfer_rules"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    from_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    to_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    pairing_window_minutes = Column(Integer, nullable=False, server_default=text("5"))
+    require_exact_amount = Column(Boolean, nullable=False, server_default=text("true"))
+    allow_direct_self_marker = Column(Boolean, nullable=False, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("from_account_id", "to_account_id", name="uq_internal_transfer_rules_account_pair"),
+        Index("ix_internal_transfer_rules_entity_id", "business_entity_id"),
+        Index("ix_internal_transfer_rules_is_active", "is_active"),
+        CheckConstraint("from_account_id <> to_account_id", name="ck_internal_transfer_rules_different_accounts"),
+    )
+
+
+class AccountBalanceAdjustment(Base, TimestampMixin):
+    __tablename__ = "account_balance_adjustments"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    period_month = Column(Date, nullable=False)
+    balance_date = Column(Date, nullable=True)
+    actual_balance = Column(Numeric(14, 2), nullable=True)
+    opening_balance_adjustment = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    closing_balance_adjustment = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    actual_opening_balance = Column(Numeric(14, 2), nullable=True)
+    actual_closing_balance = Column(Numeric(14, 2), nullable=True)
+    comment = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=True)
+    approved_by = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "period_month", name="uq_account_balance_adjustments_account_month"),
+        UniqueConstraint("account_id", "balance_date", name="uq_account_balance_adjustments_account_balance_date"),
+        Index("ix_account_balance_adjustments_balance_date", "balance_date"),
+        Index("ix_account_balance_adjustments_period_month", "period_month"),
+    )
+
+
+class PaymentPeriodLock(Base, TimestampMixin):
+    __tablename__ = "payment_period_locks"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    period_month = Column(Date, nullable=False)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'open'"))
+    closed_by = Column(String(255), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("period_month", "business_entity_id", name="uq_payment_period_locks_month_entity"),
+        Index("ix_payment_period_locks_status", "status"),
+        CheckConstraint("status IN ('open', 'closed')", name="ck_payment_period_locks_status"),
+    )

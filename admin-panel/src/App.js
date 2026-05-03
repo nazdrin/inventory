@@ -9,6 +9,7 @@ import FormatsPage from "./pages/FormatsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 import BusinessStoresPage from "./pages/BusinessStoresPage";
+import PaymentReportsPage from "./pages/PaymentReportsPage";
 
 import Login from "./pages/Login";
 
@@ -176,6 +177,20 @@ const App = () => {
                         >
                             Business-продавцы
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/payment-reports")}
+                        >
+                            Платежи
+                        </button>
                     </>
                 )}
             </div>
@@ -213,6 +228,10 @@ const App = () => {
                 <Route
                     path="/business-stores"
                     element={<PrivateRoute element={<BusinessStoresPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/payment-reports"
+                    element={<PrivateRoute element={<PaymentReportsPage authUser={authUser} />} />}
                 />
             </Routes>
         </div>

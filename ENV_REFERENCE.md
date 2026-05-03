@@ -57,6 +57,19 @@
 - `ORDER_SENDER_LOG_LEVEL` - уровень логирования order sender.
 - `ORDER_SENDER_VERBOSE_SALESDRIVE_LOGS` - детальные логи обмена с SalesDrive.
 
+## Payment reporting / SalesDrive payments
+
+- `SALESDRIVE_PAYMENTS_BASE_URL` - базовый URL SalesDrive для импорта платежей.
+- `SALESDRIVE_PAYMENTS_API_KEY` - API ключ SalesDrive для `GET /api/payment/list/`.
+- `SALESDRIVE_PAYMENTS_TIMEOUT_SECONDS` - timeout запроса платежей, дефолт `30`.
+- `SALESDRIVE_PAYMENTS_PAGE_LIMIT` - размер страницы платежей, максимум `100`.
+- `SALESDRIVE_PAYMENTS_RATE_LIMIT_RETRY_SECONDS` - пауза перед retry при rate limit, дефолт `65`.
+- `SALESDRIVE_PAYMENTS_RATE_LIMIT_MAX_RETRIES` - максимальное количество retry при rate limit/transport error, дефолт `2`.
+- `PAYMENT_REPORTING_STRICT_INCOMING_CLASSIFICATION` - строгая классификация входящих платежей: неизвестные входящие остаются `unknown_incoming`.
+- `PAYMENT_REPORTING_SCHEDULER_ENABLED` - включает отдельный daily scheduler платежной отчетности.
+- `PAYMENT_REPORTING_DAILY_IMPORT_HOUR` - час ежедневного импорта SalesDrive payments, дефолт `2`.
+- `PAYMENT_REPORTING_DAILY_IMPORT_MINUTE` - минута ежедневного импорта SalesDrive payments, дефолт `0`.
+
 ## Telegram / уведомления
 
 - `TELEGRAM_BOT_TOKEN` - токен Telegram bot.

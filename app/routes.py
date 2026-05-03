@@ -10,7 +10,7 @@ import os
 import json
 import tempfile
 import math
-from datetime import timedelta
+from datetime import timedelta, time
 
 from app import crud, schemas, database
 from app.schemas import (
@@ -143,6 +143,29 @@ def _mapping_field_notes(data_format: str | None, has_google_folder: bool) -> li
     if has_google_folder:
         notes.append("google_folder_id is only relevant for file-driven branch/folder flows")
     return notes
+
+
+def _parse_payment_report_datetime(value: str, *, end_of_day: bool = False) -> datetime:
+    text_value = str(value or "").strip()
+    if not text_value:
+        raise HTTPException(status_code=400, detail="period date is required")
+    try:
+        date_value = datetime.strptime(text_value, "%Y-%m-%d").date()
+        return datetime.combine(date_value, time.max if end_of_day else time.min).replace(microsecond=0)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid period date/datetime: {value}") from exc
+
+
+def _parse_payment_report_period(period_from: str, period_to: str) -> tuple[datetime, datetime]:
+    parsed_from = _parse_payment_report_datetime(period_from)
+    parsed_to = _parse_payment_report_datetime(period_to, end_of_day=True)
+    if parsed_to < parsed_from:
+        raise HTTPException(status_code=400, detail="period_to must be greater than or equal to period_from")
+    return parsed_from, parsed_to
 
 
 def _mapping_overloaded_fields(data_format: str | None, has_google_folder: bool) -> list[str]:
@@ -3388,3 +3411,305 @@ async def salesdrive_webhook(
     background.add_task(process_salesdrive_webhook, payload)
 
     return {"ok": True}
+
+
+@router.post("/payment-imports/salesdrive", dependencies=[Depends(verify_token)])
+async def run_salesdrive_payment_import(
+    payload: schemas.SalesDrivePaymentImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_import_service import import_salesdrive_payments
+
+    period_from, period_to = _parse_payment_report_period(payload.period_from, payload.period_to)
+    result = await import_salesdrive_payments(
+        db,
+        period_from=period_from,
+        period_to=period_to,
+        payment_type=payload.payment_type,
+    )
+    await db.commit()
+    return {
+        "import_run_id": result.import_run_id,
+        "status": result.status,
+        "incoming_count": result.incoming_count,
+        "outcoming_count": result.outcoming_count,
+        "created_count": result.created_count,
+        "updated_count": result.updated_count,
+        "error_message": result.error_message,
+    }
+
+
+@router.get("/payment-imports", dependencies=[Depends(verify_token)])
+async def list_payment_imports(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_payment_import_runs_report
+
+    return await build_payment_import_runs_report(db, limit=limit)
+
+
+@router.post("/payment-reports/recalculate", dependencies=[Depends(verify_token)])
+async def recalculate_payment_report(
+    payload: schemas.PaymentPeriodRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_recalculation_service import recalculate_payment_period
+
+    period_from, period_to = _parse_payment_report_period(payload.period_from, payload.period_to)
+    result = await recalculate_payment_period(db, period_from=period_from, period_to=period_to)
+    await db.commit()
+    return {
+        "total_payments": result.total_payments,
+        "internal_pairs": result.internal_pairs,
+        "internal_payments": result.internal_payments,
+        "customer_receipts": result.customer_receipts,
+        "other_receipts": result.other_receipts,
+        "excluded_receipts": result.excluded_receipts,
+        "unknown_incoming": result.unknown_incoming,
+        "supplier_mapped": result.supplier_mapped,
+        "supplier_unmapped": result.supplier_unmapped,
+        "unknown_outgoing": result.unknown_outgoing,
+    }
+
+
+@router.get("/payment-reports/summary", dependencies=[Depends(verify_token)])
+async def get_payment_summary_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_payment_summary
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_payment_summary(db, period_from=parsed_from, period_to=parsed_to)
+
+
+@router.get("/payment-reports/management-summary", dependencies=[Depends(verify_token)])
+async def get_payment_management_summary_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    business_entity_id: int | None = Query(default=None),
+    business_account_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_management_summary_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_management_summary_report(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        business_entity_id=business_entity_id,
+        business_account_id=business_account_id,
+    )
+
+
+@router.get("/payment-reports/account-movements", dependencies=[Depends(verify_token)])
+async def get_payment_account_movements_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    business_entity_id: int | None = Query(default=None),
+    business_account_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_account_movements_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_account_movements_report(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        business_entity_id=business_entity_id,
+        business_account_id=business_account_id,
+    )
+
+
+@router.post("/payment-reports/account-balance-adjustments", dependencies=[Depends(verify_token)])
+async def upsert_payment_account_balance_adjustment(
+    payload: schemas.AccountBalanceAdjustmentUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models import AccountBalanceAdjustment, PaymentBusinessAccount
+
+    balance_date = None
+    if payload.balance_date:
+        try:
+            balance_date = datetime.strptime(payload.balance_date, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="balance_date must be YYYY-MM-DD") from exc
+
+    if payload.period_month:
+        try:
+            period_month = datetime.strptime(payload.period_month, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="period_month must be YYYY-MM-DD") from exc
+    elif balance_date is not None:
+        period_month = balance_date
+    else:
+        raise HTTPException(status_code=400, detail="balance_date is required")
+
+    account = await db.scalar(select(PaymentBusinessAccount).where(PaymentBusinessAccount.id == payload.account_id))
+    if account is None:
+        raise HTTPException(status_code=404, detail="Payment business account not found")
+
+    if balance_date is not None:
+        adjustment = await db.scalar(
+            select(AccountBalanceAdjustment).where(
+                AccountBalanceAdjustment.account_id == payload.account_id,
+                AccountBalanceAdjustment.balance_date == balance_date,
+            )
+        )
+    else:
+        adjustment = await db.scalar(
+            select(AccountBalanceAdjustment).where(
+                AccountBalanceAdjustment.account_id == payload.account_id,
+                AccountBalanceAdjustment.period_month == period_month,
+            )
+        )
+    if adjustment is None:
+        adjustment = AccountBalanceAdjustment(account_id=payload.account_id, period_month=period_month)
+        db.add(adjustment)
+
+    adjustment.balance_date = balance_date
+    adjustment.actual_balance = payload.actual_balance
+    adjustment.opening_balance_adjustment = payload.opening_balance_adjustment
+    adjustment.closing_balance_adjustment = payload.closing_balance_adjustment
+    adjustment.actual_opening_balance = payload.actual_opening_balance
+    adjustment.actual_closing_balance = payload.actual_closing_balance
+    adjustment.comment = payload.comment
+    adjustment.created_by = payload.created_by
+    adjustment.approved_by = payload.approved_by
+    await db.commit()
+    await db.refresh(adjustment)
+    return {
+        "id": int(adjustment.id),
+        "account_id": int(adjustment.account_id),
+        "period_month": adjustment.period_month.isoformat(),
+        "balance_date": adjustment.balance_date.isoformat() if adjustment.balance_date is not None else None,
+        "actual_balance": str(adjustment.actual_balance) if adjustment.actual_balance is not None else None,
+        "opening_balance_adjustment": str(adjustment.opening_balance_adjustment),
+        "closing_balance_adjustment": str(adjustment.closing_balance_adjustment),
+        "actual_opening_balance": str(adjustment.actual_opening_balance)
+        if adjustment.actual_opening_balance is not None
+        else None,
+        "actual_closing_balance": str(adjustment.actual_closing_balance)
+        if adjustment.actual_closing_balance is not None
+        else None,
+        "comment": adjustment.comment,
+    }
+
+
+@router.get("/payment-reports/supplier-payments", dependencies=[Depends(verify_token)])
+async def get_supplier_payments_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_supplier_payments_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_supplier_payments_report(db, period_from=parsed_from, period_to=parsed_to)
+
+
+@router.get("/payment-reports/unmapped-counterparties", dependencies=[Depends(verify_token)])
+async def get_unmapped_counterparties_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    limit: int = Query(default=100, ge=1, le=500),
+    examples: int = Query(default=2, ge=0, le=10),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_unmapped_counterparties_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_unmapped_counterparties_report(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        limit=limit,
+        examples=examples,
+    )
+
+
+@router.get("/payment-reports/counterparty-mappings", dependencies=[Depends(verify_token)])
+async def get_payment_counterparty_supplier_mappings(
+    limit: int = Query(default=500, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_counterparty_supplier_mappings_report
+
+    return await build_counterparty_supplier_mappings_report(db, limit=limit)
+
+
+@router.post("/payment-reports/counterparty-mappings", dependencies=[Depends(verify_token)])
+async def create_payment_counterparty_supplier_mapping(
+    payload: schemas.PaymentCounterpartySupplierMappingUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models import DropshipEnterprise, PaymentCounterpartySupplierMapping
+
+    supplier_code = str(payload.supplier_code or "").strip()
+    supplier = await db.scalar(select(DropshipEnterprise).where(DropshipEnterprise.code == supplier_code))
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="Dropship supplier not found")
+
+    pattern = str(payload.counterparty_pattern or "").strip() or None
+    tax_id = str(payload.counterparty_tax_id or "").strip() or None
+    if payload.match_type == "tax_id" and not tax_id:
+        raise HTTPException(status_code=400, detail="counterparty_tax_id is required for tax_id mapping")
+    if payload.match_type != "tax_id" and not pattern:
+        raise HTTPException(status_code=400, detail="counterparty_pattern is required")
+
+    mapping = PaymentCounterpartySupplierMapping(
+        supplier_code=supplier_code,
+        supplier_salesdrive_id=payload.supplier_salesdrive_id,
+        match_type=payload.match_type,
+        field_scope=payload.field_scope,
+        counterparty_pattern=pattern,
+        normalized_pattern=pattern.casefold() if pattern else None,
+        counterparty_tax_id=tax_id,
+        priority=payload.priority,
+        is_active=payload.is_active,
+        notes=payload.notes,
+        created_by=payload.created_by,
+        updated_by=payload.updated_by,
+    )
+    db.add(mapping)
+    await db.commit()
+    await db.refresh(mapping)
+    return {
+        "id": int(mapping.id),
+        "supplier_code": mapping.supplier_code,
+        "supplier_name": supplier.name,
+        "match_type": mapping.match_type,
+        "field_scope": mapping.field_scope,
+        "counterparty_pattern": mapping.counterparty_pattern,
+        "counterparty_tax_id": mapping.counterparty_tax_id,
+        "priority": int(mapping.priority or 100),
+        "is_active": bool(mapping.is_active),
+    }
+
+
+@router.get("/payment-reports/customer-receipts", dependencies=[Depends(verify_token)])
+async def get_customer_receipts_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_customer_receipts_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_customer_receipts_report(db, period_from=parsed_from, period_to=parsed_to)
+
+
+@router.get("/payment-reports/internal-transfers", dependencies=[Depends(verify_token)])
+async def get_internal_transfers_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_internal_transfers_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_internal_transfers_report(db, period_from=parsed_from, period_to=parsed_to)
