@@ -80,7 +80,6 @@ async def fetch_products_for_store(
     token: str,
     store_id: str,
     offset: int = 0,
-    min_stock: int = 1,
 ) -> list[dict[str, Any]]:
     headers = {
         "accept": "application/json",
@@ -90,7 +89,6 @@ async def fetch_products_for_store(
         "store_id": store_id,
         "offset": offset,
         "limit": PAGE_LIMIT,
-        "min_stock": min_stock,
     }
 
     try:
@@ -154,7 +152,6 @@ async def fetch_all_products_grouped_by_store(
                         token,
                         store_id,
                         offset=offset,
-                        min_stock=1,
                     )
                     if not page_products:
                         break
@@ -265,6 +262,8 @@ def transform_stock(
                 qty = int(float(qty_raw or 0))
             except (TypeError, ValueError):
                 qty = 0
+            if qty <= 0:
+                continue
 
             price_raw = product.get("price", 0)
             try:
