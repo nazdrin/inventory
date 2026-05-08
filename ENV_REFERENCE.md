@@ -73,9 +73,17 @@
 ## Telegram / уведомления
 
 - `TELEGRAM_BOT_TOKEN` - токен Telegram bot.
-- `TELEGRAM_DEVELOP` - чат/канал для developer notifications.
+- `TELEGRAM_DEVELOP` - токен Telegram bot для developer/info notifications.
+- `TELEGRAM_ERROR_BOT_TOKEN` - токен Telegram bot для error notifications; если не задан, ошибки fallback-ятся в обычный info bot.
+- `TELEGRAM_CHAT_IDS` - optional список chat_id через запятую для обычных уведомлений; если не задан, используется fallback из `notification_service`.
+- `TELEGRAM_ERROR_CHAT_IDS` - optional список chat_id через запятую для ошибок; если не задан, используется `TELEGRAM_CHAT_IDS` или fallback из `notification_service`.
 - `CALL_DELAY_SECONDS` - задержка перед частью уведомлений.
 - `TELEGRAM_CALL_DELAY_SECONDS` - отдельная задержка для Telegram bot flow.
+- `ORDER_REPORT_TELEGRAM_ENABLED` - включает hourly Telegram scheduler для дневной накопительной отчетности по заказам, дефолт `false`.
+- `ORDER_REPORT_TELEGRAM_BOT_TOKEN` - отдельный токен Telegram bot для отчетов по заказам; если не задан, используется `TELEGRAM_DEVELOP`, затем `TELEGRAM_BOT_TOKEN`.
+- `ORDER_REPORT_TELEGRAM_CHAT_IDS` - optional один или несколько Telegram chat_id через запятую для отчетов по заказам; если не задан, используется `TELEGRAM_CHAT_IDS` или fallback из сервиса.
+- `ORDER_REPORT_TELEGRAM_PROFIT_BASIS` - база показателя `Net profit`: `orders` для активных+проданных заказов без отказов/возвратов/удаленных, `sales` только по продажам; дефолт `orders`.
+- `ORDER_REPORT_TELEGRAM_SEND_ON_START` - отправить отчет сразу при старте scheduler, дефолт `false`.
 
 ## Pricing / dropship
 

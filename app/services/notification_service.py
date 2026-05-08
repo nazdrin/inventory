@@ -9,10 +9,61 @@ from sqlalchemy import create_engine, text
 # ENV / Константи
 # ---------------------------------------
 load_dotenv()
-TOKEN = os.getenv("TELEGRAM_DEVELOP")
+INFO_TOKEN = os.getenv("TELEGRAM_DEVELOP") or os.getenv("TELEGRAM_BOT_TOKEN")
+ERROR_TOKEN = os.getenv("TELEGRAM_ERROR_BOT_TOKEN")
 
-TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-CHAT_IDS = [807661373, 1041598119]
+DEFAULT_CHAT_IDS = [807661373, 1041598119]
+ERROR_MARKERS = (
+    "error",
+    "failed",
+    "failure",
+    "exception",
+    "traceback",
+    "critical",
+    "ошибка",
+    "помилка",
+    "критичес",
+    "не задан",
+    "не задана",
+    "не найден",
+    "не найдены",
+    "нет настроек",
+    "остановлен",
+    "❌",
+    "🔴",
+    "🔥",
+)
+
+
+def _parse_chat_ids(raw: Optional[str]) -> list[Union[int, str]]:
+    if not raw or not raw.strip():
+        return DEFAULT_CHAT_IDS
+
+    values: list[Union[int, str]] = []
+    for item in raw.split(","):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            values.append(int(value))
+        except ValueError:
+            values.append(value)
+    return values or DEFAULT_CHAT_IDS
+
+
+CHAT_IDS = _parse_chat_ids(os.getenv("TELEGRAM_CHAT_IDS"))
+ERROR_CHAT_IDS = _parse_chat_ids(os.getenv("TELEGRAM_ERROR_CHAT_IDS") or os.getenv("TELEGRAM_CHAT_IDS"))
+
+
+def _is_error_message(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    return any(marker in normalized for marker in ERROR_MARKERS)
+
+
+def _resolve_notification_target(message: str) -> tuple[Optional[str], list[Union[int, str]], str]:
+    if _is_error_message(message):
+        return ERROR_TOKEN or INFO_TOKEN, ERROR_CHAT_IDS, "error"
+    return INFO_TOKEN, CHAT_IDS, "info"
 
 
 # ---------------------------------------
@@ -124,7 +175,8 @@ def send_notification(message: str, enterprise_code: Optional[Union[str, int]] =
     - Якщо enterprise_code не передано → надсилається лише message.
     - Якщо enterprise_code передано → додаються Enterprise Code, Название предприятия і Формат.
     """
-    if not TOKEN:
+    token, chat_ids, _channel = _resolve_notification_target(message)
+    if not token:
         # Немає токена — пропускаємо відправку
         return
 
@@ -136,11 +188,12 @@ def send_notification(message: str, enterprise_code: Optional[Union[str, int]] =
         meta = _fetch_enterprise_meta_sync(code_str)
 
     text = _build_text(message, code_str, meta)
+    telegram_api = f"https://api.telegram.org/bot{token}/sendMessage"
 
-    for chat_id in CHAT_IDS:
+    for chat_id in chat_ids:
         payload = {"chat_id": chat_id, "text": text}
         try:
-            requests.post(TELEGRAM_API, data=payload, timeout=15)
+            requests.post(telegram_api, data=payload, timeout=15)
         except Exception:
             # За потреби додайте логування
             pass
