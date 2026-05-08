@@ -23,6 +23,7 @@ from app.key_crm_data_service.key_crm_send_order import send_order_to_key_crm
 from app.key_crm_data_service.key_crm_status_check import check_statuses_key_crm
 from app.business.order_sender import process_and_send_order
 from app.salesdrive_simple.salesdrive_simple_sender import send_order_to_salesdrive_simple
+from app.services.order_reporting_sync_service import safe_upsert_tabletki_order
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,24 @@ async def _normalize_business_orders_for_runtime(
 
     return legacy_orders, store_aware_orders, mapping_error_orders
 
+
+async def _safe_sync_reporting_for_orders(
+    session: AsyncSession,
+    *,
+    enterprise_code: str,
+    branch: str,
+    status: int | float,
+    orders: List[Dict[str, Any]],
+) -> None:
+    for order in orders:
+        await safe_upsert_tabletki_order(
+            session,
+            order=order,
+            enterprise_code=enterprise_code,
+            branch=branch,
+            fetched_status=status,
+        )
+
 async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: str):
     """
     Получает заказы для заданного предприятия (enterprise_code),
@@ -258,6 +277,13 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                         enterprise=enterprise,
                                         branch=branch,
                                         orders=data,
+                                    )
+                                    await _safe_sync_reporting_for_orders(
+                                        session,
+                                        enterprise_code=enterprise_code,
+                                        branch=branch,
+                                        status=status,
+                                        orders=legacy_orders + store_aware_orders,
                                     )
 
                                     for order in legacy_orders:
@@ -356,6 +382,13 @@ async def fetch_orders_for_enterprise(session: AsyncSession, enterprise_code: st
                                         enterprise=enterprise,
                                         branch=branch,
                                         orders=data,
+                                    )
+                                    await _safe_sync_reporting_for_orders(
+                                        session,
+                                        enterprise_code=enterprise_code,
+                                        branch=branch,
+                                        status=status,
+                                        orders=legacy_orders + store_aware_orders,
                                     )
 
                                     for order in legacy_orders:

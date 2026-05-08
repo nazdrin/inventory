@@ -1774,3 +1774,127 @@ class PaymentPeriodLock(Base, TimestampMixin):
         Index("ix_payment_period_locks_status", "status"),
         CheckConstraint("status IN ('open', 'closed')", name="ck_payment_period_locks_status"),
     )
+
+
+class ReportOrder(Base, TimestampMixin):
+    __tablename__ = "report_orders"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    business_store_id = Column(BigInteger, ForeignKey("business_stores.id"), nullable=True)
+    branch = Column(String(255), nullable=True)
+    external_order_id = Column(String(255), nullable=False)
+    salesdrive_order_id = Column(String(255), nullable=True)
+    tabletki_order_id = Column(String(255), nullable=True)
+    order_number = Column(String(255), nullable=True)
+    order_created_at = Column(DateTime(timezone=True), nullable=True)
+    order_updated_at = Column(DateTime(timezone=True), nullable=True)
+    sale_date = Column(DateTime(timezone=True), nullable=True)
+    status_id = Column(Integer, nullable=True)
+    status_name = Column(String(255), nullable=True)
+    status_group = Column(String(64), nullable=False, server_default=text("'active'"))
+    is_order = Column(Boolean, nullable=False, server_default=text("true"))
+    is_sale = Column(Boolean, nullable=False, server_default=text("false"))
+    is_return = Column(Boolean, nullable=False, server_default=text("false"))
+    is_cancelled = Column(Boolean, nullable=False, server_default=text("false"))
+    is_deleted = Column(Boolean, nullable=False, server_default=text("false"))
+    customer_city = Column(String(255), nullable=True)
+    payment_type = Column(String(255), nullable=True)
+    delivery_type = Column(String(255), nullable=True)
+    order_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    sale_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    items_quantity = Column(Numeric(14, 3), nullable=False, server_default=text("0"))
+    sale_quantity = Column(Numeric(14, 3), nullable=False, server_default=text("0"))
+    supplier_cost_total = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    gross_profit_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    expense_percent = Column(Numeric(8, 4), nullable=False, server_default=text("0"))
+    expense_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    net_profit_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    raw_hash = Column(String(64), nullable=True)
+    raw_json = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("source", "enterprise_code", "external_order_id", name="uq_report_orders_source_enterprise_external"),
+        Index("ix_report_orders_enterprise_created", "enterprise_code", "order_created_at"),
+        Index("ix_report_orders_enterprise_sale_date", "enterprise_code", "sale_date"),
+        Index("ix_report_orders_status_group", "status_group"),
+        Index("ix_report_orders_salesdrive_order_id", "salesdrive_order_id"),
+        Index("ix_report_orders_tabletki_order_id", "tabletki_order_id"),
+        CheckConstraint("order_amount >= 0", name="ck_report_orders_order_amount_nonneg"),
+        CheckConstraint("sale_amount >= 0", name="ck_report_orders_sale_amount_nonneg"),
+        CheckConstraint("supplier_cost_total >= 0", name="ck_report_orders_cost_nonneg"),
+        CheckConstraint("expense_percent >= 0", name="ck_report_orders_expense_percent_nonneg"),
+    )
+
+
+class ReportOrderItem(Base, TimestampMixin):
+    __tablename__ = "report_order_items"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    report_order_id = Column(BigInteger, ForeignKey("report_orders.id", ondelete="CASCADE"), nullable=False)
+    line_index = Column(Integer, nullable=False)
+    source_product_id = Column(String(255), nullable=True)
+    sku = Column(String(255), nullable=True)
+    barcode = Column(String(255), nullable=True)
+    product_name = Column(String(1000), nullable=True)
+    supplier_name = Column(String(500), nullable=True)
+    supplier_code = Column(String(255), nullable=True)
+    quantity = Column(Numeric(14, 3), nullable=False, server_default=text("0"))
+    sale_price = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    sale_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    cost_price = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    cost_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    gross_profit_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    margin_percent = Column(Numeric(8, 4), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("report_order_id", "line_index", name="uq_report_order_items_order_line"),
+        Index("ix_report_order_items_order_id", "report_order_id"),
+        Index("ix_report_order_items_supplier_code", "supplier_code"),
+        Index("ix_report_order_items_sku", "sku"),
+        CheckConstraint("quantity >= 0", name="ck_report_order_items_quantity_nonneg"),
+        CheckConstraint("sale_amount >= 0", name="ck_report_order_items_sale_nonneg"),
+        CheckConstraint("cost_amount >= 0", name="ck_report_order_items_cost_nonneg"),
+    )
+
+
+class ReportEnterpriseExpenseSetting(Base, TimestampMixin):
+    __tablename__ = "report_enterprise_expense_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    expense_percent = Column(Numeric(8, 4), nullable=False, server_default=text("0"))
+    active_from = Column(Date, nullable=False)
+    active_to = Column(Date, nullable=True)
+
+    __table_args__ = (
+        Index("ix_report_expense_settings_enterprise", "enterprise_code", "active_from", "active_to"),
+        CheckConstraint("expense_percent >= 0", name="ck_report_expense_settings_percent_nonneg"),
+    )
+
+
+class ReportOrderSyncState(Base, TimestampMixin):
+    __tablename__ = "report_order_sync_state"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
+    last_success_at = Column(DateTime(timezone=True), nullable=True)
+    last_sync_from = Column(DateTime(timezone=True), nullable=True)
+    last_sync_to = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'running'"))
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    created_count = Column(Integer, nullable=False, server_default=text("0"))
+    updated_count = Column(Integer, nullable=False, server_default=text("0"))
+    failed_count = Column(Integer, nullable=False, server_default=text("0"))
+    request_params = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("ix_report_order_sync_state_source_enterprise", "source", "enterprise_code"),
+        Index("ix_report_order_sync_state_status", "status"),
+        CheckConstraint("status IN ('running', 'success', 'failed', 'partial')", name="ck_report_order_sync_state_status"),
+    )

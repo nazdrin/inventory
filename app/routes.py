@@ -3469,6 +3469,140 @@ async def run_salesdrive_payment_import(
     }
 
 
+@router.get("/reports/orders/summary", dependencies=[Depends(verify_token)])
+async def get_order_report_summary(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_summary
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_summary(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/funnel", dependencies=[Depends(verify_token)])
+async def get_order_report_funnel(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_funnel
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_funnel(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/by-enterprise", dependencies=[Depends(verify_token)])
+async def get_order_report_by_enterprise(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_by_enterprise
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_by_enterprise(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/by-supplier", dependencies=[Depends(verify_token)])
+async def get_order_report_by_supplier(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_by_supplier
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_by_supplier(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/details", dependencies=[Depends(verify_token)])
+async def get_order_report_details(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    status_group: str | None = Query(default=None),
+    supplier_code: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_details
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_details(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        enterprise_code=enterprise_code,
+        status_group=status_group,
+        supplier_code=supplier_code,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/reports/orders/expense-settings", dependencies=[Depends(verify_token)])
+async def get_order_report_expense_settings(db: AsyncSession = Depends(get_db)):
+    from app.business.reporting.orders.report_service import list_expense_settings
+
+    return await list_expense_settings(db)
+
+
+@router.put("/reports/orders/expense-settings", dependencies=[Depends(verify_token)])
+async def upsert_order_report_expense_setting(
+    payload: schemas.OrderReportExpenseSettingUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.repository import upsert_expense_setting
+
+    try:
+        active_from = datetime.strptime(payload.active_from, "%Y-%m-%d").date()
+        active_to = datetime.strptime(payload.active_to, "%Y-%m-%d").date() if payload.active_to else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="active_from/active_to must be YYYY-MM-DD") from exc
+    row = await upsert_expense_setting(
+        db,
+        enterprise_code=payload.enterprise_code,
+        expense_percent=payload.expense_percent,
+        active_from=active_from,
+        active_to=active_to,
+    )
+    await db.commit()
+    return {
+        "id": int(row.id),
+        "enterprise_code": row.enterprise_code,
+        "expense_percent": str(row.expense_percent),
+        "active_from": row.active_from.isoformat(),
+        "active_to": row.active_to.isoformat() if row.active_to else None,
+    }
+
+
+@router.post("/reports/orders/sync", dependencies=[Depends(verify_token)])
+async def sync_order_reports(
+    payload: schemas.OrderReportSyncRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.salesdrive_loader import sync_salesdrive_orders
+
+    parsed_from, parsed_to = _parse_payment_report_period(payload.period_from, payload.period_to)
+    result = await sync_salesdrive_orders(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        enterprise_code=payload.enterprise_code,
+        limit=payload.limit,
+        max_pages=payload.max_pages,
+    )
+    await db.commit()
+    return result
+
+
 @router.get("/payment-imports", dependencies=[Depends(verify_token)])
 async def list_payment_imports(
     limit: int = Query(default=50, ge=1, le=200),

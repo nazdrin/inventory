@@ -51,6 +51,19 @@ class SalesDrivePaymentImportRequest(PaymentPeriodRequest):
     payment_type: Literal["incoming", "outcoming", "all"] = "all"
 
 
+class OrderReportSyncRequest(PaymentPeriodRequest):
+    enterprise_code: Optional[str] = None
+    limit: int = Field(default=100, ge=1, le=500)
+    max_pages: int = Field(default=20, ge=1, le=200)
+
+
+class OrderReportExpenseSettingUpsert(BaseModel):
+    enterprise_code: str
+    expense_percent: Decimal = Field(default=Decimal("0"), ge=0)
+    active_from: str
+    active_to: Optional[str] = None
+
+
 class AccountBalanceAdjustmentUpsert(BaseModel):
     account_id: int
     period_month: Optional[str] = None

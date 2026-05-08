@@ -10,6 +10,7 @@ import SuppliersPage from "./pages/SuppliersPage";
 import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 import BusinessStoresPage from "./pages/BusinessStoresPage";
 import PaymentReportsPage from "./pages/PaymentReportsPage";
+import OrderReportsPage from "./pages/OrderReportsPage";
 
 import Login from "./pages/Login";
 
@@ -191,6 +192,20 @@ const App = () => {
                         >
                             Платежи
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/order-reports")}
+                        >
+                            Заказы
+                        </button>
                     </>
                 )}
             </div>
@@ -232,6 +247,10 @@ const App = () => {
                 <Route
                     path="/payment-reports"
                     element={<PrivateRoute element={<PaymentReportsPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/order-reports"
+                    element={<PrivateRoute element={<OrderReportsPage authUser={authUser} />} />}
                 />
             </Routes>
         </div>

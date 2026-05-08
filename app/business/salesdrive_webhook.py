@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from app.business.business_store_tabletki_outbound_mapper import (
 from app.database import get_async_db, EnterpriseSettings
 from app.models import MappingBranch
 from app.services.order_sender import process_due_tabletki_cancel_retries, send_orders_to_tabletki
+from app.services.order_reporting_sync_service import safe_upsert_salesdrive_order
 from app.services.send_TTN import send_ttn  # async def send_ttn(...) -> bool
 from app.services.telegram_bot import notify_call_request
 
@@ -241,6 +243,12 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
             if not enterprise_code:
                 logger.error("⛔ enterprise_code не найден по branch=%s в MappingBranch", branch_value)
                 continue
+
+            await safe_upsert_salesdrive_order(
+                session,
+                order=data,
+                enterprise_code=enterprise_code,
+            )
 
             creds = await _get_tabletki_credentials(session, enterprise_code)
             if not creds:
