@@ -170,6 +170,7 @@ async def _offer_for_line(
     sku: str | None,
     sale_price: Decimal,
     business_store_id: int | None,
+    preferred_supplier_code: str | None = None,
 ) -> tuple[str | None, str | None, Decimal]:
     if not sku:
         return None, None, Decimal("0")
@@ -203,7 +204,14 @@ async def _offer_for_line(
         return None, None, Decimal("0")
 
     normalized = [(str(sc), name, as_decimal(price), as_decimal(cost)) for sc, name, price, cost in rows]
-    normalized.sort(key=lambda item: (abs(as_decimal(sale_price) - item[2]), item[0]))
+    preferred = _clean(preferred_supplier_code)
+    normalized.sort(
+        key=lambda item: (
+            0 if preferred and item[0] == preferred else 1,
+            abs(as_decimal(sale_price) - item[2]),
+            item[0],
+        )
+    )
     supplier_code, supplier_name, _offer_price, cost_price = normalized[0]
     return supplier_code, str(supplier_name or supplier_code), money(cost_price)
 
@@ -329,13 +337,18 @@ async def normalize_salesdrive_order(
         supplier_name = _clean(product.get("supplier") or order.get("supplier"))
         if not supplier_code:
             supplier_code = await _supplier_code_by_name(session, supplier_name)
-        if not supplier_code and cost_price == 0:
-            supplier_code, supplier_name, cost_price = await _offer_for_line(
+        if cost_price == 0:
+            resolved_supplier_code, resolved_supplier_name, resolved_cost_price = await _offer_for_line(
                 session,
                 sku=sku,
                 sale_price=sale_price,
                 business_store_id=business_store_id,
+                preferred_supplier_code=supplier_code,
             )
+            if not supplier_code or resolved_supplier_code == supplier_code:
+                supplier_code = supplier_code or resolved_supplier_code
+                supplier_name = supplier_name or resolved_supplier_name
+                cost_price = resolved_cost_price
         sale_amount = money(sale_price * quantity)
         cost_amount = money(cost_price * quantity)
         gross_profit = money(sale_amount - cost_amount)
