@@ -110,7 +110,9 @@ const OrderReportsPage = () => {
         setError("");
         try {
             const result = await syncOrderReports({ periodFrom, periodTo, enterpriseCode: enterpriseCode || null });
-            setMessage(`Sync: ${result.status}, created=${result.created_count}, updated=${result.updated_count}, failed=${result.failed_count}`);
+            const reasons = result.failed_reasons ? `, reasons=${JSON.stringify(result.failed_reasons)}` : "";
+            const errorMessage = result.error_message ? `, error=${result.error_message}` : "";
+            setMessage(`Sync: ${result.status}, created=${result.created_count}, updated=${result.updated_count}, failed=${result.failed_count}${reasons}${errorMessage}`);
             await loadReports();
         } catch (err) {
             setError(err?.response?.data?.detail || err.message || "Sync не выполнен.");

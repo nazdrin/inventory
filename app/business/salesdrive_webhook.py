@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
