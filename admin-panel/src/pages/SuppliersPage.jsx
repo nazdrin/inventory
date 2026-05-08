@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     createSupplier,
     getBusinessStores,
@@ -185,7 +185,7 @@ const defaultStoreSettingsDraft = {
     supplier_code: "",
     is_active: true,
     priority_override: "",
-    min_markup_threshold: "",
+    min_markup_threshold: "0",
     extra_markup_enabled: false,
     extra_markup_mode: "percent",
     extra_markup_value: "",
@@ -312,6 +312,7 @@ const SuppliersPage = () => {
     const [storeSettingsError, setStoreSettingsError] = useState("");
     const [storeSettingsSaveError, setStoreSettingsSaveError] = useState("");
     const [storeSettingsSaveSuccess, setStoreSettingsSaveSuccess] = useState("");
+    const storeSettingsRequestRef = useRef(0);
 
     const loadList = async () => {
         setListLoading(true);
@@ -360,6 +361,7 @@ const SuppliersPage = () => {
             setSelectedStoreEnterpriseCode("");
             setSelectedStoreId("");
             setStoreSettingsDraft(defaultStoreSettingsDraft);
+            storeSettingsRequestRef.current += 1;
             return;
         }
 
@@ -423,12 +425,16 @@ const SuppliersPage = () => {
                     || String((businessStores[0] || {}).id || "");
 
                 if (preferredStoreId) {
+                    const preferredStore = businessStores.find((item) => String(item.id) === preferredStoreId);
                     setSelectedStoreId(preferredStoreId);
+                    setSelectedStoreEnterpriseCode(String(preferredStore?.enterprise_code || ""));
                     const exact = Array.isArray(overview)
                         ? overview.find((item) => String(item.store_id) === preferredStoreId)
                         : null;
                     await applyStoreSettingsDraft(preferredStoreId, selectedCode, exact || null);
                 } else {
+                    setSelectedStoreEnterpriseCode("");
+                    setSelectedStoreId("");
                     setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
                 }
             } catch (error) {
@@ -561,6 +567,10 @@ const SuppliersPage = () => {
         setStoreSettingsSaveError("");
         setStoreSettingsSaveSuccess("");
         setSelectedStoreEnterpriseCode("");
+        setSelectedStoreId("");
+        setStoreSettingsOverview([]);
+        setStoreSettingsDraft(defaultStoreSettingsDraft);
+        storeSettingsRequestRef.current += 1;
         setSelectedCode(code);
     };
 
@@ -606,33 +616,47 @@ const SuppliersPage = () => {
         }
     };
 
-    const buildStoreSettingsDraft = (supplierCode, existing) => ({
-        supplier_code: String(supplierCode || ""),
-        is_active: existing ? Boolean(existing.is_active) : true,
-        priority_override: existing?.priority_override ?? "",
-        min_markup_threshold: existing?.min_markup_threshold ?? detail?.min_markup_threshold ?? "",
-        extra_markup_enabled: existing ? Boolean(existing.extra_markup_enabled) : false,
-        extra_markup_mode: String(existing?.extra_markup_mode || "percent"),
-        extra_markup_value: existing?.extra_markup_value ?? "",
-        extra_markup_min: existing?.extra_markup_min ?? "",
-        extra_markup_max: existing?.extra_markup_max ?? "",
-        dumping_mode: existing ? Boolean(existing.dumping_mode) : false,
-    });
+    const buildStoreSettingsDraft = (supplierCode, existing) => {
+        const defaultMinMarkupThreshold = detail?.min_markup_threshold ?? "0";
+
+        return {
+            supplier_code: String(supplierCode || ""),
+            is_active: existing ? Boolean(existing.is_active) : true,
+            priority_override: existing?.priority_override ?? "",
+            min_markup_threshold: existing?.min_markup_threshold ?? defaultMinMarkupThreshold,
+            extra_markup_enabled: existing ? Boolean(existing.extra_markup_enabled) : false,
+            extra_markup_mode: String(existing?.extra_markup_mode || "percent"),
+            extra_markup_value: existing?.extra_markup_value ?? "",
+            extra_markup_min: existing?.extra_markup_min ?? "",
+            extra_markup_max: existing?.extra_markup_max ?? "",
+            dumping_mode: existing ? Boolean(existing.dumping_mode) : false,
+        };
+    };
 
     const applyStoreSettingsDraft = async (storeId, supplierCode, prefetchedOverview = null) => {
+        const requestId = storeSettingsRequestRef.current + 1;
+        storeSettingsRequestRef.current = requestId;
         const existingFromOverview = prefetchedOverview ?? overviewByStoreId.get(String(storeId));
         if (existingFromOverview) {
-            setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, existingFromOverview));
+            if (storeSettingsRequestRef.current === requestId) {
+                setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, existingFromOverview));
+            }
             return;
         }
 
         try {
             const rows = await getBusinessStoreSupplierSettings(storeId);
+            if (storeSettingsRequestRef.current !== requestId) {
+                return;
+            }
             const exact = Array.isArray(rows)
                 ? rows.find((item) => String(item.supplier_code || "").trim() === String(supplierCode || "").trim())
                 : null;
             setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, exact || null));
         } catch (error) {
+            if (storeSettingsRequestRef.current !== requestId) {
+                return;
+            }
             console.error("Ошибка загрузки store-specific supplier settings:", error);
             setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, null));
             setStoreSettingsError("Не удалось загрузить настройки поставщика для выбранного магазина.");
@@ -710,9 +734,10 @@ const SuppliersPage = () => {
         }));
     };
 
-    const handleStoreSelection = async (value) => {
+    const handleStoreSelection = async (value, options = {}) => {
+        const { syncEnterprise = true } = options;
         const selectedStore = businessStores.find((item) => String(item.id) === String(value));
-        if (selectedStore?.enterprise_code) {
+        if (syncEnterprise && selectedStore?.enterprise_code) {
             setSelectedStoreEnterpriseCode(String(selectedStore.enterprise_code));
         }
         setSelectedStoreId(value);
@@ -726,29 +751,22 @@ const SuppliersPage = () => {
         await applyStoreSettingsDraft(value, selectedCode);
     };
 
-    const handleStoreEnterpriseSelection = async (enterpriseCode) => {
+    const handleStoreEnterpriseSelection = (enterpriseCode) => {
         setSelectedStoreEnterpriseCode(enterpriseCode);
+        setSelectedStoreId("");
         setStoreSettingsError("");
         setStoreSettingsSaveError("");
         setStoreSettingsSaveSuccess("");
 
         const normalizedEnterpriseCode = String(enterpriseCode || "").trim();
         if (!normalizedEnterpriseCode) {
-            setSelectedStoreId("");
             setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+            storeSettingsRequestRef.current += 1;
             return;
         }
 
-        const nextStore = businessStores.find(
-            (store) => String(store?.enterprise_code || "").trim() === normalizedEnterpriseCode,
-        );
-        if (!nextStore) {
-            setSelectedStoreId("");
-            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
-            return;
-        }
-
-        await handleStoreSelection(String(nextStore.id));
+        setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+        storeSettingsRequestRef.current += 1;
     };
 
     const buildStoreSettingsPayload = () => {
@@ -857,63 +875,6 @@ const SuppliersPage = () => {
             setSaveError("Не удалось сохранить поставщика.");
         }
     };
-
-    useEffect(() => {
-        if (!selectedStoreId) {
-            return;
-        }
-        const selectedStore = businessStores.find((item) => String(item.id) === String(selectedStoreId));
-        if (!selectedStore?.enterprise_code) {
-            return;
-        }
-        const nextEnterpriseCode = String(selectedStore.enterprise_code);
-        if (nextEnterpriseCode !== String(selectedStoreEnterpriseCode || "")) {
-            setSelectedStoreEnterpriseCode(nextEnterpriseCode);
-        }
-    }, [businessStores, selectedStoreEnterpriseCode, selectedStoreId]);
-
-    useEffect(() => {
-        if (!selectedCode || !businessStores.length) {
-            return;
-        }
-
-        if (selectedStoreEnterpriseCode) {
-            const selectedStoreStillVisible = filteredBusinessStores.some(
-                (store) => String(store.id) === String(selectedStoreId),
-            );
-            if (selectedStoreStillVisible || filteredBusinessStores.length === 0) {
-                return;
-            }
-            const fallbackStoreId = String(filteredBusinessStores[0].id);
-            setSelectedStoreId(fallbackStoreId);
-            setStoreSettingsError("");
-            setStoreSettingsSaveError("");
-            setStoreSettingsSaveSuccess("");
-            void applyStoreSettingsDraft(fallbackStoreId, selectedCode);
-            return;
-        }
-
-        const preferredStore = selectedStoreId
-            ? businessStores.find((item) => String(item.id) === String(selectedStoreId))
-            : null;
-        const fallbackStore = preferredStore
-            || (storeSettingsOverview[0]
-                ? businessStores.find((item) => String(item.id) === String(storeSettingsOverview[0].store_id))
-                : null)
-            || businessStores[0];
-
-        if (fallbackStore?.enterprise_code) {
-            setSelectedStoreEnterpriseCode(String(fallbackStore.enterprise_code));
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-        businessStores,
-        filteredBusinessStores,
-        selectedCode,
-        selectedStoreEnterpriseCode,
-        selectedStoreId,
-        storeSettingsOverview,
-    ]);
 
     return (
         <div style={pageStyle}>
