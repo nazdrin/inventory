@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import os
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BusinessEnterpriseProductCode, BusinessStore, BusinessStoreProductCode
+from app.models import BusinessEnterpriseProductCode, BusinessStore, EnterpriseSettings
 
 
 ORIGINAL_EXTERNAL_GOODS_CODE_FIELD = "originalGoodsCodeExternal"
@@ -21,13 +20,15 @@ def _clean_text(value: Any) -> str | None:
     return normalized or None
 
 
-def _enterprise_order_code_mapping_enabled() -> bool:
-    return (os.getenv("BUSINESS_ENTERPRISE_ORDER_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+def _uses_external_code_mapping(store: BusinessStore) -> bool:
+    return not (
+        bool(getattr(store, "is_legacy_default", False))
+        or str(_clean_text(getattr(store, "code_strategy", None)) or "").lower() == "legacy_same"
+    )
+
+
+def _code_mapping_mode_for_store(store: BusinessStore) -> str:
+    return "enterprise_level" if _uses_external_code_mapping(store) else "legacy_same"
 
 
 async def resolve_business_store_for_order(
@@ -97,13 +98,27 @@ async def resolve_business_store_for_order(
     return None
 
 
+async def _is_baseline_enterprise_for_store(session: AsyncSession, store: BusinessStore) -> bool:
+    enterprise_code = _clean_text(store.enterprise_code)
+    if not enterprise_code:
+        return True
+    runtime_mode = (
+        await session.execute(
+            select(EnterpriseSettings.business_runtime_mode).where(
+                EnterpriseSettings.enterprise_code == enterprise_code
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    return str(runtime_mode or "baseline").strip().lower() != "custom"
+
+
 async def map_external_order_code_to_internal(
     session: AsyncSession,
     *,
     store: BusinessStore,
     external_product_code: str,
 ) -> dict[str, Any]:
-    code_mapping_mode = "enterprise_level" if _enterprise_order_code_mapping_enabled() else "store_level"
+    code_mapping_mode = _code_mapping_mode_for_store(store)
     normalized_external_product_code = _clean_text(external_product_code)
     if not normalized_external_product_code:
         return {
@@ -119,26 +134,26 @@ async def map_external_order_code_to_internal(
             else "missing_external_code_mapping",
         }
 
-    if code_mapping_mode == "enterprise_level":
-        row = (
-            await session.execute(
-                select(BusinessEnterpriseProductCode).where(
-                    BusinessEnterpriseProductCode.enterprise_code == str(store.enterprise_code or "").strip(),
-                    BusinessEnterpriseProductCode.external_product_code == normalized_external_product_code,
-                    BusinessEnterpriseProductCode.is_active.is_(True),
-                ).limit(1)
-            )
-        ).scalar_one_or_none()
-    else:
-        row = (
-            await session.execute(
-                select(BusinessStoreProductCode).where(
-                    BusinessStoreProductCode.store_id == int(store.id),
-                    BusinessStoreProductCode.external_product_code == normalized_external_product_code,
-                    BusinessStoreProductCode.is_active.is_(True),
-                ).limit(1)
-            )
-        ).scalar_one_or_none()
+    if code_mapping_mode == "legacy_same":
+        return {
+            "status": "ok",
+            "code_mapping_mode": code_mapping_mode,
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
+            "external_product_code": normalized_external_product_code,
+            "internal_product_code": normalized_external_product_code,
+        }
+
+    row = (
+        await session.execute(
+            select(BusinessEnterpriseProductCode).where(
+                BusinessEnterpriseProductCode.enterprise_code == str(store.enterprise_code or "").strip(),
+                BusinessEnterpriseProductCode.external_product_code == normalized_external_product_code,
+                BusinessEnterpriseProductCode.is_active.is_(True),
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
 
     if row is None:
         return {
@@ -190,11 +205,27 @@ async def normalize_store_order_payload(
         warnings.append("BusinessStore was not resolved; order payload left unchanged.")
         return {
             "status": "legacy_passthrough",
-            "code_mapping_mode": "store_level",
+            "code_mapping_mode": "legacy_same",
             "store_found": False,
             "store_id": None,
             "store_code": None,
             "enterprise_code": None,
+            "mapped_rows": 0,
+            "missing_mappings": [],
+            "order": original_payload,
+            "warnings": warnings,
+            "errors": errors,
+        }
+
+    if await _is_baseline_enterprise_for_store(session, store):
+        warnings.append("Enterprise uses baseline runtime mode; order payload left unchanged.")
+        return {
+            "status": "legacy_passthrough",
+            "code_mapping_mode": "legacy_same",
+            "store_found": True,
+            "store_id": int(store.id),
+            "store_code": store.store_code,
+            "enterprise_code": store.enterprise_code,
             "mapped_rows": 0,
             "missing_mappings": [],
             "order": original_payload,
@@ -208,7 +239,7 @@ async def normalize_store_order_payload(
         errors.append("order_payload.rows must be a list")
         return {
             "status": "mapping_error",
-            "code_mapping_mode": "enterprise_level" if _enterprise_order_code_mapping_enabled() else "store_level",
+            "code_mapping_mode": _code_mapping_mode_for_store(store),
             "store_found": True,
             "store_id": int(store.id),
             "store_code": store.store_code,
@@ -222,7 +253,7 @@ async def normalize_store_order_payload(
 
     missing_mappings: list[dict[str, Any]] = []
     mapped_rows = 0
-    code_mapping_mode = "enterprise_level" if _enterprise_order_code_mapping_enabled() else "store_level"
+    code_mapping_mode = _code_mapping_mode_for_store(store)
 
     for index, row in enumerate(rows):
         if not isinstance(row, dict):

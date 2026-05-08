@@ -234,9 +234,9 @@ const initialStoreDraft = {
     stock_enabled: false,
     orders_enabled: false,
     catalog_only_in_stock: true,
-    code_strategy: "opaque_mapping",
+    code_strategy: "legacy_same",
     code_prefix: "",
-    name_strategy: "supplier_random",
+    name_strategy: "base",
     extra_markup_enabled: false,
     extra_markup_mode: "percent",
     extra_markup_min: "",
@@ -249,31 +249,31 @@ const initialStoreDraft = {
 const codeStrategyOptions = [
     {
         value: "legacy_same",
-        label: "legacy_same",
-        help: "Внешний код = внутренний product_code. Для базового магазина.",
+        label: "Базовая",
+        help: "Коды отправляются как есть: внешний код = внутренний product_code.",
     },
     {
         value: "opaque_mapping",
-        label: "opaque_mapping",
-        help: "Создаются отдельные внешние коды. Для новых магазинов.",
+        label: "Индивидуальные коды",
+        help: "Для Tabletki используются отдельные коды из маппинга предприятия.",
     },
     {
         value: "prefix_mapping",
-        label: "prefix_mapping",
-        help: "Коды с префиксом. Использовать только осознанно.",
+        label: "Коды с префиксом",
+        help: "Отдельная стратегия с префиксом кода. Использовать только для специальных сценариев.",
     },
 ];
 
 const nameStrategyOptions = [
     {
         value: "base",
-        label: "base",
-        help: "Использовать название из master_catalog.",
+        label: "Базовые",
+        help: "Использовать названия из master_catalog.",
     },
     {
         value: "supplier_random",
-        label: "supplier_random",
-        help: "Один раз выбрать supplier name и сохранить для store + product.",
+        label: "Названия поставщиков",
+        help: "Использовать сохранённые индивидуальные названия товаров.",
     },
 ];
 
@@ -422,13 +422,13 @@ const buildEnterprisePayload = (draft) => ({
     stock_correction: Boolean(draft.stock_correction),
 });
 
-const buildStorePayload = (draft, selectedEnterpriseCode) => ({
+const buildStorePayload = (draft, selectedEnterpriseCode, { isBaselineEnterprise = false } = {}) => ({
     store_code: normalizeRequiredText(draft.store_code, "store_code"),
     store_name: normalizeRequiredText(draft.store_name, "store_name"),
     legal_entity_name: normalizeOptionalText(draft.legal_entity_name),
     tax_identifier: normalizeOptionalText(draft.tax_identifier),
     is_active: Boolean(draft.is_active),
-    is_legacy_default: Boolean(draft.is_legacy_default),
+    is_legacy_default: isBaselineEnterprise ? true : Boolean(draft.is_legacy_default),
     enterprise_code: normalizeOptionalText(selectedEnterpriseCode),
     legacy_scope_key: normalizeOptionalText(draft.legacy_scope_key),
     tabletki_enterprise_code: normalizeOptionalText(draft.tabletki_enterprise_code) || normalizeOptionalText(selectedEnterpriseCode),
@@ -444,9 +444,9 @@ const buildStorePayload = (draft, selectedEnterpriseCode) => ({
     stock_enabled: Boolean(draft.stock_enabled),
     orders_enabled: Boolean(draft.orders_enabled),
     catalog_only_in_stock: Boolean(draft.catalog_only_in_stock),
-    code_strategy: String(draft.code_strategy || "opaque_mapping"),
-    code_prefix: normalizeOptionalText(draft.code_prefix),
-    name_strategy: String(draft.name_strategy || "base"),
+    code_strategy: isBaselineEnterprise ? "legacy_same" : String(draft.code_strategy || "opaque_mapping"),
+    code_prefix: isBaselineEnterprise ? null : normalizeOptionalText(draft.code_prefix),
+    name_strategy: isBaselineEnterprise ? "base" : String(draft.name_strategy || "base"),
     extra_markup_enabled: Boolean(draft.extra_markup_enabled),
     extra_markup_mode: "percent",
     extra_markup_min: normalizeOptionalDecimal(draft.extra_markup_min, "Минимальная наценка"),
@@ -643,14 +643,16 @@ const BusinessStoresPage = () => {
     const isBaselineEnterprise = enterpriseDraft.business_runtime_mode !== "custom";
     const isCustomEnterprise = !isBaselineEnterprise;
     const isRuntimeModeLocked = isCustomEnterprise && Boolean(enterpriseDraft.runtime_mode_switch_locked);
-    const catalogIdentityControlsDisabled = isBaselineEnterprise;
+    const identityControlsDisabled = isBaselineEnterprise;
     const storeRoutingReadOnly = isBaselineEnterprise;
     const enterpriseStrategyStoreId = catalogScopeStore?.id || selectedStoreId || null;
+    const effectiveCodeStrategy = isBaselineEnterprise ? "legacy_same" : String(storeDraft.code_strategy || "opaque_mapping");
+    const effectiveNameStrategy = isBaselineEnterprise ? "base" : String(storeDraft.name_strategy || "base");
     const runtimeModeHelpText = isRuntimeModeLocked
         ? (enterpriseDraft.runtime_mode_switch_lock_reason || "Для підприємства вже створені індивідуальні коди або назви каталогу. Зміну режиму заблоковано.")
         : (isCustomEnterprise
-            ? "Каталог и остатки работают по настраиваемой business-логике. Используются настройки каталога предприятия и магазинов."
-            : "Каталог и остатки работают по стандартной старой логике. Настройки магазинов для каталога и остатков не используются.");
+            ? "Каталог, остатки, заказы и статусы используют настраиваемые коды предприятия."
+            : "Каталог, остатки, заказы и статусы используют базовые коды без маппинга.");
 
     useEffect(() => {
         if (catalogScopeStore) {
@@ -659,6 +661,29 @@ const BusinessStoresPage = () => {
             setEnterpriseCatalogOnlyInStockDraft(true);
         }
     }, [catalogScopeStore]);
+
+    useEffect(() => {
+        if (!isBaselineEnterprise) {
+            return;
+        }
+        setStoreDraft((prev) => {
+            if (
+                prev.is_legacy_default === true
+                && prev.code_strategy === "legacy_same"
+                && prev.name_strategy === "base"
+                && !prev.code_prefix
+            ) {
+                return prev;
+            }
+            return {
+                ...prev,
+                is_legacy_default: true,
+                code_strategy: "legacy_same",
+                code_prefix: "",
+                name_strategy: "base",
+            };
+        });
+    }, [isBaselineEnterprise]);
 
     useEffect(() => {
         if (!isNewStoreDraft || !selectedEnterpriseCode) {
@@ -686,10 +711,14 @@ const BusinessStoresPage = () => {
             enterprise_code: String(enterpriseDraft.enterprise_code || "").trim(),
             tabletki_enterprise_code: String(enterpriseDraft.enterprise_code || "").trim(),
             tabletki_branch: preferredBranch,
+            is_legacy_default: isBaselineEnterprise,
+            code_strategy: isBaselineEnterprise ? "legacy_same" : "opaque_mapping",
+            name_strategy: isBaselineEnterprise ? "base" : "supplier_random",
         }, null, { dirty: false });
     }, [
         enterpriseDraft,
         isNewStoreDraft,
+        isBaselineEnterprise,
         mappingBranchOptions,
         mappingBranchValues,
         replaceStoreDraft,
@@ -793,9 +822,10 @@ const BusinessStoresPage = () => {
                 await axios.put(
                     `${API_BASE_URL}/business-stores/${enterpriseStrategyStoreId}`,
                     {
-                        code_strategy: String(storeDraft.code_strategy || "opaque_mapping"),
-                        name_strategy: String(storeDraft.name_strategy || "base"),
-                        code_prefix: normalizeOptionalText(storeDraft.code_prefix),
+                        is_legacy_default: isBaselineEnterprise ? true : Boolean(storeDraft.is_legacy_default),
+                        code_strategy: isBaselineEnterprise ? "legacy_same" : String(storeDraft.code_strategy || "opaque_mapping"),
+                        name_strategy: isBaselineEnterprise ? "base" : String(storeDraft.name_strategy || "base"),
+                        code_prefix: isBaselineEnterprise ? null : normalizeOptionalText(storeDraft.code_prefix),
                     },
                     getAuthHeaders(),
                 );
@@ -841,7 +871,7 @@ const BusinessStoresPage = () => {
                 return;
             }
 
-            const payload = buildStorePayload(storeDraft, selectedEnterpriseCode);
+            const payload = buildStorePayload(storeDraft, selectedEnterpriseCode, { isBaselineEnterprise });
             let response;
             if (!selectedStoreId) {
                 response = await axios.post(`${API_BASE_URL}/business-stores`, payload, getAuthHeaders());
@@ -944,7 +974,7 @@ const BusinessStoresPage = () => {
 
                     <Section
                         title="2. Основные настройки предприятия"
-                        description="Источник: enterprise_settings. Здесь управляются enterprise-level flags и настройки каталога."
+                        description="Источник: enterprise_settings и основной BusinessStore. Здесь управляются режим, коды для каталога, остатков, заказов и статусов."
                         actions={(
                             <button
                                 type="button"
@@ -1004,7 +1034,7 @@ const BusinessStoresPage = () => {
                             </label>
                         </div>
                         <div style={{ display: "grid", gap: "16px" }}>
-                            <h3 style={subSectionTitleStyle}>Дополнительные настройки каталога</h3>
+                            <h3 style={subSectionTitleStyle}>Стратегии кодов и названий</h3>
                             <div style={{ display: "grid", gap: "16px", maxWidth: "980px" }}>
                                 <Field
                                     label="Режим"
@@ -1020,27 +1050,33 @@ const BusinessStoresPage = () => {
                                         <option value="custom">Настраиваемый</option>
                                     </select>
                                 </Field>
-                                <Field label="Стратегия кодов каталога">
+                                <Field
+                                    label="Стратегия кодов"
+                                    helpText={codeStrategyOptions.find((item) => item.value === effectiveCodeStrategy)?.help}
+                                >
                                     <select
                                         style={inputStyle}
-                                        value={storeDraft.code_strategy}
+                                        value={effectiveCodeStrategy}
                                         onChange={(event) => onStoreChange("code_strategy", event.target.value)}
-                                        disabled={catalogIdentityControlsDisabled}
+                                        disabled={identityControlsDisabled}
                                     >
                                         {codeStrategyOptions.map((item) => (
-                                            <option key={item.value} value={item.value}>{item.value}</option>
+                                            <option key={item.value} value={item.value}>{item.label}</option>
                                         ))}
                                     </select>
                                 </Field>
-                                <Field label="Стратегия названий каталога">
+                                <Field
+                                    label="Стратегия названий"
+                                    helpText={nameStrategyOptions.find((item) => item.value === effectiveNameStrategy)?.help}
+                                >
                                     <select
                                         style={inputStyle}
-                                        value={storeDraft.name_strategy}
+                                        value={effectiveNameStrategy}
                                         onChange={(event) => onStoreChange("name_strategy", event.target.value)}
-                                        disabled={catalogIdentityControlsDisabled}
+                                        disabled={identityControlsDisabled}
                                     >
                                         {nameStrategyOptions.map((item) => (
-                                            <option key={item.value} value={item.value}>{item.value}</option>
+                                            <option key={item.value} value={item.value}>{item.label}</option>
                                         ))}
                                     </select>
                                 </Field>
@@ -1055,14 +1091,14 @@ const BusinessStoresPage = () => {
                                     В каталог только товары с остатком главного магазина
                                 </label>
                             </div>
-                            {storeDraft.code_strategy === "prefix_mapping" ? (
+                            {effectiveCodeStrategy === "prefix_mapping" ? (
                                 <div style={{ display: "grid", gap: "16px", maxWidth: "980px" }}>
-                                    <Field label="Префикс кода каталога">
+                                    <Field label="Префикс кода">
                                         <input
                                             style={inputStyle}
                                             value={storeDraft.code_prefix}
                                             onChange={(event) => onStoreChange("code_prefix", event.target.value)}
-                                            disabled={catalogIdentityControlsDisabled}
+                                            disabled={identityControlsDisabled}
                                         />
                                     </Field>
                                 </div>
@@ -1122,7 +1158,7 @@ const BusinessStoresPage = () => {
                     >
                         {enterpriseDraft.business_runtime_mode === "baseline" ? (
                             <div style={neutralInfoCardStyle}>
-                                Для предприятия в базовом режиме настройки магазинов не влияют на каталог и остатки.
+                                Для предприятия в базовом режиме коды и названия фиксированы как базовые: без маппинга для каталога, остатков, заказов и статусов.
                             </div>
                         ) : null}
                         <div style={{ display: "grid", gap: "16px" }}>

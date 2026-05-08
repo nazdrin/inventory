@@ -34,12 +34,6 @@ logger.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
 
 VERBOSE_ORDER_LOGS = os.getenv("ORDER_FETCHER_VERBOSE_ORDER_LOGS", "0") == "1"
 ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS = os.getenv("ORDER_FETCHER_NOTIFY_ON_NEW_ORDERS", "1") == "1"
-BUSINESS_STORE_ORDER_MAPPING_ENABLED = os.getenv("BUSINESS_STORE_ORDER_MAPPING_ENABLED", "0").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED = os.getenv(
     "BUSINESS_STORE_ORDER_SEND_STATUS_2_ENABLED",
     "0",
@@ -130,14 +124,6 @@ async def _normalize_business_orders_for_runtime(
     mapping_error_orders: List[Dict[str, Any]] = []
 
     if enterprise.data_format != "Business":
-        return list(orders), store_aware_orders, mapping_error_orders
-
-    if not BUSINESS_STORE_ORDER_MAPPING_ENABLED:
-        logger.debug(
-            "Business store order mapping is disabled; legacy order flow unchanged for enterprise_code=%s branch=%s",
-            enterprise.enterprise_code,
-            branch,
-        )
         return list(orders), store_aware_orders, mapping_error_orders
 
     business_runtime_mode = normalize_business_runtime_mode(

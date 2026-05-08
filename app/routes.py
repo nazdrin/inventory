@@ -2297,6 +2297,15 @@ async def update_enterprise_settings(enterprise_code: str, updated_settings: Ent
     for key, value in updated_settings.model_dump(exclude_unset=True).items():
         setattr(enterprise, key, value)
 
+    if str(enterprise.business_runtime_mode or "baseline") == "baseline":
+        stores = (
+            await db.execute(
+                select(BusinessStore).where(BusinessStore.enterprise_code == enterprise.enterprise_code)
+            )
+        ).scalars().all()
+        for store in stores:
+            _apply_baseline_business_store_identity_defaults(store)
+
     await db.commit()
     await db.refresh(enterprise)
     return {
@@ -2436,6 +2445,13 @@ async def _get_business_store_or_404(db: AsyncSession, store_id: int) -> Busines
     if store is None:
         raise HTTPException(status_code=404, detail="BusinessStore not found.")
     return store
+
+
+def _apply_baseline_business_store_identity_defaults(store: BusinessStore) -> None:
+    store.is_legacy_default = True
+    store.code_strategy = "legacy_same"
+    store.code_prefix = None
+    store.name_strategy = "base"
 
 
 ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE = (
@@ -2796,6 +2812,15 @@ async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession =
         is_active=bool(payload.is_active),
     )
 
+    enterprise_runtime_mode = (
+        await db.execute(
+            select(EnterpriseSettings.business_runtime_mode).where(
+                EnterpriseSettings.enterprise_code == payload.enterprise_code
+            )
+        )
+    ).scalar_one_or_none()
+    is_baseline_enterprise = str(enterprise_runtime_mode or "baseline") == "baseline"
+
     obj = BusinessStore(
         store_code=payload.store_code,
         store_name=payload.store_name,
@@ -2825,6 +2850,8 @@ async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession =
         takes_over_legacy_scope=payload.takes_over_legacy_scope,
         migration_status=payload.migration_status,
     )
+    if is_baseline_enterprise:
+        _apply_baseline_business_store_identity_defaults(obj)
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
@@ -2902,6 +2929,9 @@ async def update_business_store(
 
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(store, key, value)
+
+    if effective_runtime_mode == "baseline":
+        _apply_baseline_business_store_identity_defaults(store)
 
     await db.commit()
     await db.refresh(store)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     BusinessEnterpriseProductCode,
     BusinessStore,
-    BusinessStoreProductCode,
 )
 from app.services.business_runtime_mode_service import CUSTOM_BUSINESS_RUNTIME_MODE
 
@@ -30,35 +28,11 @@ def _clean_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _enterprise_stock_code_mapping_enabled() -> bool:
-    return (os.getenv("BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
-async def _load_store_code_map(
-    session: AsyncSession,
-    *,
-    store_ids: list[int],
-) -> dict[tuple[int, str], BusinessStoreProductCode]:
-    if not store_ids:
-        return {}
-    rows = (
-        await session.execute(
-            select(BusinessStoreProductCode).where(
-                BusinessStoreProductCode.store_id.in_([int(item) for item in store_ids]),
-                BusinessStoreProductCode.is_active.is_(True),
-            )
-        )
-    ).scalars().all()
-    return {
-        (int(row.store_id), _clean_text(row.internal_product_code)): row
-        for row in rows
-        if _clean_text(row.internal_product_code)
-    }
+def _uses_external_code_mapping(store: BusinessStore) -> bool:
+    return not (
+        bool(getattr(store, "is_legacy_default", False))
+        or _clean_text(getattr(store, "code_strategy", None)).lower() == "legacy_same"
+    )
 
 
 async def _load_enterprise_code_map(
@@ -89,18 +63,12 @@ async def load_stock_mapping_context(
     *,
     stores: list[BusinessStore],
 ) -> dict[str, Any]:
-    enterprise_mapping_enabled = _enterprise_stock_code_mapping_enabled()
-    store_map = await _load_store_code_map(
-        session,
-        store_ids=[int(store.id) for store in stores],
-    )
     enterprise_map = await _load_enterprise_code_map(
         session,
         enterprise_codes=[_clean_text(store.enterprise_code) for store in stores],
     )
     return {
-        "enterprise_mapping_enabled": enterprise_mapping_enabled,
-        "store_map": store_map,
+        "enterprise_mapping_enabled": True,
         "enterprise_map": enterprise_map,
     }
 
@@ -131,7 +99,7 @@ def resolve_stock_external_code(
             source="baseline_runtime_internal_code",
         )
 
-    if bool(getattr(store, "is_legacy_default", False)) or code_strategy == "legacy_same":
+    if not _uses_external_code_mapping(store):
         return StockCodeResolution(
             external_code=normalized_internal_code,
             mapping_mode="legacy_same",
@@ -139,37 +107,20 @@ def resolve_stock_external_code(
             source="store_legacy_same_strategy",
         )
 
-    if bool(mapping_context.get("enterprise_mapping_enabled")):
-        enterprise_mapping = (mapping_context.get("enterprise_map") or {}).get(
-            (_clean_text(store.enterprise_code), normalized_internal_code)
-        )
-        if enterprise_mapping is None:
-            return StockCodeResolution(
-                external_code=None,
-                mapping_mode="enterprise_level",
-                identity_mode="enterprise_level",
-                source="enterprise_mapping_missing",
-                warning="Missing enterprise-level stock code mapping.",
-            )
-        return StockCodeResolution(
-            external_code=_clean_text(enterprise_mapping.external_product_code) or None,
-            mapping_mode="enterprise_level",
-            identity_mode="enterprise_level",
-            source="business_enterprise_product_codes",
-        )
-
-    store_mapping = (mapping_context.get("store_map") or {}).get((int(store.id), normalized_internal_code))
-    if store_mapping is None:
+    enterprise_mapping = (mapping_context.get("enterprise_map") or {}).get(
+        (_clean_text(store.enterprise_code), normalized_internal_code)
+    )
+    if enterprise_mapping is None:
         return StockCodeResolution(
             external_code=None,
-            mapping_mode="store_level",
-            identity_mode="store_level",
-            source="store_mapping_missing",
-            warning="Missing store-level stock code mapping.",
+            mapping_mode="enterprise_level",
+            identity_mode="enterprise_level",
+            source="enterprise_mapping_missing",
+            warning="Missing enterprise-level stock code mapping.",
         )
     return StockCodeResolution(
-        external_code=_clean_text(store_mapping.external_product_code) or None,
-        mapping_mode="store_level",
-        identity_mode="store_level",
-        source="business_store_product_codes",
+        external_code=_clean_text(enterprise_mapping.external_product_code) or None,
+        mapping_mode="enterprise_level",
+        identity_mode="enterprise_level",
+        source="business_enterprise_product_codes",
     )

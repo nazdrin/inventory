@@ -1,7 +1,6 @@
 # app/services/salesdrive_webhook.py
 from __future__ import annotations
 
-import os
 import re
 import logging
 from typing import Any, Dict, List, Optional
@@ -32,16 +31,6 @@ CANCEL_REASON = {
     27: 1,
 }
 DELIVERY_MAP = {"novaposhta": "NP", "ukrposhta": "UP"}  # ключи в нижнем регистре без пробелов
-BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED = os.getenv(
-    "BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED",
-    "0",
-).strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
 async def _get_enterprise_code_by_branch(session: AsyncSession, branch_value: Any) -> Optional[str]:
     """Возвращает enterprise_code по значению branch (берём из data.branch вебхука, ранее из data.utmSource)."""
     if branch_value is None:
@@ -123,9 +112,6 @@ async def _apply_store_aware_outbound_mapping_if_enabled(
     branch_value: Any,
     enterprise_code: str,
 ) -> tuple[Optional[Dict[str, Any]], Optional[dict[str, Any]]]:
-    if not BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED:
-        return data, None
-
     branch = str(branch_value or "").strip()
     before_parameter, before_sku = _first_product_code_snapshot(data)
     mapping_result = await restore_salesdrive_products_for_tabletki_outbound(
@@ -284,7 +270,7 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
             }
             orders: List[Dict[str, Any]] = [order_obj]
 
-            if mapped_data is None and BUSINESS_STORE_OUTBOUND_STATUS_MAPPING_ENABLED:
+            if mapped_data is None:
                 logger.warning(
                     "Store-aware outbound status send skipped due to mapping_error: enterprise_code=%s branch=%s externalId=%s tabletkiOrder=%s code_mapping_mode=%s",
                     enterprise_code,

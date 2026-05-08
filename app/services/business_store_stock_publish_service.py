@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from sqlalchemy import select
@@ -25,15 +24,6 @@ def _clean_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _enterprise_stock_code_mapping_enabled() -> bool:
-    return (os.getenv("BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def _empty_store_report_row(
     store: BusinessStore,
     *,
@@ -55,8 +45,8 @@ def _empty_store_report_row(
         "eligible": bool(eligible),
         "skip_reason": skip_reason,
         "status": status,
-        "code_mapping_mode": "store_level",
-        "identity_mode": "store_level",
+        "code_mapping_mode": "legacy_same",
+        "identity_mode": "legacy_same",
         "target_branch": store.tabletki_branch,
         "target_branch_source": "business_store",
         "candidate_products": 0,
@@ -150,7 +140,6 @@ async def get_eligible_business_store_stocks(
     store_code: str | None = None,
     enterprise_code: str | None = None,
 ) -> dict[str, Any]:
-    code_mapping_mode = "enterprise_level" if _enterprise_stock_code_mapping_enabled() else "store_level"
     store_rows = await _load_store_candidates(
         session,
         store_id=store_id,
@@ -196,6 +185,12 @@ async def get_eligible_business_store_stocks(
                 eligible = False
                 skip_reason = preview_skip_reason
 
+        code_strategy = _clean_text(getattr(store, "code_strategy", None)) or "legacy_same"
+        code_mapping_mode = (
+            "legacy_same"
+            if bool(getattr(store, "is_legacy_default", False)) or code_strategy == "legacy_same"
+            else "enterprise_level"
+        )
         row = _empty_store_report_row(
             store,
             enterprise_stock_enabled=enterprise_stock_enabled,
@@ -251,8 +246,6 @@ async def publish_enabled_business_store_stocks(
 ) -> dict[str, Any]:
     if not bool(dry_run) and bool(require_confirm) and not bool(confirm):
         raise ValueError("Live send requires explicit confirm.")
-
-    code_mapping_mode = "enterprise_level" if _enterprise_stock_code_mapping_enabled() else "store_level"
 
     eligibility = await get_eligible_business_store_stocks(
         session,
@@ -331,10 +324,15 @@ async def publish_enabled_business_store_stocks(
         top_warnings.append("Scheduler is not connected; this service performs only manual multi-store stock publish.")
     else:
         top_warnings.append("Dry-run mode: no external API calls were performed.")
-    top_warnings.append(
-        "Enterprise-level stock code mapping is {}.".format(
-            "enabled" if code_mapping_mode == "enterprise_level" else "disabled"
-        )
+    distinct_code_mapping_modes = {
+        _clean_text(row.get("code_mapping_mode"))
+        for row in report_rows
+        if _clean_text(row.get("code_mapping_mode"))
+    }
+    code_mapping_mode = (
+        next(iter(distinct_code_mapping_modes))
+        if len(distinct_code_mapping_modes) == 1
+        else "mixed"
     )
 
     return {

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-import os
 from typing import Any
 
 from sqlalchemy import select
@@ -13,7 +12,6 @@ from app.business.business_store_price_adjustment_generator import apply_extra_m
 from app.models import (
     BusinessEnterpriseProductCode,
     BusinessStore,
-    BusinessStoreProductCode,
     BusinessStoreProductPriceAdjustment,
     Offer,
 )
@@ -37,21 +35,6 @@ async def _get_store_or_fail(session: AsyncSession, store_id: int) -> BusinessSt
     if store is None:
         raise ValueError(f"BusinessStore not found for store_id={store_id}")
     return store
-
-
-async def _load_store_product_code_map(
-    session: AsyncSession,
-    store_id: int,
-) -> dict[str, BusinessStoreProductCode]:
-    rows = (
-        await session.execute(
-            select(BusinessStoreProductCode).where(
-                BusinessStoreProductCode.store_id == int(store_id),
-                BusinessStoreProductCode.is_active.is_(True),
-            )
-        )
-    ).scalars().all()
-    return {str(row.internal_product_code): row for row in rows}
 
 
 async def _load_enterprise_product_code_map(
@@ -100,15 +83,6 @@ def _round_preview_price_to_integer(value: Decimal | None) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-
-
-def _enterprise_stock_code_mapping_enabled() -> bool:
-    return (os.getenv("BUSINESS_ENTERPRISE_STOCK_CODE_MAPPING_ENABLED", "0") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _best_offer_sort_key(offer: Offer) -> tuple[Any, ...]:
@@ -176,11 +150,13 @@ async def build_store_stock_payload_preview(
     store = await _get_store_or_fail(session, int(store_id))
 
     all_scope_rows, selected_rows, warnings = await _collect_best_stock_offers(session, store)
-    code_mapping_mode = "enterprise_level" if _enterprise_stock_code_mapping_enabled() else "store_level"
-    if code_mapping_mode == "enterprise_level":
-        code_map = await _load_enterprise_product_code_map(session, str(store.enterprise_code or ""))
-    else:
-        code_map = await _load_store_product_code_map(session, int(store.id))
+    code_strategy = str(store.code_strategy or "legacy_same").strip().lower() or "legacy_same"
+    code_mapping_mode = (
+        "legacy_same"
+        if bool(store.is_legacy_default) or code_strategy == "legacy_same"
+        else "enterprise_level"
+    )
+    code_map = await _load_enterprise_product_code_map(session, str(store.enterprise_code or ""))
     adjustment_map = await _load_store_product_price_adjustment_map(session, int(store.id))
 
     if not str(store.tabletki_enterprise_code or "").strip():
@@ -188,7 +164,6 @@ async def build_store_stock_payload_preview(
     if not str(store.tabletki_branch or "").strip():
         warnings.append("Store tabletki_branch is empty; preview target is incomplete.")
 
-    code_strategy = str(store.code_strategy or "legacy_same").strip().lower() or "legacy_same"
     markup_enabled = bool(store.extra_markup_enabled)
     markup_min = store.extra_markup_min
     markup_max = store.extra_markup_max
