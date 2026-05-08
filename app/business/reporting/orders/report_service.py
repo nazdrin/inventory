@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import case, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -38,12 +38,14 @@ def _base_filters(period_from: datetime, period_to: datetime, enterprise_code: s
 
 def _metrics_from_row(row: Any) -> dict[str, Any]:
     total_orders = int(row.total_orders or 0)
+    order_financial_count = int(row.order_financial_count or 0)
     sales_count = int(row.sales_count or 0)
     return_count = int(row.return_count or 0)
     cancelled_count = int(row.cancelled_count or 0)
     deleted_count = int(row.deleted_count or 0)
     return {
         "total_orders": total_orders,
+        "order_financial_count": order_financial_count,
         "active_orders": int(row.active_orders or 0),
         "sales_count": sales_count,
         "return_count": return_count,
@@ -56,6 +58,12 @@ def _metrics_from_row(row: Any) -> dict[str, Any]:
         "sale_amount": _fmt(row.sale_amount),
         "items_quantity": _fmt(row.items_quantity),
         "sale_quantity": _fmt(row.sale_quantity),
+        "order_financial_amount": _fmt(row.order_financial_amount),
+        "order_financial_quantity": _fmt(row.order_financial_quantity),
+        "order_supplier_cost_total": _fmt(row.order_supplier_cost_total),
+        "order_gross_profit_amount": _fmt(row.order_gross_profit_amount),
+        "order_expense_amount": _fmt(row.order_expense_amount),
+        "order_net_profit_amount": _fmt(row.order_net_profit_amount),
         "supplier_cost_total": _fmt(row.supplier_cost_total),
         "gross_profit_amount": _fmt(row.gross_profit_amount),
         "expense_amount": _fmt(row.expense_amount),
@@ -71,8 +79,10 @@ async def build_summary(
     enterprise_code: str | None = None,
 ) -> dict[str, Any]:
     filters = _base_filters(period_from, period_to, enterprise_code)
+    order_financial_filter = ReportOrder.status_group.in_(("active", "sale"))
     stmt = select(
         func.count(ReportOrder.id).label("total_orders"),
+        func.sum(case((order_financial_filter, 1), else_=0)).label("order_financial_count"),
         func.sum(case((ReportOrder.status_group == "active", 1), else_=0)).label("active_orders"),
         func.sum(case((ReportOrder.is_sale == True, 1), else_=0)).label("sales_count"),
         func.sum(case((ReportOrder.is_return == True, 1), else_=0)).label("return_count"),
@@ -82,10 +92,16 @@ async def build_summary(
         func.coalesce(func.sum(ReportOrder.sale_amount), 0).label("sale_amount"),
         func.coalesce(func.sum(ReportOrder.items_quantity), 0).label("items_quantity"),
         func.coalesce(func.sum(ReportOrder.sale_quantity), 0).label("sale_quantity"),
-        func.coalesce(func.sum(ReportOrder.supplier_cost_total), 0).label("supplier_cost_total"),
-        func.coalesce(func.sum(ReportOrder.gross_profit_amount), 0).label("gross_profit_amount"),
-        func.coalesce(func.sum(ReportOrder.expense_amount), 0).label("expense_amount"),
-        func.coalesce(func.sum(ReportOrder.net_profit_amount), 0).label("net_profit_amount"),
+        func.coalesce(func.sum(case((order_financial_filter, ReportOrder.order_amount), else_=0)), 0).label("order_financial_amount"),
+        func.coalesce(func.sum(case((order_financial_filter, ReportOrder.items_quantity), else_=0)), 0).label("order_financial_quantity"),
+        func.coalesce(func.sum(case((order_financial_filter, ReportOrder.supplier_cost_total), else_=0)), 0).label("order_supplier_cost_total"),
+        func.coalesce(func.sum(case((order_financial_filter, ReportOrder.gross_profit_amount), else_=0)), 0).label("order_gross_profit_amount"),
+        func.coalesce(func.sum(case((order_financial_filter, ReportOrder.expense_amount), else_=0)), 0).label("order_expense_amount"),
+        func.coalesce(func.sum(case((order_financial_filter, ReportOrder.net_profit_amount), else_=0)), 0).label("order_net_profit_amount"),
+        func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.supplier_cost_total), else_=0)), 0).label("supplier_cost_total"),
+        func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.gross_profit_amount), else_=0)), 0).label("gross_profit_amount"),
+        func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.expense_amount), else_=0)), 0).label("expense_amount"),
+        func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.net_profit_amount), else_=0)), 0).label("net_profit_amount"),
     ).where(*filters)
     row = (await session.execute(stmt)).one()
     return {
@@ -142,12 +158,14 @@ async def build_by_enterprise(
     enterprise_code: str | None = None,
 ) -> list[dict[str, Any]]:
     filters = _base_filters(period_from, period_to, enterprise_code)
+    order_financial_filter = ReportOrder.status_group.in_(("active", "sale"))
     rows = (
         await session.execute(
             select(
                 ReportOrder.enterprise_code,
                 EnterpriseSettings.enterprise_name,
                 func.count(ReportOrder.id).label("total_orders"),
+                func.sum(case((order_financial_filter, 1), else_=0)).label("order_financial_count"),
                 func.sum(case((ReportOrder.status_group == "active", 1), else_=0)).label("active_orders"),
                 func.sum(case((ReportOrder.is_sale == True, 1), else_=0)).label("sales_count"),
                 func.sum(case((ReportOrder.is_return == True, 1), else_=0)).label("return_count"),
@@ -157,10 +175,16 @@ async def build_by_enterprise(
                 func.coalesce(func.sum(ReportOrder.sale_amount), 0).label("sale_amount"),
                 func.coalesce(func.sum(ReportOrder.items_quantity), 0).label("items_quantity"),
                 func.coalesce(func.sum(ReportOrder.sale_quantity), 0).label("sale_quantity"),
-                func.coalesce(func.sum(ReportOrder.supplier_cost_total), 0).label("supplier_cost_total"),
-                func.coalesce(func.sum(ReportOrder.gross_profit_amount), 0).label("gross_profit_amount"),
-                func.coalesce(func.sum(ReportOrder.expense_amount), 0).label("expense_amount"),
-                func.coalesce(func.sum(ReportOrder.net_profit_amount), 0).label("net_profit_amount"),
+                func.coalesce(func.sum(case((order_financial_filter, ReportOrder.order_amount), else_=0)), 0).label("order_financial_amount"),
+                func.coalesce(func.sum(case((order_financial_filter, ReportOrder.items_quantity), else_=0)), 0).label("order_financial_quantity"),
+                func.coalesce(func.sum(case((order_financial_filter, ReportOrder.supplier_cost_total), else_=0)), 0).label("order_supplier_cost_total"),
+                func.coalesce(func.sum(case((order_financial_filter, ReportOrder.gross_profit_amount), else_=0)), 0).label("order_gross_profit_amount"),
+                func.coalesce(func.sum(case((order_financial_filter, ReportOrder.expense_amount), else_=0)), 0).label("order_expense_amount"),
+                func.coalesce(func.sum(case((order_financial_filter, ReportOrder.net_profit_amount), else_=0)), 0).label("order_net_profit_amount"),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.supplier_cost_total), else_=0)), 0).label("supplier_cost_total"),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.gross_profit_amount), else_=0)), 0).label("gross_profit_amount"),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.expense_amount), else_=0)), 0).label("expense_amount"),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrder.net_profit_amount), else_=0)), 0).label("net_profit_amount"),
             )
             .join(EnterpriseSettings, EnterpriseSettings.enterprise_code == ReportOrder.enterprise_code)
             .where(*filters)
@@ -185,15 +209,22 @@ async def build_by_supplier(
     period_to: datetime,
     enterprise_code: str | None = None,
 ) -> list[dict[str, Any]]:
-    filters = _base_filters(period_from, period_to, enterprise_code) + [ReportOrder.is_sale == True]
-    order_expense_share = case(
+    eligible_order = ReportOrder.status_group.in_(("active", "sale"))
+    filters = _base_filters(period_from, period_to, enterprise_code) + [eligible_order]
+    sale_expense_share = case(
         (ReportOrder.sale_amount > 0, ReportOrderItem.sale_amount / ReportOrder.sale_amount * ReportOrder.expense_amount),
         else_=0,
     )
+    order_expense_share = case(
+        (ReportOrder.order_amount > 0, ReportOrderItem.sale_amount / ReportOrder.order_amount * ReportOrder.expense_amount),
+        else_=0,
+    )
+    supplier_key = func.coalesce(ReportOrderItem.supplier_code, ReportOrderItem.supplier_name, literal("unmapped"))
     rows = (
         await session.execute(
             select(
-                ReportOrderItem.supplier_code,
+                supplier_key.label("supplier_key"),
+                func.max(ReportOrderItem.supplier_code),
                 func.max(ReportOrderItem.supplier_name),
                 func.count(func.distinct(ReportOrder.id)),
                 func.coalesce(func.sum(ReportOrderItem.quantity), 0),
@@ -201,30 +232,63 @@ async def build_by_supplier(
                 func.coalesce(func.sum(ReportOrderItem.cost_amount), 0),
                 func.coalesce(func.sum(ReportOrderItem.gross_profit_amount), 0),
                 func.coalesce(func.sum(order_expense_share), 0),
+                func.count(func.distinct(case((ReportOrder.is_sale == True, ReportOrder.id)))),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrderItem.quantity), else_=0)), 0),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrderItem.sale_amount), else_=0)), 0),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrderItem.cost_amount), else_=0)), 0),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrderItem.gross_profit_amount), else_=0)), 0),
+                func.coalesce(func.sum(case((ReportOrder.is_sale == True, sale_expense_share), else_=0)), 0),
             )
             .join(ReportOrder, ReportOrder.id == ReportOrderItem.report_order_id)
             .where(*filters)
-            .group_by(ReportOrderItem.supplier_code)
-            .order_by(func.coalesce(func.sum(ReportOrderItem.sale_amount), 0).desc())
+            .group_by(supplier_key)
+            .order_by(func.coalesce(func.sum(case((ReportOrder.is_sale == True, ReportOrderItem.sale_amount), else_=0)), 0).desc())
         )
     ).all()
-    total_sales = sum((Decimal(str(row[4] or 0)) for row in rows), Decimal("0"))
+    total_orders_amount = sum((Decimal(str(row[5] or 0)) for row in rows), Decimal("0"))
+    total_sales = sum((Decimal(str(row[11] or 0)) for row in rows), Decimal("0"))
     result: list[dict[str, Any]] = []
-    for supplier_code, supplier_name, orders_count, quantity, sale_amount, cost_amount, gross_profit, expenses in rows:
+    for (
+        supplier_key_value,
+        supplier_code,
+        supplier_name,
+        orders_count,
+        order_quantity,
+        order_amount,
+        order_cost_amount,
+        order_gross_profit,
+        order_expenses,
+        sales_count,
+        sale_quantity,
+        sale_amount,
+        cost_amount,
+        gross_profit,
+        expenses,
+    ) in rows:
+        order_dec = Decimal(str(order_amount or 0))
+        order_expense_dec = Decimal(str(order_expenses or 0))
         sale_dec = Decimal(str(sale_amount or 0))
         expense_dec = Decimal(str(expenses or 0))
         result.append(
             {
-                "supplier_code": supplier_code or "unmapped",
-                "supplier_name": supplier_name or supplier_code or "Unmapped",
+                "supplier_code": supplier_code or supplier_key_value or "unmapped",
+                "supplier_name": supplier_name or supplier_code or supplier_key_value or "Unmapped",
                 "orders_count": int(orders_count or 0),
-                "quantity": _fmt(quantity),
+                "quantity": _fmt(sale_quantity),
                 "sale_amount": _fmt(sale_amount),
                 "cost_amount": _fmt(cost_amount),
                 "gross_profit_amount": _fmt(gross_profit),
                 "sales_share_percent": _fmt(percent(sale_dec, total_sales)),
                 "allocated_expense_amount": _fmt(expense_dec),
                 "net_profit_amount": _fmt(Decimal(str(gross_profit or 0)) - expense_dec),
+                "order_quantity": _fmt(order_quantity),
+                "order_amount": _fmt(order_amount),
+                "order_cost_amount": _fmt(order_cost_amount),
+                "order_gross_profit_amount": _fmt(order_gross_profit),
+                "order_share_percent": _fmt(percent(order_dec, total_orders_amount)),
+                "order_allocated_expense_amount": _fmt(order_expense_dec),
+                "order_net_profit_amount": _fmt(Decimal(str(order_gross_profit or 0)) - order_expense_dec),
+                "sales_count": int(sales_count or 0),
             }
         )
     return result

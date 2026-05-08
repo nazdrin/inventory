@@ -29,7 +29,7 @@ const formatAmount = (value) => {
     return Number.isFinite(number) ? number.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(value || "0");
 };
 
-const MetricCard = ({ label, value, tone = "default" }) => {
+const MetricCard = ({ label, value, secondLabel, secondValue, tone = "default" }) => {
     const tones = {
         default: ["#f8fafc", "#0f172a"],
         good: ["#ecfdf5", "#047857"],
@@ -39,9 +39,15 @@ const MetricCard = ({ label, value, tone = "default" }) => {
     };
     const [background, color] = tones[tone] || tones.default;
     return (
-        <div style={{ background, color, border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, minHeight: 82 }}>
+        <div style={{ background, color, border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, minHeight: 96 }}>
             <div style={{ color: "#64748b", fontSize: 12, fontWeight: 900, textTransform: "uppercase" }}>{label}</div>
             <div style={{ marginTop: 8, fontSize: 22, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+            {secondLabel && (
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(100, 116, 139, 0.22)" }}>
+                    <div style={{ color: "#64748b", fontSize: 11, fontWeight: 900, textTransform: "uppercase" }}>{secondLabel}</div>
+                    <div style={{ marginTop: 4, fontSize: 18, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{secondValue}</div>
+                </div>
+            )}
         </div>
     );
 };
@@ -121,17 +127,28 @@ const OrderReportsPage = () => {
     };
 
     const saveSetting = async (row) => {
+        setLoading(true);
+        setError("");
+        setMessage("");
         const draft = settingsDrafts[row.enterprise_code] || {};
-        await upsertOrderExpenseSetting({
-            enterprise_code: row.enterprise_code,
-            expense_percent: draft.expense_percent ?? row.expense_percent ?? "0",
-            active_from: draft.active_from ?? row.active_from ?? defaultPeriodFrom,
-            active_to: draft.active_to ?? row.active_to ?? null,
-        });
-        await loadReports();
+        try {
+            await upsertOrderExpenseSetting({
+                enterprise_code: row.enterprise_code,
+                expense_percent: draft.expense_percent ?? row.expense_percent ?? "0",
+                active_from: draft.active_from ?? row.active_from ?? defaultPeriodFrom,
+                active_to: draft.active_to ?? row.active_to ?? null,
+            });
+            const result = await syncOrderReports({ periodFrom, periodTo, enterpriseCode: row.enterprise_code });
+            setMessage(`Расходы сохранены. Пересчет: ${result.status}, updated=${result.updated_count}, failed=${result.failed_count}`);
+            await loadReports();
+        } catch (err) {
+            setError(err?.response?.data?.detail || err.message || "Настройка расходов не сохранена.");
+            setLoading(false);
+        }
     };
 
-    const maxFunnelCount = useMemo(() => Math.max(1, ...funnel.map((item) => Number(item.count || 0))), [funnel]);
+    const visibleFunnel = useMemo(() => funnel.filter((row) => Number(row.count || 0) > 0), [funnel]);
+    const totalFunnelCount = Number(summary?.total_orders || 0);
 
     return (
         <div style={pageStyle}>
@@ -159,15 +176,13 @@ const OrderReportsPage = () => {
             {error && <div style={{ ...panelStyle, borderColor: "#fecaca", color: "#b91c1c" }}>{error}</div>}
             {message && <div style={{ ...panelStyle, borderColor: "#bbf7d0", color: "#047857" }}>{message}</div>}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-                <MetricCard label="Всего заказов" value={summary?.total_orders || 0} tone="blue" />
-                <MetricCard label="Продаж" value={summary?.sales_count || 0} tone="good" />
-                <MetricCard label="Отказов" value={summary?.cancelled_count || 0} tone="bad" />
-                <MetricCard label="% отказов" value={`${formatAmount(summary?.refusal_rate)}%`} tone="bad" />
-                <MetricCard label="Возвратов" value={summary?.return_count || 0} tone="warn" />
-                <MetricCard label="% возвратов" value={`${formatAmount(summary?.return_rate)}%`} tone="warn" />
-                <MetricCard label="Выручка продаж" value={formatAmount(summary?.sale_amount)} tone="good" />
-                <MetricCard label="Чистая прибыль" value={formatAmount(summary?.net_profit_amount)} tone="default" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+                <MetricCard label="Сумма заказов" value={formatAmount(summary?.order_financial_amount)} secondLabel="Выручка продаж" secondValue={formatAmount(summary?.sale_amount)} tone="blue" />
+                <MetricCard label="ВП заказов" value={formatAmount(summary?.order_gross_profit_amount)} secondLabel="ЧП заказов" secondValue={formatAmount(summary?.order_net_profit_amount)} tone="good" />
+                <MetricCard label="ВП продаж" value={formatAmount(summary?.gross_profit_amount)} secondLabel="ЧП продаж" secondValue={formatAmount(summary?.net_profit_amount)} tone="good" />
+                <MetricCard label="Количество заказов" value={summary?.order_financial_count || 0} secondLabel="Количество продаж" secondValue={summary?.sales_count || 0} tone="default" />
+                <MetricCard label="Отказы" value={summary?.cancelled_count || 0} secondLabel="% отказов" secondValue={`${formatAmount(summary?.refusal_rate)}%`} tone="bad" />
+                <MetricCard label="Возвраты" value={summary?.return_count || 0} secondLabel="% возвратов" secondValue={`${formatAmount(summary?.return_rate)}%`} tone="warn" />
             </div>
 
             <div style={{ ...panelStyle, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -188,19 +203,29 @@ const OrderReportsPage = () => {
                     <section style={panelStyle}>
                         <h2 style={{ marginTop: 0, fontSize: 18 }}>Предварительно</h2>
                         <table style={tableStyle}><tbody>
-                            <tr><td style={tdStyle}>Сумма всех заказов</td><td style={amountStyle}>{formatAmount(summary?.order_amount)}</td></tr>
-                            <tr><td style={tdStyle}>Штук в заказах</td><td style={amountStyle}>{formatAmount(summary?.items_quantity)}</td></tr>
+                            <tr><td style={tdStyle}>Количество заказов в расчете</td><td style={amountStyle}>{summary?.order_financial_count || 0}</td></tr>
+                            <tr><td style={tdStyle}>Сумма заказов в расчете</td><td style={amountStyle}>{formatAmount(summary?.order_financial_amount)}</td></tr>
+                            <tr><td style={tdStyle}>Штук в заказах</td><td style={amountStyle}>{formatAmount(summary?.order_financial_quantity)}</td></tr>
+                            <tr><td style={tdStyle}>Себестоимость заказов</td><td style={amountStyle}>{formatAmount(summary?.order_supplier_cost_total)}</td></tr>
+                            <tr><td style={tdStyle}>Валовая прибыль заказов</td><td style={amountStyle}>{formatAmount(summary?.order_gross_profit_amount)}</td></tr>
+                            <tr><td style={tdStyle}>Расходы заказов</td><td style={amountStyle}>{formatAmount(summary?.order_expense_amount)}</td></tr>
+                            <tr><td style={tdStyle}>Чистая прибыль заказов</td><td style={amountStyle}>{formatAmount(summary?.order_net_profit_amount)}</td></tr>
                             <tr><td style={tdStyle}>Активные / в работе</td><td style={amountStyle}>{summary?.active_orders || 0}</td></tr>
+                            <tr><td style={tdStyle}>Отказы</td><td style={amountStyle}>{summary?.cancelled_count || 0} / {formatAmount(summary?.refusal_rate)}%</td></tr>
+                            <tr><td style={tdStyle}>Возвраты</td><td style={amountStyle}>{summary?.return_count || 0} / {formatAmount(summary?.return_rate)}%</td></tr>
                             <tr><td style={tdStyle}>Удаленные</td><td style={amountStyle}>{summary?.deleted_count || 0}</td></tr>
                         </tbody></table>
                     </section>
                     <section style={panelStyle}>
                         <h2 style={{ marginTop: 0, fontSize: 18 }}>Окончательно по продажам</h2>
                         <table style={tableStyle}><tbody>
+                            <tr><td style={tdStyle}>Количество продаж</td><td style={amountStyle}>{summary?.sales_count || 0}</td></tr>
+                            <tr><td style={tdStyle}>Сумма продаж</td><td style={amountStyle}>{formatAmount(summary?.sale_amount)}</td></tr>
                             <tr><td style={tdStyle}>Штук продано</td><td style={amountStyle}>{formatAmount(summary?.sale_quantity)}</td></tr>
                             <tr><td style={tdStyle}>Себестоимость</td><td style={amountStyle}>{formatAmount(summary?.supplier_cost_total)}</td></tr>
                             <tr><td style={tdStyle}>Валовая прибыль</td><td style={amountStyle}>{formatAmount(summary?.gross_profit_amount)}</td></tr>
                             <tr><td style={tdStyle}>Расходы</td><td style={amountStyle}>{formatAmount(summary?.expense_amount)}</td></tr>
+                            <tr><td style={tdStyle}>Чистая прибыль</td><td style={amountStyle}>{formatAmount(summary?.net_profit_amount)}</td></tr>
                         </tbody></table>
                     </section>
                 </div>
@@ -208,24 +233,53 @@ const OrderReportsPage = () => {
 
             {activeTab === "funnel" && (
                 <section style={panelStyle}>
-                    <table style={tableStyle}>
-                        <thead><tr><th style={thStyle}>Статус</th><th style={thStyle}>Группа</th><th style={amountStyle}>Кол-во</th><th style={amountStyle}>Сумма заказов</th></tr></thead>
-                        <tbody>
-                            {funnel.map((row) => (
-                                <tr key={row.status_id}>
-                                    <td style={tdStyle}>
-                                        <div style={{ fontWeight: 800 }}>{row.status_name}</div>
-                                        <div style={{ height: 7, background: "#e2e8f0", borderRadius: 999, marginTop: 6 }}>
-                                            <div style={{ width: `${(Number(row.count || 0) / maxFunnelCount) * 100}%`, height: 7, background: "#2563eb", borderRadius: 999 }} />
-                                        </div>
-                                    </td>
-                                    <td style={tdStyle}>{row.status_group || "—"}</td>
-                                    <td style={amountStyle}>{row.count}</td>
-                                    <td style={amountStyle}>{formatAmount(row.order_amount)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div style={{ display: "grid", gap: 10, justifyItems: "center" }}>
+                        <div
+                            style={{
+                                width: "100%",
+                                clipPath: "polygon(1.5% 0, 98.5% 0, 100% 100%, 0 100%)",
+                                borderRadius: 8,
+                                background: "#dbeafe",
+                                border: "1px solid #bfdbfe",
+                                padding: "13px 18px",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                gap: 16,
+                                alignItems: "center",
+                                boxSizing: "border-box",
+                            }}
+                        >
+                            <span style={{ fontWeight: 900 }}>Всего заказов</span>
+                            <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 900 }}>{totalFunnelCount} · 100,00%</span>
+                        </div>
+                        {visibleFunnel.map((row) => {
+                            const count = Number(row.count || 0);
+                            const share = totalFunnelCount ? (count * 100) / totalFunnelCount : 0;
+                            const width = Math.max(28, Math.min(100, share));
+                            return (
+                                <div key={row.status_id} style={{ display: "grid", justifyItems: "center" }}>
+                                    <div
+                                        style={{
+                                            width: `${width}%`,
+                                            minWidth: 220,
+                                            clipPath: "polygon(4% 0, 96% 0, 100% 100%, 0 100%)",
+                                            borderRadius: 8,
+                                            background: row.status_group === "sale" ? "#dcfce7" : row.status_group === "cancelled" ? "#fee2e2" : row.status_group === "return" ? "#fef3c7" : "#eff6ff",
+                                            border: "1px solid #dbe3ef",
+                                            padding: "10px 14px",
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            gap: 12,
+                                            alignItems: "center",
+                                        }}
+                                    >
+                                        <span style={{ fontWeight: 900 }}>{row.status_name}</span>
+                                        <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 900 }}>{count} · {formatAmount(share)}%</span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </section>
             )}
 
@@ -260,8 +314,8 @@ const OrderReportsPage = () => {
 const ReportTable = ({ rows }) => (
     <section style={panelStyle}>
         <table style={tableStyle}>
-            <thead><tr><th style={thStyle}>Предприятие</th><th style={amountStyle}>Заказы</th><th style={amountStyle}>Продажи</th><th style={amountStyle}>Отказы</th><th style={amountStyle}>% отказов</th><th style={amountStyle}>Возвраты</th><th style={amountStyle}>% возвратов</th><th style={amountStyle}>Выручка</th><th style={amountStyle}>Чистая прибыль</th></tr></thead>
-            <tbody>{rows.map((row) => <tr key={row.enterprise_code}><td style={tdStyle}>{row.enterprise_name}<br /><span style={{ color: "#64748b" }}>{row.enterprise_code}</span></td><td style={amountStyle}>{row.total_orders}</td><td style={amountStyle}>{row.sales_count}</td><td style={amountStyle}>{row.cancelled_count}</td><td style={amountStyle}>{formatAmount(row.refusal_rate)}%</td><td style={amountStyle}>{row.return_count}</td><td style={amountStyle}>{formatAmount(row.return_rate)}%</td><td style={amountStyle}>{formatAmount(row.sale_amount)}</td><td style={amountStyle}>{formatAmount(row.net_profit_amount)}</td></tr>)}</tbody>
+            <thead><tr><th style={thStyle}>Предприятие</th><th style={amountStyle}>Заказы</th><th style={amountStyle}>Продажи</th><th style={amountStyle}>Отказы</th><th style={amountStyle}>% отказов</th><th style={amountStyle}>Возвраты</th><th style={amountStyle}>% возвратов</th><th style={amountStyle}>Выручка</th><th style={amountStyle}>Валовая прибыль</th><th style={amountStyle}>Чистая прибыль</th></tr></thead>
+            <tbody>{rows.map((row) => <tr key={row.enterprise_code}><td style={tdStyle}>{row.enterprise_name}<br /><span style={{ color: "#64748b" }}>{row.enterprise_code}</span></td><td style={amountStyle}>{row.total_orders}</td><td style={amountStyle}>{row.sales_count}</td><td style={amountStyle}>{row.cancelled_count}</td><td style={amountStyle}>{formatAmount(row.refusal_rate)}%</td><td style={amountStyle}>{row.return_count}</td><td style={amountStyle}>{formatAmount(row.return_rate)}%</td><td style={amountStyle}>{formatAmount(row.sale_amount)}</td><td style={amountStyle}>{formatAmount(row.gross_profit_amount)}</td><td style={amountStyle}>{formatAmount(row.net_profit_amount)}</td></tr>)}</tbody>
         </table>
     </section>
 );
@@ -269,8 +323,34 @@ const ReportTable = ({ rows }) => (
 const SupplierTable = ({ rows }) => (
     <section style={panelStyle}>
         <table style={tableStyle}>
-            <thead><tr><th style={thStyle}>Поставщик</th><th style={amountStyle}>Заказы</th><th style={amountStyle}>Штук</th><th style={amountStyle}>Продажи</th><th style={amountStyle}>Себестоимость</th><th style={amountStyle}>Валовая</th><th style={amountStyle}>Доля</th><th style={amountStyle}>Расходы</th><th style={amountStyle}>Чистая</th></tr></thead>
-            <tbody>{rows.map((row) => <tr key={row.supplier_code}><td style={tdStyle}>{row.supplier_name}<br /><span style={{ color: "#64748b" }}>{row.supplier_code}</span></td><td style={amountStyle}>{row.orders_count}</td><td style={amountStyle}>{formatAmount(row.quantity)}</td><td style={amountStyle}>{formatAmount(row.sale_amount)}</td><td style={amountStyle}>{formatAmount(row.cost_amount)}</td><td style={amountStyle}>{formatAmount(row.gross_profit_amount)}</td><td style={amountStyle}>{formatAmount(row.sales_share_percent)}%</td><td style={amountStyle}>{formatAmount(row.allocated_expense_amount)}</td><td style={amountStyle}>{formatAmount(row.net_profit_amount)}</td></tr>)}</tbody>
+            <thead><tr><th style={thStyle}>Поставщик</th><th style={thStyle}>Тип</th><th style={amountStyle}>Заказы</th><th style={amountStyle}>Штук</th><th style={amountStyle}>Сумма</th><th style={amountStyle}>Себестоимость</th><th style={amountStyle}>Валовая</th><th style={amountStyle}>Доля</th><th style={amountStyle}>Расходы</th><th style={amountStyle}>Чистая</th></tr></thead>
+            <tbody>{rows.map((row) => (
+                <React.Fragment key={`${row.supplier_code}-${row.supplier_name}`}>
+                    <tr>
+                        <td style={tdStyle} rowSpan={2}>{row.supplier_name}<br /><span style={{ color: "#64748b" }}>{row.supplier_code}</span></td>
+                        <td style={tdStyle}>Продажи</td>
+                        <td style={amountStyle}>{row.sales_count}</td>
+                        <td style={amountStyle}>{formatAmount(row.quantity)}</td>
+                        <td style={amountStyle}>{formatAmount(row.sale_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.cost_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.gross_profit_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.sales_share_percent)}%</td>
+                        <td style={amountStyle}>{formatAmount(row.allocated_expense_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.net_profit_amount)}</td>
+                    </tr>
+                    <tr style={{ background: "#f8fafc" }}>
+                        <td style={tdStyle}>Заказы</td>
+                        <td style={amountStyle}>{row.orders_count}</td>
+                        <td style={amountStyle}>{formatAmount(row.order_quantity)}</td>
+                        <td style={amountStyle}>{formatAmount(row.order_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.order_cost_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.order_gross_profit_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.order_share_percent)}%</td>
+                        <td style={amountStyle}>{formatAmount(row.order_allocated_expense_amount)}</td>
+                        <td style={amountStyle}>{formatAmount(row.order_net_profit_amount)}</td>
+                    </tr>
+                </React.Fragment>
+            ))}</tbody>
         </table>
     </section>
 );
@@ -279,7 +359,7 @@ const DetailsTable = ({ rows }) => (
     <section style={panelStyle}>
         <table style={tableStyle}>
             <thead><tr><th style={thStyle}>Дата</th><th style={thStyle}>Предприятие</th><th style={thStyle}>Заказ</th><th style={thStyle}>Статус</th><th style={amountStyle}>Сумма</th><th style={amountStyle}>Себест.</th><th style={amountStyle}>Валовая</th><th style={amountStyle}>Расходы</th><th style={amountStyle}>Чистая</th><th style={thStyle}>Позиции</th></tr></thead>
-            <tbody>{rows.map((row) => <tr key={row.id}><td style={tdStyle}>{row.order_created_at ? row.order_created_at.slice(0, 10) : "—"}</td><td style={tdStyle}>{row.enterprise_code}</td><td style={tdStyle}>{row.order_number || row.external_order_id}<br /><span style={{ color: "#64748b" }}>{row.source}</span></td><td style={tdStyle}>{row.status_name}<br /><span style={{ color: "#64748b" }}>{row.status_group}</span></td><td style={amountStyle}>{formatAmount(row.order_amount)}</td><td style={amountStyle}>{formatAmount(row.supplier_cost_total)}</td><td style={amountStyle}>{formatAmount(row.gross_profit_amount)}</td><td style={amountStyle}>{formatAmount(row.expense_amount)}</td><td style={amountStyle}>{formatAmount(row.net_profit_amount)}</td><td style={tdStyle}>{(row.items || []).slice(0, 3).map((item) => <div key={item.line_index}>{item.product_name || item.sku} · {item.supplier_code || "unmapped"}</div>)}</td></tr>)}</tbody>
+            <tbody>{rows.map((row) => <tr key={row.id}><td style={tdStyle}>{row.order_created_at ? row.order_created_at.slice(0, 10) : "—"}</td><td style={tdStyle}>{row.enterprise_code}</td><td style={tdStyle}>{row.order_number || row.external_order_id}<br /><span style={{ color: "#64748b" }}>{row.source}</span></td><td style={tdStyle}>{row.status_name}<br /><span style={{ color: "#64748b" }}>{row.status_group}</span></td><td style={amountStyle}>{formatAmount(row.order_amount)}</td><td style={amountStyle}>{formatAmount(row.supplier_cost_total)}</td><td style={amountStyle}>{formatAmount(row.gross_profit_amount)}</td><td style={amountStyle}>{formatAmount(row.expense_amount)}</td><td style={amountStyle}>{formatAmount(row.net_profit_amount)}</td><td style={tdStyle}>{(row.items || []).slice(0, 3).map((item) => <div key={item.line_index}>{item.product_name || item.sku} · {item.supplier_code || item.supplier_name || "unmapped"}</div>)}</td></tr>)}</tbody>
         </table>
     </section>
 );

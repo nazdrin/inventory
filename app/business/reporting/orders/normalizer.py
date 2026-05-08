@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import BusinessStore, BusinessStoreOffer, DropshipEnterprise, Offer, ReportEnterpriseExpenseSetting
-from app.business.reporting.orders.profit_calculator import as_decimal, calculate_order_financials, money, percent
+from app.business.reporting.orders.profit_calculator import as_decimal, money, percent
 from app.business.reporting.orders.statuses import classify_status
 
 
@@ -208,6 +208,28 @@ async def _offer_for_line(
     return supplier_code, str(supplier_name or supplier_code), money(cost_price)
 
 
+async def _supplier_code_by_name(session: AsyncSession, supplier_name: str | None) -> str | None:
+    normalized_name = _clean(supplier_name)
+    if not normalized_name:
+        return None
+    result = await session.execute(
+        select(DropshipEnterprise.code)
+        .where(DropshipEnterprise.name == normalized_name)
+        .limit(1)
+    )
+    exact = result.scalar_one_or_none()
+    if exact:
+        return str(exact)
+    lowered = normalized_name.lower()
+    result = await session.execute(
+        select(DropshipEnterprise.code)
+        .where(func.lower(DropshipEnterprise.name) == lowered)
+        .limit(1)
+    )
+    value = result.scalar_one_or_none()
+    return str(value) if value else None
+
+
 async def normalize_tabletki_order(
     session: AsyncSession,
     *,
@@ -305,6 +327,8 @@ async def normalize_salesdrive_order(
         cost_price = money(as_decimal(product.get("expenses", product.get("costPrice", 0))))
         supplier_code = _clean(product.get("supplier_code"))
         supplier_name = _clean(product.get("supplier") or order.get("supplier"))
+        if not supplier_code:
+            supplier_code = await _supplier_code_by_name(session, supplier_name)
         if not supplier_code and cost_price == 0:
             supplier_code, supplier_name, cost_price = await _offer_for_line(
                 session,
@@ -379,13 +403,9 @@ def _build_order(
     quantity = sum((item.quantity for item in items), Decimal("0"))
     cost_total = money(sum((item.cost_amount for item in items), Decimal("0")))
     sale_date = order_created_at if status.is_sale else None
-    financials = calculate_order_financials(
-        order_amount=order_amount,
-        sale_amount=order_amount,
-        supplier_cost_total=cost_total,
-        expense_percent=expense_percent,
-        is_sale=status.is_sale,
-    )
+    expense_amount = money(order_amount * as_decimal(expense_percent) / Decimal("100"))
+    gross_profit = money(order_amount - cost_total)
+    net_profit = money(gross_profit - expense_amount)
     return NormalizedOrder(
         source=source,
         enterprise_code=enterprise_code,
@@ -409,15 +429,15 @@ def _build_order(
         customer_city=customer_city,
         payment_type=payment_type,
         delivery_type=delivery_type,
-        order_amount=financials["order_amount"],
-        sale_amount=financials["sale_amount"],
+        order_amount=order_amount,
+        sale_amount=order_amount if status.is_sale else Decimal("0"),
         items_quantity=quantity,
         sale_quantity=quantity if status.is_sale else Decimal("0"),
-        supplier_cost_total=financials["supplier_cost_total"],
-        gross_profit_amount=financials["gross_profit_amount"],
-        expense_percent=financials["expense_percent"],
-        expense_amount=financials["expense_amount"],
-        net_profit_amount=financials["net_profit_amount"],
+        supplier_cost_total=cost_total,
+        gross_profit_amount=gross_profit,
+        expense_percent=as_decimal(expense_percent),
+        expense_amount=expense_amount,
+        net_profit_amount=net_profit,
         last_synced_at=datetime.now(timezone.utc),
         raw_hash=_raw_hash(raw_json),
         raw_json=raw_json,
