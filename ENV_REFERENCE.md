@@ -93,6 +93,7 @@
 - `CHECKBOX_RECEIPT_RETRY_MAX_ATTEMPTS` - максимум попыток retry worker-а.
 - `CHECKBOX_DEFAULT_PAYMENT_METHOD_ID` - fallback SalesDrive payment method id, дефолт `20` (`Післяплата`).
 - `CHECKBOX_DEFAULT_TAX_CODE` - tax code Checkbox для товаров; дефолт `8` (`Без ПДВ`), пустое значение отключает передачу tax.
+- `CHECKBOX_EXCLUDED_SUPPLIERS` - список поставщиков через запятую, для которых не создавать Checkbox чеки; дефолт `40,D3,ProteinPlus`.
 - `CHECKBOX_SALESDRIVE_UPDATE_CHECK_ENABLED` - обновлять поле ссылки на чек в SalesDrive после фискализации, дефолт `true`.
 - `CHECKBOX_SALESDRIVE_CHECK_FIELD` - имя поля SalesDrive для ссылки на чек, дефолт `check`.
 - `CHECKBOX_TELEGRAM_NOTIFICATIONS_ENABLED` - общий флаг Checkbox Telegram уведомлений.

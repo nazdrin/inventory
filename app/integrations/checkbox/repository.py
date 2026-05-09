@@ -128,6 +128,16 @@ async def mark_receipt_failed(
     row.next_retry_at = utcnow() + timedelta(seconds=retry_delay_seconds)
 
 
+async def mark_receipt_skipped(
+    row: CheckboxReceipt,
+    *,
+    reason: str,
+) -> None:
+    row.checkbox_status = "skipped"
+    row.error_message = reason[:4000]
+    row.next_retry_at = None
+
+
 async def get_open_shift(
     session: AsyncSession,
     *,

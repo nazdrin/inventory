@@ -15,6 +15,7 @@ from app.integrations.checkbox.repository import (
     mark_receipt_failed,
     mark_receipt_fiscalized,
     mark_receipt_pending,
+    mark_receipt_skipped,
 )
 from app.integrations.checkbox.shift_service import ensure_open_shift
 from app.integrations.salesdrive.client import get_salesdrive_api_key, update_order_field
@@ -52,6 +53,63 @@ def _extract_receipt_url(response: dict[str, Any]) -> str | None:
 def _extract_fiscal_code(response: dict[str, Any]) -> str | None:
     value = response.get("fiscal_code")
     return str(value).strip() if value else None
+
+
+def _normalize_supplier_token(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _collect_supplier_tokens(data: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for key in (
+        "supplier",
+        "supplier_code",
+        "supplierCode",
+        "supplierlist",
+        "supplierList",
+        "supplier_id",
+        "supplierId",
+    ):
+        value = data.get(key)
+        if isinstance(value, list):
+            for item in value:
+                tokens.add(_normalize_supplier_token(item))
+        else:
+            tokens.add(_normalize_supplier_token(value))
+
+    products = data.get("products") or []
+    if isinstance(products, list):
+        for product in products:
+            if not isinstance(product, dict):
+                continue
+            for key in (
+                "supplier",
+                "supplier_code",
+                "supplierCode",
+                "supplier_id",
+                "supplierId",
+                "supplierlist",
+                "supplierList",
+            ):
+                value = product.get(key)
+                if isinstance(value, list):
+                    for item in value:
+                        tokens.add(_normalize_supplier_token(item))
+                else:
+                    tokens.add(_normalize_supplier_token(value))
+    return {token for token in tokens if token}
+
+
+def _excluded_supplier_match(data: dict[str, Any], excluded_suppliers: set[str]) -> str | None:
+    if not excluded_suppliers:
+        return None
+    tokens = _collect_supplier_tokens(data)
+    normalized_excluded = {_normalize_supplier_token(item) for item in excluded_suppliers if str(item).strip()}
+    for token in tokens:
+        for excluded in normalized_excluded:
+            if token == excluded or excluded in token:
+                return excluded
+    return None
 
 
 async def _update_salesdrive_check(
@@ -113,6 +171,17 @@ async def handle_salesdrive_webhook_order(
         total_amount=mapped.total_amount,
         items_count=mapped.items_count,
     )
+
+    excluded_supplier = _excluded_supplier_match(data, settings.excluded_suppliers)
+    if excluded_supplier:
+        await mark_receipt_skipped(row, reason=f"Checkbox fiscalization skipped for excluded supplier: {excluded_supplier}")
+        logger.info(
+            "Checkbox fiscalization skipped: enterprise_code=%s salesdrive_order_id=%s excluded_supplier=%s",
+            enterprise_code,
+            salesdrive_order_id,
+            excluded_supplier,
+        )
+        return
 
     if status_id_int == 4:
         logger.info(
