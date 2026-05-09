@@ -13,6 +13,7 @@ from app.business.business_store_tabletki_outbound_mapper import (
     restore_salesdrive_products_for_tabletki_outbound,
 )
 from app.database import get_async_db, EnterpriseSettings
+from app.integrations.checkbox.service import handle_salesdrive_webhook_order
 from app.models import MappingBranch
 from app.services.order_sender import process_due_tabletki_cancel_retries, send_orders_to_tabletki
 from app.services.order_reporting_sync_service import safe_upsert_salesdrive_order
@@ -248,6 +249,21 @@ async def process_salesdrive_webhook(payload: Dict[str, Any]) -> None:
                 order=data,
                 enterprise_code=enterprise_code,
             )
+
+            try:
+                await handle_salesdrive_webhook_order(
+                    session,
+                    data=data,
+                    enterprise_code=enterprise_code,
+                )
+            except Exception:
+                logger.exception(
+                    "Checkbox webhook hook failed: enterprise_code=%s salesdrive_id=%s externalId=%s statusId=%s",
+                    enterprise_code,
+                    data.get("id"),
+                    data.get("externalId"),
+                    data.get("statusId"),
+                )
 
             creds = await _get_tabletki_credentials(session, enterprise_code)
             if not creds:

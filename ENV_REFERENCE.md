@@ -70,6 +70,35 @@
 - `PAYMENT_REPORTING_DAILY_IMPORT_HOUR` - час ежедневного импорта SalesDrive payments, дефолт `2`.
 - `PAYMENT_REPORTING_DAILY_IMPORT_MINUTE` - минута ежедневного импорта SalesDrive payments, дефолт `0`.
 
+## Checkbox fiscalization
+
+- `CHECKBOX_API_BASE_URL` - базовый URL Checkbox API, дефолт `https://api.checkbox.ua`.
+- `CHECKBOX_CLIENT_NAME` - имя интеграции для заголовка `X-Client-Name`.
+- `CHECKBOX_CLIENT_VERSION` - версия интеграции для заголовка `X-Client-Version`.
+- `CHECKBOX_ACCESS_KEY` - integration access key Checkbox для заголовка `X-Access-Key`, если нужен.
+- `CHECKBOX_LICENSE_KEY` - license key кассы Checkbox; секрет, не коммитить.
+- `CHECKBOX_CASHIER_LOGIN` - login кассира Checkbox для login/password auth; секретное значение не документировать.
+- `CHECKBOX_CASHIER_PASSWORD` - password кассира Checkbox для login/password auth; секрет, не коммитить.
+- `CHECKBOX_CASHIER_PIN` - PIN кассира Checkbox для `signinPinCode`; секрет, не коммитить.
+- `CHECKBOX_TEST_MODE` - включает test-mode маркировку логов/уведомлений; не заменяет реальные тестовые ключи.
+- `CHECKBOX_ENABLED_ENTERPRISES` - allowlist `enterprise_code` через запятую для нового Checkbox flow; для первого теста используется `223`.
+- `CHECKBOX_DEFAULT_CASH_REGISTER_CODE` - локальный код кассы для хранения в БД, дефолт `default`.
+- `CHECKBOX_SHIFT_OPEN_ON_DEMAND` - открывать смену автоматически перед фискализацией, дефолт `true`.
+- `CHECKBOX_SHIFT_CLOSE_TIME` - локальное время закрытия смены в формате `HH:MM`.
+- `CHECKBOX_SHIFT_TIMEZONE` - timezone scheduler-а закрытия смены, дефолт `Europe/Kiev`.
+- `CHECKBOX_SHIFT_SCHEDULER_POLL_INTERVAL_SEC` - интервал проверки shift scheduler-а.
+- `CHECKBOX_RECEIPT_POLL_INTERVAL_SEC` - интервал polling статуса чека.
+- `CHECKBOX_RECEIPT_POLL_TIMEOUT_SEC` - timeout ожидания финального статуса чека в webhook path.
+- `CHECKBOX_RECEIPT_RETRY_INTERVAL_SEC` - интервал retry worker-а для незавершённых чеков.
+- `CHECKBOX_RECEIPT_RETRY_MAX_ATTEMPTS` - максимум попыток retry worker-а.
+- `CHECKBOX_DEFAULT_PAYMENT_METHOD_ID` - fallback SalesDrive payment method id, дефолт `20` (`Післяплата`).
+- `CHECKBOX_DEFAULT_TAX_CODE` - tax code Checkbox для товаров; дефолт `8` (`Без ПДВ`), пустое значение отключает передачу tax.
+- `CHECKBOX_SALESDRIVE_UPDATE_CHECK_ENABLED` - обновлять поле ссылки на чек в SalesDrive после фискализации, дефолт `true`.
+- `CHECKBOX_SALESDRIVE_CHECK_FIELD` - имя поля SalesDrive для ссылки на чек, дефолт `check`.
+- `CHECKBOX_TELEGRAM_NOTIFICATIONS_ENABLED` - общий флаг Checkbox Telegram уведомлений.
+- `CHECKBOX_TELEGRAM_RECEIPT_NOTIFICATIONS_ENABLED` - test-mode уведомления по каждому фискализированному чеку.
+- `CHECKBOX_TELEGRAM_SHIFT_NOTIFICATIONS_ENABLED` - уведомления об открытии/закрытии смены и summary.
+
 ## Telegram / уведомления
 
 - `TELEGRAM_BOT_TOKEN` - токен Telegram bot.

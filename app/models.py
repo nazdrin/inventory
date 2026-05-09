@@ -309,6 +309,77 @@ class BusinessSettings(Base, TimestampMixin):
     )
 
 
+class CheckboxReceipt(Base, TimestampMixin):
+    __tablename__ = "checkbox_receipts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    salesdrive_order_id = Column(String(255), nullable=False)
+    salesdrive_external_id = Column(String(255), nullable=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    cash_register_code = Column(String(255), nullable=True)
+    salesdrive_status_id = Column(Integer, nullable=True)
+    checkbox_receipt_id = Column(String(255), nullable=True)
+    checkbox_order_id = Column(String(255), nullable=True)
+    checkbox_shift_id = Column(String(255), nullable=True)
+    checkbox_status = Column(String(32), nullable=False, server_default=text("'draft'"))
+    fiscal_code = Column(String(255), nullable=True)
+    receipt_url = Column(String(1000), nullable=True)
+    total_amount = Column(Numeric(14, 2), nullable=True)
+    items_count = Column(Integer, nullable=True)
+    payload_json = Column(JSONB, nullable=True)
+    response_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, server_default=text("0"))
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    fiscalized_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "salesdrive_order_id",
+            name="uq_checkbox_receipts_enterprise_salesdrive_order",
+        ),
+        Index("ix_checkbox_receipts_enterprise_created", "enterprise_code", "created_at"),
+        Index("ix_checkbox_receipts_receipt_id", "checkbox_receipt_id"),
+        Index("ix_checkbox_receipts_status_retry", "checkbox_status", "next_retry_at"),
+        CheckConstraint(
+            "checkbox_status IN ('draft', 'pending', 'fiscalized', 'failed', 'cancelled', 'skipped')",
+            name="ck_checkbox_receipts_status",
+        ),
+    )
+
+
+class CheckboxShift(Base, TimestampMixin):
+    __tablename__ = "checkbox_shifts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    cash_register_code = Column(String(255), nullable=True)
+    checkbox_shift_id = Column(String(255), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'opening'"))
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    receipts_count = Column(Integer, nullable=False, server_default=text("0"))
+    receipts_total_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    response_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "cash_register_code",
+            "checkbox_shift_id",
+            name="uq_checkbox_shifts_enterprise_cash_register_shift",
+        ),
+        Index("ix_checkbox_shifts_enterprise_status", "enterprise_code", "status"),
+        Index("ix_checkbox_shifts_cash_register_status", "cash_register_code", "status"),
+        CheckConstraint(
+            "status IN ('opening', 'opened', 'closing', 'closed', 'failed')",
+            name="ck_checkbox_shifts_status",
+        ),
+    )
+
+
 class BusinessStore(Base):
     __tablename__ = "business_stores"
 

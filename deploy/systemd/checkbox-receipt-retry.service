@@ -1,0 +1,18 @@
+# NOTE: this is a production template
+# DO NOT APPLY DIRECTLY WITHOUT REVIEW
+
+[Unit]
+Description=Checkbox Receipt Retry Service
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/inventory/app/services
+Environment="PYTHONPATH=/root/inventory"
+EnvironmentFile=/root/inventory/.env
+ExecStart=/root/inventory/.venv/bin/python -m app.services.checkbox_receipt_retry_service
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

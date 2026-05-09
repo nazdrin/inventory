@@ -66,6 +66,8 @@ sudo systemctl restart backup_db.service
 sudo systemctl restart master-catalog-scheduler.service
 sudo systemctl restart business_stock_scheduler.service
 sudo systemctl restart tabletki-cancel-retry.service
+sudo systemctl restart checkbox-receipt-retry.service
+sudo systemctl restart checkbox-shift-scheduler.service
 ```
 
 Статус и логи:
@@ -83,6 +85,8 @@ sudo journalctl -u biotus_check_order_scheduler.service -f
 sudo journalctl -u business_stock_scheduler.service -f
 sudo journalctl -u master-catalog-scheduler.service -f
 sudo journalctl -u tabletki-cancel-retry.service -f
+sudo journalctl -u checkbox-receipt-retry.service -f
+sudo journalctl -u checkbox-shift-scheduler.service -f
 sudo journalctl -u telegram_bot -f
 ```
 
