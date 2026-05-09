@@ -9,6 +9,7 @@ import FormatsPage from "./pages/FormatsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import BusinessSettingsPage from "./pages/BusinessSettingsPage";
 import BusinessStoresPage from "./pages/BusinessStoresPage";
+import BusinessOrganizationsPage from "./pages/BusinessOrganizationsPage";
 import PaymentReportsPage from "./pages/PaymentReportsPage";
 import OrderReportsPage from "./pages/OrderReportsPage";
 
@@ -188,6 +189,20 @@ const App = () => {
                                 cursor: "pointer",
                                 borderRadius: "5px",
                             }}
+                            onClick={() => navigate("/business-organizations")}
+                        >
+                            Организации и кассы
+                        </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
                             onClick={() => navigate("/payment-reports")}
                         >
                             Платежи
@@ -243,6 +258,10 @@ const App = () => {
                 <Route
                     path="/business-stores"
                     element={<PrivateRoute element={<BusinessStoresPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/business-organizations"
+                    element={<PrivateRoute element={<BusinessOrganizationsPage authUser={authUser} />} />}
                 />
                 <Route
                     path="/payment-reports"

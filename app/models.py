@@ -316,6 +316,9 @@ class CheckboxReceipt(Base, TimestampMixin):
     salesdrive_order_id = Column(String(255), nullable=False)
     salesdrive_external_id = Column(String(255), nullable=True)
     enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    business_store_id = Column(BigInteger, ForeignKey("business_stores.id"), nullable=True)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    cash_register_id = Column(BigInteger, ForeignKey("checkbox_cash_registers.id"), nullable=True)
     cash_register_code = Column(String(255), nullable=True)
     salesdrive_status_id = Column(Integer, nullable=True)
     checkbox_receipt_id = Column(String(255), nullable=True)
@@ -340,6 +343,9 @@ class CheckboxReceipt(Base, TimestampMixin):
             name="uq_checkbox_receipts_enterprise_salesdrive_order",
         ),
         Index("ix_checkbox_receipts_enterprise_created", "enterprise_code", "created_at"),
+        Index("ix_checkbox_receipts_store_id", "business_store_id"),
+        Index("ix_checkbox_receipts_organization_id", "business_organization_id"),
+        Index("ix_checkbox_receipts_cash_register_id", "cash_register_id"),
         Index("ix_checkbox_receipts_receipt_id", "checkbox_receipt_id"),
         Index("ix_checkbox_receipts_status_retry", "checkbox_status", "next_retry_at"),
         CheckConstraint(
@@ -354,6 +360,8 @@ class CheckboxShift(Base, TimestampMixin):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    cash_register_id = Column(BigInteger, ForeignKey("checkbox_cash_registers.id"), nullable=True)
     cash_register_code = Column(String(255), nullable=True)
     checkbox_shift_id = Column(String(255), nullable=True)
     status = Column(String(32), nullable=False, server_default=text("'opening'"))
@@ -372,6 +380,8 @@ class CheckboxShift(Base, TimestampMixin):
             name="uq_checkbox_shifts_enterprise_cash_register_shift",
         ),
         Index("ix_checkbox_shifts_enterprise_status", "enterprise_code", "status"),
+        Index("ix_checkbox_shifts_organization_status", "business_organization_id", "status"),
+        Index("ix_checkbox_shifts_cash_register_id_status", "cash_register_id", "status"),
         Index("ix_checkbox_shifts_cash_register_status", "cash_register_code", "status"),
         CheckConstraint(
             "status IN ('opening', 'opened', 'closing', 'closed', 'failed')",
@@ -386,6 +396,7 @@ class BusinessStore(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     store_code = Column(String(255), nullable=False)
     store_name = Column(String(500), nullable=False)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
     legal_entity_name = Column(String(500), nullable=True)
     tax_identifier = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default=text("true"))
@@ -426,6 +437,7 @@ class BusinessStore(Base):
     __table_args__ = (
         UniqueConstraint("store_code", name="uq_business_stores_store_code"),
         Index("ix_business_stores_enterprise_code", "enterprise_code"),
+        Index("ix_business_stores_business_organization_id", "business_organization_id"),
         Index("ix_business_stores_legacy_scope_key", "legacy_scope_key"),
         Index("ix_business_stores_is_active", "is_active"),
         Index("ix_business_stores_takes_over_legacy_scope", "takes_over_legacy_scope"),
@@ -1583,6 +1595,7 @@ class PaymentBusinessAccount(Base, TimestampMixin):
     card_mask = Column(String(64), nullable=True)
     currency = Column(String(16), nullable=False, server_default=text("'UAH'"))
     bank_name = Column(String(255), nullable=True)
+    mfo = Column(String(32), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default=text("true"))
 
     __table_args__ = (
@@ -1590,6 +1603,70 @@ class PaymentBusinessAccount(Base, TimestampMixin):
         UniqueConstraint("salesdrive_account_id", name="uq_payment_business_accounts_salesdrive_account_id"),
         Index("ix_payment_business_accounts_entity_id", "business_entity_id"),
         Index("ix_payment_business_accounts_is_active", "is_active"),
+    )
+
+
+class CheckboxCashRegister(Base, TimestampMixin):
+    __tablename__ = "checkbox_cash_registers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    business_store_id = Column(BigInteger, ForeignKey("business_stores.id"), nullable=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
+    register_name = Column(String(500), nullable=False)
+    cash_register_code = Column(String(255), nullable=False)
+    checkbox_license_key = Column(String(1000), nullable=True)
+    cashier_login = Column(String(500), nullable=True)
+    cashier_password = Column(String(1000), nullable=True)
+    cashier_pin = Column(String(255), nullable=True)
+    api_base_url = Column(String(1000), nullable=True)
+    is_test_mode = Column(Boolean, nullable=False, server_default=text("true"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    is_default = Column(Boolean, nullable=False, server_default=text("false"))
+    shift_open_mode = Column(String(32), nullable=False, server_default=text("'on_fiscalization'"))
+    shift_open_time = Column(String(8), nullable=True)
+    shift_close_time = Column(String(8), nullable=True)
+    timezone = Column(String(64), nullable=False, server_default=text("'Europe/Kiev'"))
+    receipt_notifications_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    shift_notifications_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_organization_id",
+            "cash_register_code",
+            name="uq_checkbox_cash_registers_org_code",
+        ),
+        Index("ix_checkbox_cash_registers_org_active", "business_organization_id", "is_active"),
+        Index("ix_checkbox_cash_registers_store_id", "business_store_id"),
+        Index("ix_checkbox_cash_registers_enterprise_code", "enterprise_code"),
+        CheckConstraint(
+            "shift_open_mode IN ('manual', 'scheduled', 'first_status_4', 'on_fiscalization')",
+            name="ck_checkbox_cash_registers_shift_open_mode",
+        ),
+    )
+
+
+class CheckboxReceiptExclusion(Base, TimestampMixin):
+    __tablename__ = "checkbox_receipt_exclusions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    cash_register_id = Column(BigInteger, ForeignKey("checkbox_cash_registers.id"), nullable=True)
+    supplier_code = Column(String(255), nullable=False)
+    supplier_name = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_organization_id",
+            "cash_register_id",
+            "supplier_code",
+            name="uq_checkbox_receipt_exclusions_org_register_supplier",
+        ),
+        Index("ix_checkbox_receipt_exclusions_org_active", "business_organization_id", "is_active"),
+        Index("ix_checkbox_receipt_exclusions_register_id", "cash_register_id"),
     )
 
 

@@ -78,6 +78,386 @@ class AccountBalanceAdjustmentUpsert(BaseModel):
     approved_by: Optional[str] = None
 
 
+class BusinessOrganizationBase(BaseModel):
+    salesdrive_organization_id: Optional[str] = None
+    short_name: str
+    full_name: Optional[str] = None
+    tax_id: Optional[str] = None
+    entity_type: Literal["fop", "company", "individual", "other"] = "other"
+    verification_status: Literal["draft", "needs_review", "verified", "archived"] = "needs_review"
+    vat_enabled: bool = False
+    vat_payer: bool = False
+    without_stamp: bool = False
+    signer_name: Optional[str] = None
+    signer_position: Optional[str] = None
+    chief_accountant_name: Optional[str] = None
+    cashier_name: Optional[str] = None
+    address: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: bool = True
+    notes: Optional[str] = None
+
+    @field_validator(
+        "salesdrive_organization_id",
+        "short_name",
+        "full_name",
+        "tax_id",
+        "signer_name",
+        "signer_position",
+        "chief_accountant_name",
+        "cashier_name",
+        "address",
+        "postal_code",
+        "city",
+        "region",
+        "country",
+        "phone",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("short_name")
+    @classmethod
+    def _require_short_name(cls, value: Optional[str]) -> str:
+        if not value:
+            raise ValueError("short_name is required")
+        return value
+
+
+class BusinessOrganizationCreate(BusinessOrganizationBase):
+    pass
+
+
+class BusinessOrganizationUpdate(BaseModel):
+    salesdrive_organization_id: Optional[str] = None
+    short_name: Optional[str] = None
+    full_name: Optional[str] = None
+    tax_id: Optional[str] = None
+    entity_type: Optional[Literal["fop", "company", "individual", "other"]] = None
+    verification_status: Optional[Literal["draft", "needs_review", "verified", "archived"]] = None
+    vat_enabled: Optional[bool] = None
+    vat_payer: Optional[bool] = None
+    without_stamp: Optional[bool] = None
+    signer_name: Optional[str] = None
+    signer_position: Optional[str] = None
+    chief_accountant_name: Optional[str] = None
+    cashier_name: Optional[str] = None
+    address: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+    @field_validator(
+        "salesdrive_organization_id",
+        "short_name",
+        "full_name",
+        "tax_id",
+        "signer_name",
+        "signer_position",
+        "chief_accountant_name",
+        "cashier_name",
+        "address",
+        "postal_code",
+        "city",
+        "region",
+        "country",
+        "phone",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_update_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+
+class BusinessAccountBase(BaseModel):
+    salesdrive_account_id: Optional[str] = None
+    account_number: str
+    account_title: Optional[str] = None
+    label: Optional[str] = None
+    card_mask: Optional[str] = None
+    currency: str = "UAH"
+    bank_name: Optional[str] = None
+    mfo: Optional[str] = None
+    is_active: bool = True
+
+    @field_validator(
+        "salesdrive_account_id",
+        "account_number",
+        "account_title",
+        "label",
+        "card_mask",
+        "currency",
+        "bank_name",
+        "mfo",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_account_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("account_number")
+    @classmethod
+    def _require_account_number(cls, value: Optional[str]) -> str:
+        if not value:
+            raise ValueError("account_number is required")
+        return value
+
+
+class BusinessAccountCreate(BusinessAccountBase):
+    pass
+
+
+class BusinessAccountUpdate(BaseModel):
+    salesdrive_account_id: Optional[str] = None
+    account_number: Optional[str] = None
+    account_title: Optional[str] = None
+    label: Optional[str] = None
+    card_mask: Optional[str] = None
+    currency: Optional[str] = None
+    bank_name: Optional[str] = None
+    mfo: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    @field_validator(
+        "salesdrive_account_id",
+        "account_number",
+        "account_title",
+        "label",
+        "card_mask",
+        "currency",
+        "bank_name",
+        "mfo",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_update_account_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+
+class BusinessAccountOut(BusinessAccountBase):
+    id: int
+    business_entity_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CheckboxCashRegisterBase(BaseModel):
+    business_store_id: Optional[int] = None
+    enterprise_code: Optional[str] = None
+    register_name: str
+    cash_register_code: str
+    checkbox_license_key: Optional[str] = None
+    cashier_login: Optional[str] = None
+    cashier_password: Optional[str] = None
+    cashier_pin: Optional[str] = None
+    api_base_url: Optional[str] = None
+    is_test_mode: bool = True
+    is_active: bool = True
+    is_default: bool = False
+    shift_open_mode: Literal["manual", "scheduled", "first_status_4", "on_fiscalization"] = "on_fiscalization"
+    shift_open_time: Optional[str] = None
+    shift_close_time: Optional[str] = None
+    timezone: str = "Europe/Kiev"
+    receipt_notifications_enabled: bool = False
+    shift_notifications_enabled: bool = True
+    notes: Optional[str] = None
+
+    @field_validator(
+        "enterprise_code",
+        "register_name",
+        "cash_register_code",
+        "checkbox_license_key",
+        "cashier_login",
+        "cashier_password",
+        "cashier_pin",
+        "api_base_url",
+        "shift_open_time",
+        "shift_close_time",
+        "timezone",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_register_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("register_name", "cash_register_code")
+    @classmethod
+    def _require_register_text(cls, value: Optional[str]) -> str:
+        if not value:
+            raise ValueError("register_name and cash_register_code are required")
+        return value
+
+
+class CheckboxCashRegisterCreate(CheckboxCashRegisterBase):
+    pass
+
+
+class CheckboxCashRegisterUpdate(BaseModel):
+    business_store_id: Optional[int] = None
+    enterprise_code: Optional[str] = None
+    register_name: Optional[str] = None
+    cash_register_code: Optional[str] = None
+    checkbox_license_key: Optional[str] = None
+    cashier_login: Optional[str] = None
+    cashier_password: Optional[str] = None
+    cashier_pin: Optional[str] = None
+    api_base_url: Optional[str] = None
+    is_test_mode: Optional[bool] = None
+    is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
+    shift_open_mode: Optional[Literal["manual", "scheduled", "first_status_4", "on_fiscalization"]] = None
+    shift_open_time: Optional[str] = None
+    shift_close_time: Optional[str] = None
+    timezone: Optional[str] = None
+    receipt_notifications_enabled: Optional[bool] = None
+    shift_notifications_enabled: Optional[bool] = None
+    notes: Optional[str] = None
+
+    @field_validator(
+        "enterprise_code",
+        "register_name",
+        "cash_register_code",
+        "checkbox_license_key",
+        "cashier_login",
+        "cashier_password",
+        "cashier_pin",
+        "api_base_url",
+        "shift_open_time",
+        "shift_close_time",
+        "timezone",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_update_register_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+
+class CheckboxCashRegisterOut(BaseModel):
+    id: int
+    business_organization_id: int
+    business_store_id: Optional[int] = None
+    enterprise_code: Optional[str] = None
+    register_name: str
+    cash_register_code: str
+    checkbox_license_key_set: bool = False
+    cashier_login: Optional[str] = None
+    cashier_password_set: bool = False
+    cashier_pin_set: bool = False
+    api_base_url: Optional[str] = None
+    is_test_mode: bool
+    is_active: bool
+    is_default: bool
+    shift_open_mode: str
+    shift_open_time: Optional[str] = None
+    shift_close_time: Optional[str] = None
+    timezone: str
+    receipt_notifications_enabled: bool
+    shift_notifications_enabled: bool
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CheckboxReceiptExclusionBase(BaseModel):
+    cash_register_id: Optional[int] = None
+    supplier_code: str
+    supplier_name: Optional[str] = None
+    is_active: bool = True
+    comment: Optional[str] = None
+
+    @field_validator("supplier_code", "supplier_name", "comment", mode="before")
+    @classmethod
+    def _normalize_exclusion_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("supplier_code")
+    @classmethod
+    def _require_supplier_code(cls, value: Optional[str]) -> str:
+        if not value:
+            raise ValueError("supplier_code is required")
+        return value
+
+
+class CheckboxReceiptExclusionCreate(CheckboxReceiptExclusionBase):
+    pass
+
+
+class CheckboxReceiptExclusionUpdate(BaseModel):
+    cash_register_id: Optional[int] = None
+    supplier_code: Optional[str] = None
+    supplier_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    comment: Optional[str] = None
+
+    @field_validator("supplier_code", "supplier_name", "comment", mode="before")
+    @classmethod
+    def _normalize_update_exclusion_text(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+
+class CheckboxReceiptExclusionOut(CheckboxReceiptExclusionBase):
+    id: int
+    business_organization_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BusinessOrganizationOut(BusinessOrganizationBase):
+    id: int
+    accounts: List[BusinessAccountOut] = Field(default_factory=list)
+    cash_registers: List[CheckboxCashRegisterOut] = Field(default_factory=list)
+    receipt_exclusions: List[CheckboxReceiptExclusionOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class PaymentCounterpartySupplierMappingUpsert(BaseModel):
     supplier_code: str
     supplier_salesdrive_id: Optional[int] = None
@@ -410,6 +790,7 @@ class MappingBranchConstrainedUpdateSchema(BaseModel):
 
 class BusinessStoreBase(BaseModel):
     store_name: str
+    business_organization_id: Optional[int] = None
     legal_entity_name: Optional[str] = None
     tax_identifier: Optional[str] = None
     is_active: bool = True
@@ -503,6 +884,7 @@ class BusinessStoreCreate(BusinessStoreBase):
 
 class BusinessStoreUpdate(BaseModel):
     store_name: Optional[str] = None
+    business_organization_id: Optional[int] = None
     legal_entity_name: Optional[str] = None
     tax_identifier: Optional[str] = None
     is_active: Optional[bool] = None
@@ -576,6 +958,10 @@ class BusinessStoreOut(BaseModel):
     id: int
     store_code: str
     store_name: str
+    business_organization_id: Optional[int] = None
+    organization_short_name: Optional[str] = None
+    organization_tax_id: Optional[str] = None
+    organization_salesdrive_id: Optional[str] = None
     legal_entity_name: Optional[str] = None
     tax_identifier: Optional[str] = None
     is_active: bool

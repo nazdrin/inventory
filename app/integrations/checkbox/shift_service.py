@@ -27,11 +27,14 @@ async def ensure_open_shift(
     token: str,
     enterprise_code: str,
     cash_register_code: str,
+    business_organization_id: int | None = None,
+    cash_register_id: int | None = None,
 ) -> CheckboxShift | None:
     existing = await get_open_shift(
         session,
         enterprise_code=enterprise_code,
         cash_register_code=cash_register_code,
+        cash_register_id=cash_register_id,
     )
     if existing and existing.status == "opened":
         return existing
@@ -41,6 +44,8 @@ async def ensure_open_shift(
             session,
             enterprise_code=enterprise_code,
             cash_register_code=cash_register_code,
+            business_organization_id=business_organization_id,
+            cash_register_id=cash_register_id,
             response_json=response,
         )
         if shift.status == "opened":
@@ -54,6 +59,8 @@ async def ensure_open_shift(
         session,
         enterprise_code=enterprise_code,
         cash_register_code=cash_register_code,
+        business_organization_id=business_organization_id,
+        cash_register_id=cash_register_id,
         response_json=response,
     )
     await session.flush()
@@ -69,16 +76,21 @@ async def close_current_shift(
     token: str,
     enterprise_code: str,
     cash_register_code: str,
+    business_organization_id: int | None = None,
+    cash_register_id: int | None = None,
 ) -> CheckboxShift | None:
     shift = await get_open_shift(
         session,
         enterprise_code=enterprise_code,
         cash_register_code=cash_register_code,
+        cash_register_id=cash_register_id,
     )
     if not shift:
         return None
 
     shift.status = "closing"
+    shift.business_organization_id = business_organization_id or shift.business_organization_id
+    shift.cash_register_id = cash_register_id or shift.cash_register_id
     await update_shift_summary(session, shift=shift)
     response = await client.close_shift(token)
     shift.response_json = response

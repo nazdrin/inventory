@@ -17,6 +17,12 @@ from app.integrations.checkbox.repository import (
     mark_receipt_pending,
     mark_receipt_skipped,
 )
+from app.integrations.checkbox.resolver import (
+    receipt_excluded_suppliers,
+    resolve_business_store,
+    resolve_cash_register,
+    settings_for_register,
+)
 from app.integrations.checkbox.shift_service import ensure_open_shift
 from app.integrations.salesdrive.client import get_salesdrive_api_key, update_order_field
 from app.models import CheckboxReceipt
@@ -156,7 +162,10 @@ async def handle_salesdrive_webhook_order(
     if status_id_int not in (4, 5):
         return
 
-    mapped = map_salesdrive_order_to_receipt(data, enterprise_code=enterprise_code, settings=settings)
+    store = await resolve_business_store(session, data=data, enterprise_code=enterprise_code)
+    cash_register = await resolve_cash_register(session, store=store, enterprise_code=enterprise_code)
+    effective_settings = settings_for_register(settings, cash_register)
+    mapped = map_salesdrive_order_to_receipt(data, enterprise_code=enterprise_code, settings=effective_settings)
     salesdrive_order_id = str(data.get("id") or "").strip()
     salesdrive_external_id = str(data.get("externalId") or "").strip() or None
     row = await get_or_create_receipt(
@@ -165,14 +174,27 @@ async def handle_salesdrive_webhook_order(
         salesdrive_order_id=salesdrive_order_id,
         salesdrive_external_id=salesdrive_external_id,
         salesdrive_status_id=status_id_int,
-        cash_register_code=settings.default_cash_register_code,
+        cash_register_code=effective_settings.default_cash_register_code,
         checkbox_order_id=mapped.checkbox_order_id,
         payload_json=mapped.payload,
         total_amount=mapped.total_amount,
         items_count=mapped.items_count,
+        business_store_id=int(store.id) if store is not None else None,
+        business_organization_id=(
+            int(store.business_organization_id)
+            if store is not None and store.business_organization_id is not None
+            else None
+        ),
+        cash_register_id=int(cash_register.id) if cash_register is not None else None,
     )
 
-    excluded_supplier = _excluded_supplier_match(data, settings.excluded_suppliers)
+    excluded_suppliers = await receipt_excluded_suppliers(
+        session,
+        organization_id=row.business_organization_id,
+        cash_register_id=row.cash_register_id,
+        fallback=effective_settings.excluded_suppliers,
+    )
+    excluded_supplier = _excluded_supplier_match(data, excluded_suppliers)
     if excluded_supplier:
         await mark_receipt_skipped(row, reason=f"Checkbox fiscalization skipped for excluded supplier: {excluded_supplier}")
         logger.info(
@@ -184,6 +206,28 @@ async def handle_salesdrive_webhook_order(
         return
 
     if status_id_int == 4:
+        if cash_register is not None and cash_register.shift_open_mode == "first_status_4":
+            client = CheckboxClient(effective_settings)
+            try:
+                token = await client.signin()
+                await ensure_open_shift(
+                    session,
+                    client=client,
+                    settings=effective_settings,
+                    token=token,
+                    enterprise_code=enterprise_code,
+                    cash_register_code=effective_settings.default_cash_register_code,
+                    business_organization_id=row.business_organization_id,
+                    cash_register_id=row.cash_register_id,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Checkbox shift open on status 4 failed: enterprise_code=%s salesdrive_order_id=%s",
+                    enterprise_code,
+                    salesdrive_order_id,
+                )
+                await mark_receipt_failed(row, error_message=str(exc))
+                return
         logger.info(
             "Checkbox draft saved: enterprise_code=%s salesdrive_order_id=%s",
             enterprise_code,
@@ -192,20 +236,22 @@ async def handle_salesdrive_webhook_order(
         return
 
     if row.checkbox_status == "fiscalized" and row.receipt_url:
-        await _update_salesdrive_check(session, settings=settings, row=row)
+        await _update_salesdrive_check(session, settings=effective_settings, row=row)
         return
 
-    client = CheckboxClient(settings)
+    client = CheckboxClient(effective_settings)
     try:
         token = await client.signin()
         if not row.checkbox_receipt_id:
             shift = await ensure_open_shift(
                 session,
                 client=client,
-                settings=settings,
+                settings=effective_settings,
                 token=token,
                 enterprise_code=enterprise_code,
-                cash_register_code=settings.default_cash_register_code,
+                cash_register_code=effective_settings.default_cash_register_code,
+                business_organization_id=row.business_organization_id,
+                cash_register_id=row.cash_register_id,
             )
             create_response = await client.create_sell_receipt(token, mapped.payload)
             await mark_receipt_pending(
@@ -224,10 +270,10 @@ async def handle_salesdrive_webhook_order(
             receipt_url=_extract_receipt_url(final_response),
             fiscal_code=_extract_fiscal_code(final_response),
         )
-        salesdrive_updated = await _update_salesdrive_check(session, settings=settings, row=row)
+        salesdrive_updated = await _update_salesdrive_check(session, settings=effective_settings, row=row)
         if not salesdrive_updated:
             return
-        notify_receipt_fiscalized(settings, row)
+        notify_receipt_fiscalized(effective_settings, row)
     except Exception as exc:
         logger.exception(
             "Checkbox fiscalization failed: enterprise_code=%s salesdrive_order_id=%s",

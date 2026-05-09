@@ -8,10 +8,14 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
+
 from app.database import get_async_db
 from app.integrations.checkbox.client import CheckboxClient
 from app.integrations.checkbox.config import load_checkbox_settings
+from app.integrations.checkbox.resolver import settings_for_register
 from app.integrations.checkbox.shift_service import close_current_shift
+from app.models import CheckboxCashRegister
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -32,36 +36,66 @@ def _is_close_time(now: datetime, close_time: str) -> bool:
 
 async def run_once(*, force_close: bool = False) -> dict:
     settings = load_checkbox_settings()
-    stats = {"enabled_enterprises": len(settings.enabled_enterprises), "closed": 0, "skipped": 0, "failed": 0}
-    if not settings.enabled_enterprises:
-        return stats
-
-    tz = ZoneInfo(os.getenv("CHECKBOX_SHIFT_TIMEZONE", "Europe/Kiev"))
-    close_time = os.getenv("CHECKBOX_SHIFT_CLOSE_TIME", "23:50")
-    now = datetime.now(tz)
-    if not (force_close or _is_close_time(now, close_time)):
-        stats["skipped"] = len(settings.enabled_enterprises)
-        return stats
-
-    client = CheckboxClient(settings)
-    token = await client.signin()
+    stats = {"enabled_enterprises": len(settings.enabled_enterprises), "registers": 0, "closed": 0, "skipped": 0, "failed": 0}
     async with get_async_db() as session:
-        for enterprise_code in sorted(settings.enabled_enterprises):
+        registers = list(
+            (
+                await session.execute(
+                    select(CheckboxCashRegister)
+                    .where(CheckboxCashRegister.is_active.is_(True))
+                    .order_by(CheckboxCashRegister.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not registers:
+            for enterprise_code in sorted(settings.enabled_enterprises):
+                registers.append(
+                    CheckboxCashRegister(
+                        business_organization_id=0,
+                        enterprise_code=enterprise_code,
+                        register_name=settings.default_cash_register_code,
+                        cash_register_code=settings.default_cash_register_code,
+                        is_active=True,
+                        is_default=True,
+                        shift_close_time=os.getenv("CHECKBOX_SHIFT_CLOSE_TIME", "23:50"),
+                        timezone=os.getenv("CHECKBOX_SHIFT_TIMEZONE", "Europe/Kiev"),
+                    )
+                )
+        stats["registers"] = len(registers)
+
+        for register in registers:
+            effective_settings = settings_for_register(settings, register)
+            tz = ZoneInfo(register.timezone or os.getenv("CHECKBOX_SHIFT_TIMEZONE", "Europe/Kiev"))
+            close_time = register.shift_close_time or os.getenv("CHECKBOX_SHIFT_CLOSE_TIME", "23:50")
+            now = datetime.now(tz)
+            if not (force_close or _is_close_time(now, close_time)):
+                stats["skipped"] += 1
+                continue
             try:
+                client = CheckboxClient(effective_settings)
+                token = await client.signin()
                 shift = await close_current_shift(
                     session,
                     client=client,
-                    settings=settings,
+                    settings=effective_settings,
                     token=token,
-                    enterprise_code=enterprise_code,
-                    cash_register_code=settings.default_cash_register_code,
+                    enterprise_code=str(register.enterprise_code or ""),
+                    cash_register_code=effective_settings.default_cash_register_code,
+                    business_organization_id=(
+                        int(register.business_organization_id)
+                        if int(register.business_organization_id or 0) > 0
+                        else None
+                    ),
+                    cash_register_id=int(register.id) if getattr(register, "id", None) else None,
                 )
                 if shift:
                     stats["closed"] += 1
                 else:
                     stats["skipped"] += 1
             except Exception:
-                logger.exception("Checkbox shift close failed: enterprise_code=%s", enterprise_code)
+                logger.exception("Checkbox shift close failed: register_id=%s", getattr(register, "id", None))
                 stats["failed"] += 1
     return stats
 

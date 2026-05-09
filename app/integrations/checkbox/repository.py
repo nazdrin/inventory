@@ -42,6 +42,9 @@ async def get_or_create_receipt(
     payload_json: dict[str, Any],
     total_amount: Decimal,
     items_count: int,
+    business_store_id: int | None = None,
+    business_organization_id: int | None = None,
+    cash_register_id: int | None = None,
 ) -> CheckboxReceipt:
     row = await get_receipt(
         session,
@@ -51,6 +54,9 @@ async def get_or_create_receipt(
     if row is not None:
         row.salesdrive_status_id = salesdrive_status_id
         row.salesdrive_external_id = salesdrive_external_id or row.salesdrive_external_id
+        row.business_store_id = business_store_id or row.business_store_id
+        row.business_organization_id = business_organization_id or row.business_organization_id
+        row.cash_register_id = cash_register_id or row.cash_register_id
         row.cash_register_code = cash_register_code or row.cash_register_code
         row.checkbox_order_id = row.checkbox_order_id or checkbox_order_id
         row.payload_json = payload_json
@@ -63,6 +69,9 @@ async def get_or_create_receipt(
         salesdrive_order_id=salesdrive_order_id,
         salesdrive_external_id=salesdrive_external_id,
         salesdrive_status_id=salesdrive_status_id,
+        business_store_id=business_store_id,
+        business_organization_id=business_organization_id,
+        cash_register_id=cash_register_id,
         cash_register_code=cash_register_code,
         checkbox_order_id=checkbox_order_id,
         checkbox_status="draft",
@@ -143,14 +152,18 @@ async def get_open_shift(
     *,
     enterprise_code: str,
     cash_register_code: str,
+    cash_register_id: int | None = None,
 ) -> CheckboxShift | None:
+    conditions = [
+        CheckboxShift.enterprise_code == enterprise_code,
+        CheckboxShift.cash_register_code == cash_register_code,
+        CheckboxShift.status.in_(("opening", "opened")),
+    ]
+    if cash_register_id is not None:
+        conditions.append(CheckboxShift.cash_register_id == int(cash_register_id))
     result = await session.execute(
         select(CheckboxShift)
-        .where(
-            CheckboxShift.enterprise_code == enterprise_code,
-            CheckboxShift.cash_register_code == cash_register_code,
-            CheckboxShift.status.in_(("opening", "opened")),
-        )
+        .where(*conditions)
         .order_by(CheckboxShift.id.desc())
         .limit(1)
     )
@@ -162,17 +175,22 @@ async def upsert_shift_from_response(
     *,
     enterprise_code: str,
     cash_register_code: str,
+    business_organization_id: int | None = None,
+    cash_register_id: int | None = None,
     response_json: dict[str, Any],
 ) -> CheckboxShift:
     checkbox_shift_id = str(response_json.get("id") or "").strip()
     row = None
     if checkbox_shift_id:
+        conditions = [
+            CheckboxShift.enterprise_code == enterprise_code,
+            CheckboxShift.cash_register_code == cash_register_code,
+            CheckboxShift.checkbox_shift_id == checkbox_shift_id,
+        ]
+        if cash_register_id is not None:
+            conditions.append(CheckboxShift.cash_register_id == int(cash_register_id))
         result = await session.execute(
-            select(CheckboxShift).where(
-                CheckboxShift.enterprise_code == enterprise_code,
-                CheckboxShift.cash_register_code == cash_register_code,
-                CheckboxShift.checkbox_shift_id == checkbox_shift_id,
-            )
+            select(CheckboxShift).where(*conditions)
         )
         row = result.scalars().first()
 
@@ -180,9 +198,14 @@ async def upsert_shift_from_response(
         row = CheckboxShift(
             enterprise_code=enterprise_code,
             cash_register_code=cash_register_code,
+            business_organization_id=business_organization_id,
+            cash_register_id=cash_register_id,
             checkbox_shift_id=checkbox_shift_id or None,
         )
         session.add(row)
+    else:
+        row.business_organization_id = business_organization_id or row.business_organization_id
+        row.cash_register_id = cash_register_id or row.cash_register_id
 
     status = str(response_json.get("status") or "").lower()
     row.status = "opened" if status == "opened" else "opening"

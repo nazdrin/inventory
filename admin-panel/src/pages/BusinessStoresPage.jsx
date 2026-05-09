@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import axios from "axios";
 import { getEnterpriseByCode, updateEnterprise } from "../api/enterpriseApi";
 import { getBusinessStoreMappingBranches } from "../api/mappingBranchAPI";
+import { getBusinessOrganizations } from "../api/businessOrganizationsApi";
 import { getAuthHeaders, handleAuthError } from "../api/developerApi";
 import { API_BASE_URL } from "../config";
 
@@ -219,6 +220,7 @@ const initialEnterpriseDraft = {
 const initialStoreDraft = {
     store_code: "",
     store_name: "",
+    business_organization_id: "",
     legal_entity_name: "",
     tax_identifier: "",
     is_active: true,
@@ -376,6 +378,7 @@ const buildStoreDraftFromEnterprise = (enterprise, existingStores = []) => ({
 const buildStoreDraftFromStore = (store) => ({
     store_code: String(store?.store_code || ""),
     store_name: String(store?.store_name || ""),
+    business_organization_id: store?.business_organization_id ?? "",
     legal_entity_name: String(store?.legal_entity_name || ""),
     tax_identifier: String(store?.tax_identifier || ""),
     is_active: Boolean(store?.is_active),
@@ -425,6 +428,9 @@ const buildEnterprisePayload = (draft) => ({
 const buildStorePayload = (draft, selectedEnterpriseCode, { isBaselineEnterprise = false } = {}) => ({
     store_code: normalizeRequiredText(draft.store_code, "store_code"),
     store_name: normalizeRequiredText(draft.store_name, "store_name"),
+    business_organization_id: String(draft.business_organization_id).trim() === ""
+        ? null
+        : Number(draft.business_organization_id),
     legal_entity_name: normalizeOptionalText(draft.legal_entity_name),
     tax_identifier: normalizeOptionalText(draft.tax_identifier),
     is_active: Boolean(draft.is_active),
@@ -486,6 +492,7 @@ const InfoItem = ({ label, value }) => (
 
 const BusinessStoresPage = () => {
     const [businessEnterprises, setBusinessEnterprises] = useState([]);
+    const [businessOrganizations, setBusinessOrganizations] = useState([]);
     const [stores, setStores] = useState([]);
     const [mappingBranches, setMappingBranches] = useState([]);
     const [selectedEnterpriseCode, setSelectedEnterpriseCode] = useState("");
@@ -524,6 +531,12 @@ const BusinessStoresPage = () => {
         return rows;
     }, []);
 
+    const loadBusinessOrganizations = useCallback(async () => {
+        const rows = await getBusinessOrganizations({ is_active: true });
+        setBusinessOrganizations(rows || []);
+        return rows || [];
+    }, []);
+
     const loadMappingBranches = useCallback(async (enterpriseCode) => {
         const normalizedEnterpriseCode = String(enterpriseCode || "").trim();
         if (!normalizedEnterpriseCode) {
@@ -545,9 +558,10 @@ const BusinessStoresPage = () => {
         const [enterpriseRows] = await Promise.all([
             loadBusinessEnterprises(),
             loadStores(),
+            loadBusinessOrganizations(),
         ]);
         return enterpriseRows;
-    }, [loadBusinessEnterprises, loadStores]);
+    }, [loadBusinessEnterprises, loadBusinessOrganizations, loadStores]);
 
     useEffect(() => {
         async function bootstrap() {
@@ -598,6 +612,11 @@ const BusinessStoresPage = () => {
     const selectedEnterpriseMeta = useMemo(
         () => businessEnterprises.find((item) => item.enterprise_code === selectedEnterpriseCode) || null,
         [businessEnterprises, selectedEnterpriseCode],
+    );
+
+    const selectedBusinessOrganization = useMemo(
+        () => businessOrganizations.find((item) => String(item.id) === String(storeDraft.business_organization_id)) || null,
+        [businessOrganizations, storeDraft.business_organization_id],
     );
 
     const storesForSelectedEnterprise = useMemo(
@@ -872,6 +891,14 @@ const BusinessStoresPage = () => {
             }
 
             const payload = buildStorePayload(storeDraft, selectedEnterpriseCode, { isBaselineEnterprise });
+            if (selectedBusinessOrganization) {
+                const organizationSalesDriveId = Number(selectedBusinessOrganization.salesdrive_organization_id);
+                payload.legal_entity_name = normalizeOptionalText(selectedBusinessOrganization.short_name);
+                payload.tax_identifier = normalizeOptionalText(selectedBusinessOrganization.tax_id);
+                payload.salesdrive_enterprise_id = Number.isInteger(organizationSalesDriveId)
+                    ? organizationSalesDriveId
+                    : null;
+            }
             let response;
             if (!selectedStoreId) {
                 response = await axios.post(`${API_BASE_URL}/business-stores`, payload, getAuthHeaders());
@@ -1179,18 +1206,27 @@ const BusinessStoresPage = () => {
                                         onChange={(event) => onStoreChange("store_name", event.target.value)}
                                     />
                                 </Field>
-                                <Field label="Юрлицо / ФОП">
-                                    <input
+                                <Field label="Организация / юрлицо">
+                                    <select
                                         style={inputStyle}
-                                        value={storeDraft.legal_entity_name}
-                                        onChange={(event) => onStoreChange("legal_entity_name", event.target.value)}
-                                    />
+                                        value={storeDraft.business_organization_id}
+                                        onChange={(event) => onStoreChange("business_organization_id", event.target.value)}
+                                    >
+                                        <option value="">Не выбрана</option>
+                                        {businessOrganizations.map((item) => (
+                                            <option key={item.id} value={item.id}>
+                                                {`${item.short_name} / SalesDrive ${item.salesdrive_organization_id || "—"} / ${item.tax_id || "без ЕДРПОУ"}`}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </Field>
-                                <Field label="ЕДРПОУ / РНОКПП">
+                                <Field label="Данные организации">
                                     <input
-                                        style={inputStyle}
-                                        value={storeDraft.tax_identifier}
-                                        onChange={(event) => onStoreChange("tax_identifier", event.target.value)}
+                                        style={readonlyInputStyle}
+                                        value={selectedBusinessOrganization
+                                            ? `${selectedBusinessOrganization.short_name || ""} / ${selectedBusinessOrganization.tax_id || "без ЕДРПОУ"}`
+                                            : "Организация не выбрана"}
+                                        readOnly
                                     />
                                 </Field>
                                 <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "10px" }}>
@@ -1256,9 +1292,9 @@ const BusinessStoresPage = () => {
                                 <Field label="SalesDrive ID">
                                     <input
                                         type="number"
-                                        style={inputStyle}
-                                        value={storeDraft.salesdrive_enterprise_id}
-                                        onChange={(event) => onStoreChange("salesdrive_enterprise_id", event.target.value)}
+                                        style={readonlyInputStyle}
+                                        value={selectedBusinessOrganization?.salesdrive_organization_id || storeDraft.salesdrive_enterprise_id || ""}
+                                        readOnly
                                     />
                                 </Field>
                             </div>

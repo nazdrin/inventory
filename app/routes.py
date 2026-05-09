@@ -25,6 +25,10 @@ from app.schemas import (
     BusinessEnterpriseOptionOut, BusinessStoreMappingBranchOptionOut,
     BusinessStoreSupplierSettingsUpsertSchema, BusinessStoreSupplierSettingsOut,
     BusinessSupplierStoreSettingsOverviewOut,
+    BusinessOrganizationCreate, BusinessOrganizationUpdate, BusinessOrganizationOut,
+    BusinessAccountCreate, BusinessAccountUpdate, BusinessAccountOut,
+    CheckboxCashRegisterCreate, CheckboxCashRegisterUpdate, CheckboxCashRegisterOut,
+    CheckboxReceiptExclusionCreate, CheckboxReceiptExclusionUpdate, CheckboxReceiptExclusionOut,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -67,9 +71,17 @@ from app.models import (
     BusinessStoreSupplierSettings,
     BusinessEnterpriseProductCode,
     BusinessEnterpriseProductName,
+    PaymentBusinessEntity,
+    PaymentBusinessAccount,
+    CheckboxCashRegister,
+    CheckboxReceiptExclusion,
 )
 from app.schemas import DropshipEnterpriseSchema
 from app.business.business_store_name_generator import cleanup_store_product_names
+from app.integrations.checkbox.client import CheckboxClient
+from app.integrations.checkbox.config import load_checkbox_settings
+from app.integrations.checkbox.resolver import settings_for_register
+from app.integrations.checkbox.shift_service import close_current_shift, ensure_open_shift
 from app.services.business_pricing_settings_resolver import (
     BUSINESS_PRICING_FIELD_SPECS,
     BUSINESS_PRICING_GROUP_SPECS,
@@ -2554,6 +2566,367 @@ async def _validate_business_store_branch_mapping(
         )
 
 
+def _checkbox_cash_register_out(row: CheckboxCashRegister) -> CheckboxCashRegisterOut:
+    return CheckboxCashRegisterOut(
+        id=int(row.id),
+        business_organization_id=int(row.business_organization_id),
+        business_store_id=int(row.business_store_id) if row.business_store_id is not None else None,
+        enterprise_code=row.enterprise_code,
+        register_name=row.register_name,
+        cash_register_code=row.cash_register_code,
+        checkbox_license_key_set=bool(row.checkbox_license_key),
+        cashier_login=row.cashier_login,
+        cashier_password_set=bool(row.cashier_password),
+        cashier_pin_set=bool(row.cashier_pin),
+        api_base_url=row.api_base_url,
+        is_test_mode=bool(row.is_test_mode),
+        is_active=bool(row.is_active),
+        is_default=bool(row.is_default),
+        shift_open_mode=row.shift_open_mode,
+        shift_open_time=row.shift_open_time,
+        shift_close_time=row.shift_close_time,
+        timezone=row.timezone,
+        receipt_notifications_enabled=bool(row.receipt_notifications_enabled),
+        shift_notifications_enabled=bool(row.shift_notifications_enabled),
+        notes=row.notes,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _business_organization_out(db: AsyncSession, row: PaymentBusinessEntity) -> BusinessOrganizationOut:
+    accounts = list(
+        (
+            await db.execute(
+                select(PaymentBusinessAccount)
+                .where(PaymentBusinessAccount.business_entity_id == row.id)
+                .order_by(PaymentBusinessAccount.is_active.desc(), PaymentBusinessAccount.label.asc(), PaymentBusinessAccount.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    registers = list(
+        (
+            await db.execute(
+                select(CheckboxCashRegister)
+                .where(CheckboxCashRegister.business_organization_id == row.id)
+                .order_by(CheckboxCashRegister.is_active.desc(), CheckboxCashRegister.is_default.desc(), CheckboxCashRegister.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    exclusions = list(
+        (
+            await db.execute(
+                select(CheckboxReceiptExclusion)
+                .where(CheckboxReceiptExclusion.business_organization_id == row.id)
+                .order_by(CheckboxReceiptExclusion.is_active.desc(), CheckboxReceiptExclusion.supplier_code.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return BusinessOrganizationOut(
+        id=int(row.id),
+        salesdrive_organization_id=row.salesdrive_organization_id,
+        short_name=row.short_name,
+        full_name=row.full_name,
+        tax_id=row.tax_id,
+        entity_type=row.entity_type,
+        verification_status=row.verification_status,
+        vat_enabled=bool(row.vat_enabled),
+        vat_payer=bool(row.vat_payer),
+        without_stamp=bool(row.without_stamp),
+        signer_name=row.signer_name,
+        signer_position=row.signer_position,
+        chief_accountant_name=row.chief_accountant_name,
+        cashier_name=row.cashier_name,
+        address=row.address,
+        postal_code=row.postal_code,
+        city=row.city,
+        region=row.region,
+        country=row.country,
+        phone=row.phone,
+        is_active=bool(row.is_active),
+        notes=row.notes,
+        accounts=[BusinessAccountOut.model_validate(item, from_attributes=True) for item in accounts],
+        cash_registers=[_checkbox_cash_register_out(item) for item in registers],
+        receipt_exclusions=[
+            CheckboxReceiptExclusionOut.model_validate(item, from_attributes=True)
+            for item in exclusions
+        ],
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _get_business_organization_or_404(
+    db: AsyncSession,
+    organization_id: int,
+) -> PaymentBusinessEntity:
+    row = await db.scalar(select(PaymentBusinessEntity).where(PaymentBusinessEntity.id == int(organization_id)))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Business organization not found.")
+    return row
+
+
+def _business_store_out(store: BusinessStore, organization: PaymentBusinessEntity | None = None) -> BusinessStoreOut:
+    data = BusinessStoreOut.model_validate(store, from_attributes=True)
+    data.organization_short_name = organization.short_name if organization else None
+    data.organization_tax_id = organization.tax_id if organization else None
+    data.organization_salesdrive_id = organization.salesdrive_organization_id if organization else None
+    return data
+
+
+@router.get(
+    "/business-organizations",
+    response_model=List[BusinessOrganizationOut],
+    dependencies=[Depends(verify_token)],
+)
+async def list_business_organizations(
+    is_active: bool | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(PaymentBusinessEntity).order_by(PaymentBusinessEntity.is_active.desc(), PaymentBusinessEntity.short_name.asc())
+    if is_active is not None:
+        stmt = stmt.where(PaymentBusinessEntity.is_active.is_(bool(is_active)))
+    rows = list((await db.execute(stmt)).scalars().all())
+    return [await _business_organization_out(db, row) for row in rows]
+
+
+@router.post(
+    "/business-organizations",
+    response_model=BusinessOrganizationOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_business_organization(
+    payload: BusinessOrganizationCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    obj = PaymentBusinessEntity(**payload.model_dump())
+    obj.normalized_name = (payload.full_name or payload.short_name or "").strip().lower() or None
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return await _business_organization_out(db, obj)
+
+
+@router.put(
+    "/business-organizations/{organization_id}",
+    response_model=BusinessOrganizationOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_organization(
+    organization_id: int,
+    payload: BusinessOrganizationUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    obj = await _get_business_organization_or_404(db, organization_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, key, value)
+    if "short_name" in payload.model_fields_set or "full_name" in payload.model_fields_set:
+        obj.normalized_name = (obj.full_name or obj.short_name or "").strip().lower() or None
+    await db.commit()
+    await db.refresh(obj)
+    return await _business_organization_out(db, obj)
+
+
+@router.post(
+    "/business-organizations/{organization_id}/accounts",
+    response_model=BusinessAccountOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_business_organization_account(
+    organization_id: int,
+    payload: BusinessAccountCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = PaymentBusinessAccount(business_entity_id=int(organization_id), **payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessAccountOut.model_validate(obj, from_attributes=True)
+
+
+@router.put(
+    "/business-organizations/{organization_id}/accounts/{account_id}",
+    response_model=BusinessAccountOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_organization_account(
+    organization_id: int,
+    account_id: int,
+    payload: BusinessAccountUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = await db.scalar(
+        select(PaymentBusinessAccount).where(
+            PaymentBusinessAccount.id == int(account_id),
+            PaymentBusinessAccount.business_entity_id == int(organization_id),
+        )
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Business account not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, key, value)
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessAccountOut.model_validate(obj, from_attributes=True)
+
+
+@router.post(
+    "/business-organizations/{organization_id}/checkbox-registers",
+    response_model=CheckboxCashRegisterOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_checkbox_cash_register(
+    organization_id: int,
+    payload: CheckboxCashRegisterCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = CheckboxCashRegister(business_organization_id=int(organization_id), **payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return _checkbox_cash_register_out(obj)
+
+
+@router.put(
+    "/business-organizations/{organization_id}/checkbox-registers/{register_id}",
+    response_model=CheckboxCashRegisterOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_checkbox_cash_register(
+    organization_id: int,
+    register_id: int,
+    payload: CheckboxCashRegisterUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = await db.scalar(
+        select(CheckboxCashRegister).where(
+            CheckboxCashRegister.id == int(register_id),
+            CheckboxCashRegister.business_organization_id == int(organization_id),
+        )
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Checkbox cash register not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if key in {"checkbox_license_key", "cashier_password", "cashier_pin"} and value in (None, ""):
+            continue
+        setattr(obj, key, value)
+    await db.commit()
+    await db.refresh(obj)
+    return _checkbox_cash_register_out(obj)
+
+
+@router.post(
+    "/business-organizations/{organization_id}/checkbox-registers/{register_id}/test",
+    dependencies=[Depends(verify_token)],
+)
+async def test_checkbox_cash_register(
+    organization_id: int,
+    register_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    register = await db.scalar(
+        select(CheckboxCashRegister).where(
+            CheckboxCashRegister.id == int(register_id),
+            CheckboxCashRegister.business_organization_id == int(organization_id),
+        )
+    )
+    if register is None:
+        raise HTTPException(status_code=404, detail="Checkbox cash register not found.")
+
+    action = str(payload.get("action") or "auth").strip()
+    if action not in {"auth", "open_shift", "close_shift"}:
+        raise HTTPException(status_code=400, detail="Unsupported checkbox test action.")
+
+    settings = settings_for_register(load_checkbox_settings(), register)
+    client = CheckboxClient(settings)
+    token = await client.signin()
+    result: dict[str, Any] = {"action": action, "status": "ok"}
+    if action == "open_shift":
+        shift = await ensure_open_shift(
+            db,
+            client=client,
+            settings=settings,
+            token=token,
+            enterprise_code=str(register.enterprise_code or ""),
+            cash_register_code=settings.default_cash_register_code,
+            business_organization_id=int(register.business_organization_id),
+            cash_register_id=int(register.id),
+        )
+        result["shift_id"] = shift.checkbox_shift_id if shift else None
+        result["shift_status"] = shift.status if shift else None
+    elif action == "close_shift":
+        shift = await close_current_shift(
+            db,
+            client=client,
+            settings=settings,
+            token=token,
+            enterprise_code=str(register.enterprise_code or ""),
+            cash_register_code=settings.default_cash_register_code,
+            business_organization_id=int(register.business_organization_id),
+            cash_register_id=int(register.id),
+        )
+        result["shift_id"] = shift.checkbox_shift_id if shift else None
+        result["shift_status"] = shift.status if shift else None
+    return result
+
+
+@router.post(
+    "/business-organizations/{organization_id}/checkbox-exclusions",
+    response_model=CheckboxReceiptExclusionOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_checkbox_receipt_exclusion(
+    organization_id: int,
+    payload: CheckboxReceiptExclusionCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = CheckboxReceiptExclusion(business_organization_id=int(organization_id), **payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return CheckboxReceiptExclusionOut.model_validate(obj, from_attributes=True)
+
+
+@router.put(
+    "/business-organizations/{organization_id}/checkbox-exclusions/{exclusion_id}",
+    response_model=CheckboxReceiptExclusionOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_checkbox_receipt_exclusion(
+    organization_id: int,
+    exclusion_id: int,
+    payload: CheckboxReceiptExclusionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = await db.scalar(
+        select(CheckboxReceiptExclusion).where(
+            CheckboxReceiptExclusion.id == int(exclusion_id),
+            CheckboxReceiptExclusion.business_organization_id == int(organization_id),
+        )
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Checkbox receipt exclusion not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, key, value)
+    await db.commit()
+    await db.refresh(obj)
+    return CheckboxReceiptExclusionOut.model_validate(obj, from_attributes=True)
+
+
 @router.get(
     "/business-stores",
     response_model=List[BusinessStoreOut],
@@ -2581,8 +2954,23 @@ async def get_business_stores(
     if normalized_legacy_scope_key:
         stmt = stmt.where(BusinessStore.legacy_scope_key == normalized_legacy_scope_key)
 
-    result = await db.execute(stmt)
-    return [BusinessStoreOut.model_validate(row, from_attributes=True) for row in result.scalars().all()]
+    stores = list((await db.execute(stmt)).scalars().all())
+    organization_ids = {int(item.business_organization_id) for item in stores if item.business_organization_id}
+    organizations: dict[int, PaymentBusinessEntity] = {}
+    if organization_ids:
+        org_rows = (
+            await db.execute(
+                select(PaymentBusinessEntity).where(PaymentBusinessEntity.id.in_(organization_ids))
+            )
+        ).scalars().all()
+        organizations = {int(item.id): item for item in org_rows}
+    return [
+        _business_store_out(
+            row,
+            organizations.get(int(row.business_organization_id)) if row.business_organization_id else None,
+        )
+        for row in stores
+    ]
 
 
 @router.get(
@@ -2804,6 +3192,8 @@ async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession =
     )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="BusinessStore with this store_code already exists.")
+    if payload.business_organization_id is not None:
+        await _get_business_organization_or_404(db, int(payload.business_organization_id))
 
     await _validate_business_store_branch_mapping(
         db,
@@ -2824,6 +3214,7 @@ async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession =
     obj = BusinessStore(
         store_code=payload.store_code,
         store_name=payload.store_name,
+        business_organization_id=payload.business_organization_id,
         legal_entity_name=payload.legal_entity_name,
         tax_identifier=payload.tax_identifier,
         is_active=payload.is_active,
@@ -2855,7 +3246,12 @@ async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession =
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
-    return BusinessStoreOut.model_validate(obj, from_attributes=True)
+    organization = None
+    if obj.business_organization_id:
+        organization = await db.scalar(
+            select(PaymentBusinessEntity).where(PaymentBusinessEntity.id == obj.business_organization_id)
+        )
+    return _business_store_out(obj, organization)
 
 
 @router.put(
@@ -2869,6 +3265,8 @@ async def update_business_store(
     db: AsyncSession = Depends(get_db),
 ):
     store = await _get_business_store_or_404(db, store_id)
+    if "business_organization_id" in payload.model_fields_set and payload.business_organization_id is not None:
+        await _get_business_organization_or_404(db, int(payload.business_organization_id))
     current_mapping_exists = await _mapping_branch_exists_for_store(
         db,
         enterprise_code=store.enterprise_code,
@@ -2935,7 +3333,12 @@ async def update_business_store(
 
     await db.commit()
     await db.refresh(store)
-    return BusinessStoreOut.model_validate(store, from_attributes=True)
+    organization = None
+    if store.business_organization_id:
+        organization = await db.scalar(
+            select(PaymentBusinessEntity).where(PaymentBusinessEntity.id == store.business_organization_id)
+        )
+    return _business_store_out(store, organization)
 
 
 @router.post(

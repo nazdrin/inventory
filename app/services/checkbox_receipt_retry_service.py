@@ -6,6 +6,8 @@ import json
 import logging
 import os
 
+from sqlalchemy import select
+
 from app.database import get_async_db
 from app.integrations.checkbox.client import CheckboxClient
 from app.integrations.checkbox.config import load_checkbox_settings
@@ -23,6 +25,8 @@ from app.integrations.checkbox.service import (
     _extract_shift_id,
     _update_salesdrive_check,
 )
+from app.integrations.checkbox.resolver import settings_for_register
+from app.models import CheckboxCashRegister
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -37,17 +41,22 @@ async def run_once(limit: int = 20) -> dict:
         return {"enabled": False, "processed": 0, "fiscalized": 0, "failed": 0}
 
     stats = {"enabled": True, "processed": 0, "fiscalized": 0, "failed": 0}
-    client = CheckboxClient(settings)
-
     async with get_async_db() as session:
         rows = await due_receipts(session, limit=limit, max_attempts=settings.receipt_retry_max_attempts)
         if not rows:
             return stats
-        token = await client.signin()
 
         for row in rows:
             stats["processed"] += 1
             try:
+                register = None
+                if row.cash_register_id:
+                    register = await session.scalar(
+                        select(CheckboxCashRegister).where(CheckboxCashRegister.id == row.cash_register_id)
+                    )
+                effective_settings = settings_for_register(settings, register)
+                client = CheckboxClient(effective_settings)
+                token = await client.signin()
                 if row.checkbox_receipt_id:
                     final_response = await client.wait_receipt_done(token, row.checkbox_receipt_id)
                 else:
@@ -68,9 +77,9 @@ async def run_once(limit: int = 20) -> dict:
                     receipt_url=_extract_receipt_url(final_response),
                     fiscal_code=_extract_fiscal_code(final_response),
                 )
-                salesdrive_updated = await _update_salesdrive_check(session, settings=settings, row=row)
+                salesdrive_updated = await _update_salesdrive_check(session, settings=effective_settings, row=row)
                 if salesdrive_updated:
-                    notify_receipt_fiscalized(settings, row)
+                    notify_receipt_fiscalized(effective_settings, row)
                     stats["fiscalized"] += 1
                 else:
                     stats["failed"] += 1
