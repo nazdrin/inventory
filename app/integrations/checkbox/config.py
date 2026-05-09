@@ -92,7 +92,7 @@ def load_checkbox_settings() -> CheckboxSettings:
         receipt_retry_max_attempts=env_int("CHECKBOX_RECEIPT_RETRY_MAX_ATTEMPTS", 5),
         default_payment_method_id=env_int("CHECKBOX_DEFAULT_PAYMENT_METHOD_ID", 20),
         default_tax_code=default_tax_code,
-        excluded_suppliers=env_list("CHECKBOX_EXCLUDED_SUPPLIERS") or {"40", "D3", "ProteinPlus"},
+        excluded_suppliers=env_list("CHECKBOX_EXCLUDED_SUPPLIERS") or {"40"},
         salesdrive_update_check_enabled=env_bool("CHECKBOX_SALESDRIVE_UPDATE_CHECK_ENABLED", "1"),
         salesdrive_check_field=os.getenv("CHECKBOX_SALESDRIVE_CHECK_FIELD", "check"),
         telegram_notifications_enabled=env_bool("CHECKBOX_TELEGRAM_NOTIFICATIONS_ENABLED", "1"),
