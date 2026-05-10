@@ -40,6 +40,22 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _first_clean(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            cleaned = _first_clean(item)
+            if cleaned:
+                return cleaned
+        return ""
+    if isinstance(value, dict):
+        for key in ("email", "phone", "value"):
+            cleaned = _first_clean(value.get(key))
+            if cleaned:
+                return cleaned
+        return ""
+    return _clean(value)
+
+
 def _salesdrive_payment_method_id(data: dict[str, Any], settings: CheckboxSettings) -> int:
     raw = data.get("payment_method")
     if raw is None or raw == "":
@@ -57,8 +73,8 @@ def _extract_contact_delivery(data: dict[str, Any]) -> dict[str, str]:
     contacts = data.get("contacts") or []
     contact = contacts[0] if isinstance(contacts, list) and contacts and isinstance(contacts[0], dict) else {}
     delivery: dict[str, str] = {}
-    email = _clean(contact.get("email") or data.get("email"))
-    phone = _clean(contact.get("phone") or data.get("phone"))
+    email = _first_clean(contact.get("email") or data.get("email"))
+    phone = _first_clean(contact.get("phone") or data.get("phone"))
     if email:
         delivery["email"] = email
     if phone:
