@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.checkbox.client import CheckboxClient
+from app.integrations.checkbox.client import CheckboxClient, CheckboxClientError
 from app.integrations.checkbox.config import CheckboxSettings
 from app.integrations.checkbox.notifications import notify_shift_closed, notify_shift_opened
 from app.integrations.checkbox.repository import (
@@ -17,6 +17,19 @@ from app.models import CheckboxShift
 
 
 logger = logging.getLogger("checkbox.shift_service")
+
+
+def _is_shift_already_open_error(exc: CheckboxClientError) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "вже працює",
+            "уже работает",
+            "already works",
+            "already working",
+        )
+    )
 
 
 async def ensure_open_shift(
@@ -54,7 +67,36 @@ async def ensure_open_shift(
     if not settings.shift_open_on_demand:
         return existing
 
-    response = await client.open_shift(token)
+    try:
+        response = await client.open_shift(token)
+    except CheckboxClientError as exc:
+        if not _is_shift_already_open_error(exc):
+            raise
+        logger.info(
+            "Checkbox shift is already open in Checkbox: enterprise_code=%s cash_register_code=%s cash_register_id=%s",
+            enterprise_code,
+            cash_register_code,
+            cash_register_id,
+        )
+        if existing:
+            existing.status = "opened"
+            existing.error_message = None
+            existing.business_organization_id = business_organization_id or existing.business_organization_id
+            existing.cash_register_id = cash_register_id or existing.cash_register_id
+            await session.flush()
+            return existing
+        shift = CheckboxShift(
+            enterprise_code=enterprise_code,
+            cash_register_code=cash_register_code,
+            business_organization_id=business_organization_id,
+            cash_register_id=cash_register_id,
+            status="opened",
+            opened_at=datetime.now(timezone.utc),
+            error_message=None,
+        )
+        session.add(shift)
+        await session.flush()
+        return shift
     shift = await upsert_shift_from_response(
         session,
         enterprise_code=enterprise_code,

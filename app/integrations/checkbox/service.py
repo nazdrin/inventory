@@ -228,6 +228,9 @@ async def handle_salesdrive_webhook_order(
                 )
                 await mark_receipt_failed(row, error_message=str(exc))
                 return
+        row.checkbox_status = "draft"
+        row.error_message = None
+        row.next_retry_at = None
         logger.info(
             "Checkbox draft saved: enterprise_code=%s salesdrive_order_id=%s",
             enterprise_code,
