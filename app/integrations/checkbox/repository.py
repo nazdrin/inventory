@@ -244,6 +244,7 @@ async def due_receipts(session: AsyncSession, *, limit: int, max_attempts: int) 
         select(CheckboxReceipt)
         .where(
             CheckboxReceipt.checkbox_status.in_(("pending", "failed")),
+            CheckboxReceipt.salesdrive_status_id == 5,
             CheckboxReceipt.next_retry_at <= utcnow(),
             CheckboxReceipt.retry_count < max_attempts,
         )
