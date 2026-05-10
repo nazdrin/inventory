@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.business.dropship_pipeline import _get_stock_priority_suppliers
-from app.models import BusinessStoreOffer
+from app.models import BusinessStoreOffer, BusinessStoreSupplierSettings, DropshipEnterprise
 
 
 @dataclass(frozen=True)
@@ -65,9 +65,17 @@ async def load_store_native_offers(
     rows = (
         await session.execute(
             select(BusinessStoreOffer)
+            .join(
+                BusinessStoreSupplierSettings,
+                (BusinessStoreSupplierSettings.store_id == BusinessStoreOffer.store_id)
+                & (BusinessStoreSupplierSettings.supplier_code == BusinessStoreOffer.supplier_code),
+            )
+            .join(DropshipEnterprise, DropshipEnterprise.code == BusinessStoreOffer.supplier_code)
             .where(
                 BusinessStoreOffer.store_id.in_([int(item) for item in store_ids]),
                 BusinessStoreOffer.stock > 0,
+                BusinessStoreSupplierSettings.is_active.is_(True),
+                DropshipEnterprise.is_active.is_(True),
             )
             .order_by(
                 BusinessStoreOffer.store_id.asc(),

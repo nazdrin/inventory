@@ -594,6 +594,7 @@ async def build_business_store_offers(
     source_bundle_cache: dict[str, _SupplierSourceBundle] = {}
     competitor_cache: dict[str, tuple[dict[str, Decimal], list[str]]] = {}
     legacy_offers_cache: dict[tuple[str, str], dict[str, Offer]] = {}
+    stale_delete_links: set[tuple[int, str]] = set()
 
     for link in links:
         scope_resolution = _resolve_market_scope(link)
@@ -885,6 +886,7 @@ async def build_business_store_offers(
         if link_errors:
             supplier_links_skipped += 1
             stores_skipped_ids.add(int(link.store.id))
+            stale_delete_links.add((int(link.store.id), normalized_supplier_code))
             status = "skipped"
         else:
             supplier_links_processed += 1
@@ -915,9 +917,10 @@ async def build_business_store_offers(
             }
         )
 
-    if not dry_run and upsert_payload_rows:
-        applied_rows = await _upsert_business_store_offers(session, upsert_payload_rows)
-        upsert_rows_total = applied_rows
+    if not dry_run:
+        if upsert_payload_rows:
+            applied_rows = await _upsert_business_store_offers(session, upsert_payload_rows)
+            upsert_rows_total = applied_rows
         if limit is None:
             for (link_store_id, link_supplier_code), keep_product_codes in keep_products_by_link.items():
                 stale_rows_deleted += await _delete_stale_business_store_offers(
@@ -925,6 +928,13 @@ async def build_business_store_offers(
                     store_id=link_store_id,
                     supplier_code=link_supplier_code,
                     keep_product_codes=keep_product_codes,
+                )
+            for link_store_id, link_supplier_code in stale_delete_links:
+                stale_rows_deleted += await _delete_stale_business_store_offers(
+                    session,
+                    store_id=link_store_id,
+                    supplier_code=link_supplier_code,
+                    keep_product_codes=set(),
                 )
 
     if not links:

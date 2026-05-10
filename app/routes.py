@@ -534,6 +534,8 @@ def _enterprise_values(enterprise: EnterpriseSettings) -> dict:
         "stock_upload_frequency": enterprise.stock_upload_frequency,
         "catalog_enabled": bool(enterprise.catalog_enabled),
         "stock_enabled": bool(enterprise.stock_enabled),
+        "business_runtime_mode": enterprise.business_runtime_mode,
+        "business_stock_mode": enterprise.business_stock_mode,
         "order_fetcher": bool(enterprise.order_fetcher),
         "tabletki_login": enterprise.tabletki_login,
         "tabletki_password": enterprise.tabletki_password,
