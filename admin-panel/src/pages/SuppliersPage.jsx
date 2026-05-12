@@ -1,8 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     createSupplier,
+    getBusinessStores,
+    getBusinessStoreSupplierSettings,
+    getBusinessSupplierStoreSettingsOverview,
     getSupplierViewDetail,
     getSuppliersViewList,
+    upsertBusinessStoreSupplierSettings,
     updateSupplier,
 } from "../api/suppliersApi";
 
@@ -88,6 +92,30 @@ const buttonSecondaryStyle = {
     fontWeight: 700,
 };
 
+const tableStyle = {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "14px",
+};
+
+const tableHeadCellStyle = {
+    textAlign: "left",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "#64748b",
+    padding: "10px 12px",
+    borderBottom: "1px solid #e2e8f0",
+};
+
+const tableCellStyle = {
+    padding: "12px",
+    borderBottom: "1px solid #eef2f7",
+    color: "#111827",
+    verticalAlign: "top",
+};
+
 const truncateText = (value, maxLength = 56) => {
     const text = String(value || "").trim();
     if (!text) {
@@ -151,6 +179,35 @@ const defaultDraft = {
     min_markup_threshold: "",
     priority: 5,
     use_feed_instead_of_gdrive: false,
+};
+
+const defaultStoreSettingsDraft = {
+    supplier_code: "",
+    is_active: true,
+    priority_override: "",
+    min_markup_threshold: "0",
+    extra_markup_enabled: false,
+    extra_markup_mode: "percent",
+    extra_markup_value: "",
+    extra_markup_min: "",
+    extra_markup_max: "",
+    dumping_mode: false,
+};
+
+const boolSummary = (value) => (value ? "Да" : "Нет");
+
+const formatStoreLabel = (store) => {
+    if (!store) {
+        return "";
+    }
+    const parts = [store.store_name || store.store_code || "Магазин"];
+    if (store.store_code) {
+        parts.push(store.store_code);
+    }
+    if (store.tabletki_branch) {
+        parts.push(`Branch ${store.tabletki_branch}`);
+    }
+    return parts.join(" · ");
 };
 
 const SupplierInput = ({ label, value, onChange, type = "text", disabled = false, placeholder = "" }) => (
@@ -244,6 +301,18 @@ const SuppliersPage = () => {
     const [openTechnical, setOpenTechnical] = useState(false);
     const [showOnlyActive, setShowOnlyActive] = useState(false);
     const [customCityInput, setCustomCityInput] = useState("");
+    const [businessStores, setBusinessStores] = useState([]);
+    const [storesLoading, setStoresLoading] = useState(true);
+    const [storesError, setStoresError] = useState("");
+    const [selectedStoreEnterpriseCode, setSelectedStoreEnterpriseCode] = useState("");
+    const [selectedStoreId, setSelectedStoreId] = useState("");
+    const [storeSettingsDraft, setStoreSettingsDraft] = useState(defaultStoreSettingsDraft);
+    const [storeSettingsOverview, setStoreSettingsOverview] = useState([]);
+    const [storeSettingsLoading, setStoreSettingsLoading] = useState(false);
+    const [storeSettingsError, setStoreSettingsError] = useState("");
+    const [storeSettingsSaveError, setStoreSettingsSaveError] = useState("");
+    const [storeSettingsSaveSuccess, setStoreSettingsSaveSuccess] = useState("");
+    const storeSettingsRequestRef = useRef(0);
 
     const loadList = async () => {
         setListLoading(true);
@@ -262,13 +331,37 @@ const SuppliersPage = () => {
         }
     };
 
+    const loadBusinessStores = async () => {
+        setStoresLoading(true);
+        setStoresError("");
+        try {
+            const data = await getBusinessStores();
+            setBusinessStores(Array.isArray(data) ? data : []);
+        } catch (error) {
+            console.error("Ошибка загрузки business stores:", error);
+            setStoresError("Не удалось загрузить список магазинов Business-контура.");
+        } finally {
+            setStoresLoading(false);
+        }
+    };
+
     useEffect(() => {
         loadList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCreating, selectedCode]);
 
     useEffect(() => {
+        loadBusinessStores();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
         if (!selectedCode || isCreating) {
+            setStoreSettingsOverview([]);
+            setSelectedStoreEnterpriseCode("");
+            setSelectedStoreId("");
+            setStoreSettingsDraft(defaultStoreSettingsDraft);
+            storeSettingsRequestRef.current += 1;
             return;
         }
 
@@ -312,6 +405,52 @@ const SuppliersPage = () => {
         loadDetail();
     }, [isCreating, selectedCode]);
 
+    useEffect(() => {
+        if (!selectedCode || isCreating) {
+            return;
+        }
+
+        const loadOverview = async () => {
+            setStoreSettingsLoading(true);
+            setStoreSettingsError("");
+            setStoreSettingsSaveError("");
+            setStoreSettingsSaveSuccess("");
+            try {
+                const overview = await getBusinessSupplierStoreSettingsOverview(selectedCode);
+                setStoreSettingsOverview(Array.isArray(overview) ? overview : []);
+
+                const preferredStoreId =
+                    String(selectedStoreId || "").trim()
+                    || String((Array.isArray(overview) && overview[0]?.store_id) || "")
+                    || String((businessStores[0] || {}).id || "");
+
+                if (preferredStoreId) {
+                    const preferredStore = businessStores.find((item) => String(item.id) === preferredStoreId);
+                    setSelectedStoreId(preferredStoreId);
+                    setSelectedStoreEnterpriseCode(String(preferredStore?.enterprise_code || ""));
+                    const exact = Array.isArray(overview)
+                        ? overview.find((item) => String(item.store_id) === preferredStoreId)
+                        : null;
+                    await applyStoreSettingsDraft(preferredStoreId, selectedCode, exact || null);
+                } else {
+                    setSelectedStoreEnterpriseCode("");
+                    setSelectedStoreId("");
+                    setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+                }
+            } catch (error) {
+                console.error("Ошибка загрузки обзора настроек поставщика по магазинам:", error);
+                setStoreSettingsOverview([]);
+                setStoreSettingsError("Не удалось загрузить настройки поставщика по магазинам.");
+                setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+            } finally {
+                setStoreSettingsLoading(false);
+            }
+        };
+
+        loadOverview();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isCreating, selectedCode, businessStores]);
+
     const selectedListItem = useMemo(
         () => suppliers.find((item) => item.code === selectedCode) || null,
         [suppliers, selectedCode]
@@ -320,7 +459,41 @@ const SuppliersPage = () => {
         () => (showOnlyActive ? suppliers.filter((item) => item.is_active) : suppliers),
         [showOnlyActive, suppliers]
     );
+    const businessStoreEnterpriseOptions = useMemo(() => {
+        const seen = new Set();
+        const rows = [];
+
+        businessStores.forEach((store) => {
+            const enterpriseCode = String(store?.enterprise_code || "").trim();
+            if (!enterpriseCode || seen.has(enterpriseCode)) {
+                return;
+            }
+            seen.add(enterpriseCode);
+            rows.push({
+                enterprise_code: enterpriseCode,
+                label: `Предприятие ${enterpriseCode}`,
+            });
+        });
+
+        return rows.sort((left, right) => left.label.localeCompare(right.label));
+    }, [businessStores]);
+    const filteredBusinessStores = useMemo(() => {
+        const normalizedEnterpriseCode = String(selectedStoreEnterpriseCode || "").trim();
+        if (!normalizedEnterpriseCode) {
+            return businessStores;
+        }
+        return businessStores.filter(
+            (store) => String(store?.enterprise_code || "").trim() === normalizedEnterpriseCode,
+        );
+    }, [businessStores, selectedStoreEnterpriseCode]);
     const showEditor = isCreating || Boolean(detail);
+    const overviewByStoreId = useMemo(() => {
+        const map = new Map();
+        storeSettingsOverview.forEach((item) => {
+            map.set(String(item.store_id), item);
+        });
+        return map;
+    }, [storeSettingsOverview]);
     const selectedCities = useMemo(() => splitSupplierCities(draft.city), [draft.city]);
     const knownCityOptions = useMemo(() => {
         const seen = new Set();
@@ -374,7 +547,14 @@ const SuppliersPage = () => {
         setSaveError("");
         setSaveSuccess("");
         setCustomCityInput("");
+        setSelectedStoreEnterpriseCode("");
         setDraft(defaultDraft);
+        setSelectedStoreId("");
+        setStoreSettingsOverview([]);
+        setStoreSettingsDraft(defaultStoreSettingsDraft);
+        setStoreSettingsError("");
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
         setOpenTechnical(false);
     };
 
@@ -383,6 +563,14 @@ const SuppliersPage = () => {
         setSaveError("");
         setSaveSuccess("");
         setCustomCityInput("");
+        setStoreSettingsError("");
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
+        setSelectedStoreEnterpriseCode("");
+        setSelectedStoreId("");
+        setStoreSettingsOverview([]);
+        setStoreSettingsDraft(defaultStoreSettingsDraft);
+        storeSettingsRequestRef.current += 1;
         setSelectedCode(code);
     };
 
@@ -390,6 +578,9 @@ const SuppliersPage = () => {
         setSaveError("");
         setSaveSuccess("");
         setCustomCityInput("");
+        setStoreSettingsError("");
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
         if (isCreating) {
             setIsCreating(false);
             if (suppliers.length > 0) {
@@ -421,6 +612,54 @@ const SuppliersPage = () => {
                 priority: detail.priority ?? 5,
                 use_feed_instead_of_gdrive: Boolean(detail.use_feed_instead_of_gdrive),
             });
+            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, overviewByStoreId.get(String(selectedStoreId)) || null));
+        }
+    };
+
+    const buildStoreSettingsDraft = (supplierCode, existing) => {
+        const defaultMinMarkupThreshold = detail?.min_markup_threshold ?? "0";
+
+        return {
+            supplier_code: String(supplierCode || ""),
+            is_active: existing ? Boolean(existing.is_active) : true,
+            priority_override: existing?.priority_override ?? "",
+            min_markup_threshold: existing?.min_markup_threshold ?? defaultMinMarkupThreshold,
+            extra_markup_enabled: existing ? Boolean(existing.extra_markup_enabled) : false,
+            extra_markup_mode: String(existing?.extra_markup_mode || "percent"),
+            extra_markup_value: existing?.extra_markup_value ?? "",
+            extra_markup_min: existing?.extra_markup_min ?? "",
+            extra_markup_max: existing?.extra_markup_max ?? "",
+            dumping_mode: existing ? Boolean(existing.dumping_mode) : false,
+        };
+    };
+
+    const applyStoreSettingsDraft = async (storeId, supplierCode, prefetchedOverview = null) => {
+        const requestId = storeSettingsRequestRef.current + 1;
+        storeSettingsRequestRef.current = requestId;
+        const existingFromOverview = prefetchedOverview ?? overviewByStoreId.get(String(storeId));
+        if (existingFromOverview) {
+            if (storeSettingsRequestRef.current === requestId) {
+                setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, existingFromOverview));
+            }
+            return;
+        }
+
+        try {
+            const rows = await getBusinessStoreSupplierSettings(storeId);
+            if (storeSettingsRequestRef.current !== requestId) {
+                return;
+            }
+            const exact = Array.isArray(rows)
+                ? rows.find((item) => String(item.supplier_code || "").trim() === String(supplierCode || "").trim())
+                : null;
+            setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, exact || null));
+        } catch (error) {
+            if (storeSettingsRequestRef.current !== requestId) {
+                return;
+            }
+            console.error("Ошибка загрузки store-specific supplier settings:", error);
+            setStoreSettingsDraft(buildStoreSettingsDraft(supplierCode, null));
+            setStoreSettingsError("Не удалось загрузить настройки поставщика для выбранного магазина.");
         }
     };
 
@@ -487,6 +726,127 @@ const SuppliersPage = () => {
         priority: draft.priority === "" ? 5 : Number(draft.priority),
         use_feed_instead_of_gdrive: Boolean(draft.use_feed_instead_of_gdrive),
     });
+
+    const setStoreSettingsField = (key, value) => {
+        setStoreSettingsDraft((prev) => ({
+            ...prev,
+            [key]: value,
+        }));
+    };
+
+    const handleStoreSelection = async (value, options = {}) => {
+        const { syncEnterprise = true } = options;
+        const selectedStore = businessStores.find((item) => String(item.id) === String(value));
+        if (syncEnterprise && selectedStore?.enterprise_code) {
+            setSelectedStoreEnterpriseCode(String(selectedStore.enterprise_code));
+        }
+        setSelectedStoreId(value);
+        setStoreSettingsError("");
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
+        if (!value || !selectedCode) {
+            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+            return;
+        }
+        await applyStoreSettingsDraft(value, selectedCode);
+    };
+
+    const handleStoreEnterpriseSelection = (enterpriseCode) => {
+        setSelectedStoreEnterpriseCode(enterpriseCode);
+        setSelectedStoreId("");
+        setStoreSettingsError("");
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
+
+        const normalizedEnterpriseCode = String(enterpriseCode || "").trim();
+        if (!normalizedEnterpriseCode) {
+            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+            storeSettingsRequestRef.current += 1;
+            return;
+        }
+
+        setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, null));
+        storeSettingsRequestRef.current += 1;
+    };
+
+    const buildStoreSettingsPayload = () => {
+        const minMarkupThreshold = String(storeSettingsDraft.min_markup_threshold ?? "").trim();
+        if (!minMarkupThreshold) {
+            throw new Error("Минимальная ценовая надбавка обязательна.");
+        }
+
+        return {
+            supplier_code: String(selectedCode || "").trim(),
+            is_active: Boolean(storeSettingsDraft.is_active),
+            priority_override:
+                String(storeSettingsDraft.priority_override ?? "").trim() === ""
+                    ? null
+                    : Number(storeSettingsDraft.priority_override),
+            min_markup_threshold: Number(minMarkupThreshold),
+            extra_markup_enabled: Boolean(storeSettingsDraft.extra_markup_enabled),
+            extra_markup_mode: storeSettingsDraft.extra_markup_enabled ? "percent" : null,
+            extra_markup_value:
+                String(storeSettingsDraft.extra_markup_value ?? "").trim() === ""
+                    ? null
+                    : Number(storeSettingsDraft.extra_markup_value),
+            extra_markup_min:
+                String(storeSettingsDraft.extra_markup_min ?? "").trim() === ""
+                    ? null
+                    : Number(storeSettingsDraft.extra_markup_min),
+            extra_markup_max:
+                String(storeSettingsDraft.extra_markup_max ?? "").trim() === ""
+                    ? null
+                    : Number(storeSettingsDraft.extra_markup_max),
+            dumping_mode: Boolean(storeSettingsDraft.dumping_mode),
+        };
+    };
+
+    const handleStoreSettingsSave = async () => {
+        setStoreSettingsSaveError("");
+        setStoreSettingsSaveSuccess("");
+        if (!selectedCode) {
+            setStoreSettingsSaveError("Сначала выберите поставщика.");
+            return;
+        }
+        if (!selectedStoreId) {
+            setStoreSettingsSaveError("Выберите магазин.");
+            return;
+        }
+
+        let payload;
+        try {
+            payload = buildStoreSettingsPayload();
+        } catch (error) {
+            setStoreSettingsSaveError(error.message || "Не удалось подготовить store-specific настройки.");
+            return;
+        }
+
+        try {
+            const saved = await upsertBusinessStoreSupplierSettings(selectedStoreId, selectedCode, payload);
+            const selectedStoreRow = businessStores.find((item) => String(item.id) === String(selectedStoreId));
+            setStoreSettingsDraft(buildStoreSettingsDraft(selectedCode, saved));
+            setStoreSettingsOverview((prev) => {
+                const next = prev.filter((item) => String(item.store_id) !== String(selectedStoreId));
+                next.push({
+                    ...saved,
+                    store_id: Number(selectedStoreId),
+                    store_code: selectedStoreRow?.store_code || "",
+                    store_name: selectedStoreRow?.store_name || "",
+                    enterprise_code: selectedStoreRow?.enterprise_code || null,
+                    tabletki_branch: selectedStoreRow?.tabletki_branch || null,
+                });
+                next.sort((left, right) => String(left.store_name || "").localeCompare(String(right.store_name || "")));
+                return next;
+            });
+            setStoreSettingsSaveSuccess("Настройки поставщика для выбранного магазина сохранены.");
+        } catch (error) {
+            console.error("Ошибка сохранения store-specific supplier settings:", error);
+            const detail = error?.response?.data?.detail;
+            setStoreSettingsSaveError(
+                typeof detail === "string" && detail ? detail : "Не удалось сохранить настройки поставщика для магазина.",
+            );
+        }
+    };
 
     const handleSave = async () => {
         setSaveError("");
@@ -625,10 +985,10 @@ const SuppliersPage = () => {
                                         Код: {supplier.code}
                                     </div>
                                     <div style={{ fontSize: "13px", color: "#64748b" }}>
-                                        Города: {supplier.cities_list.length > 0 ? supplier.cities_list.join(", ") : "—"}
+                                        Магазины: {truncateText(supplier.connected_stores_summary || "Магазины не подключены", 88)}
                                     </div>
                                     <div style={{ fontSize: "13px", color: "#64748b" }}>
-                                        Цены: {truncateText(supplier.pricing_summary)}
+                                        Подключено магазинов: {supplier.connected_stores_count || 0}
                                     </div>
                                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                                         <span style={supplier.is_active ? badgeStyle : inactiveBadgeStyle}>
@@ -692,7 +1052,33 @@ const SuppliersPage = () => {
                             ) : null}
 
                             <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
-                                <h2 style={sectionTitleStyle}>Основное</h2>
+                                <h2 style={sectionTitleStyle}>Основная информация о поставщике</h2>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                    <div style={{ display: "grid", gap: "6px" }}>
+                                        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Код поставщика</span>
+                                        <div style={{ fontSize: "15px", fontWeight: 700, color: "#111827" }}>{draft.code || "—"}</div>
+                                    </div>
+                                    <div style={{ display: "grid", gap: "6px" }}>
+                                        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Название поставщика</span>
+                                        <div style={{ fontSize: "15px", fontWeight: 700, color: "#111827" }}>{draft.name || "—"}</div>
+                                    </div>
+                                    <div style={{ display: "grid", gap: "6px" }}>
+                                        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Статус</span>
+                                        <div style={{ fontSize: "14px", color: "#111827" }}>{draft.is_active ? "Активный" : "Неактивный"}</div>
+                                    </div>
+                                    <div style={{ display: "grid", gap: "6px" }}>
+                                        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Источник / подключение</span>
+                                        <div style={{ fontSize: "14px", color: "#111827" }}>{detail?.source_summary || "—"}</div>
+                                    </div>
+                                    <div style={{ display: "grid", gap: "6px", gridColumn: "1 / -1" }}>
+                                        <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Код SalesDrive / supplierlist</span>
+                                        <div style={{ fontSize: "14px", color: "#111827" }}>{draft.salesdrive_supplier_id || "—"}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Глобальные настройки поставщика</h2>
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
                                     <SupplierCheckbox
                                         label="Активный (Active)"
@@ -723,10 +1109,316 @@ const SuppliersPage = () => {
                             </div>
 
                             <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Источник / подключение</h2>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                    <SupplierInput
+                                        label="Основной источник / URL / токен"
+                                        value={draft.feed_url}
+                                        onChange={(value) => setField("feed_url", value)}
+                                    />
+                                    <SupplierInput
+                                        label="Дополнительный источник / параметр"
+                                        value={draft.gdrive_folder}
+                                        onChange={(value) => setField("gdrive_folder", value)}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Базовые ценовые параметры</h2>
+                                <div style={{ display: "grid", gap: "12px" }}>
+                                    <SupplierCheckbox
+                                        label="Есть РРЦ (RRP)"
+                                        checked={Boolean(draft.is_rrp)}
+                                        onChange={(value) => setField("is_rrp", value)}
+                                    />
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                        <SupplierInput
+                                            label="Параметр для расчёта оптовой цены (%)"
+                                            type="number"
+                                            value={draft.profit_percent}
+                                            onChange={(value) => setField("profit_percent", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Наценка для розничной цены (%)"
+                                            type="number"
+                                            value={draft.retail_markup}
+                                            onChange={(value) => setField("retail_markup", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Минимальная ценовая надбавка"
+                                            type="number"
+                                            value={draft.min_markup_threshold}
+                                            onChange={(value) => setField("min_markup_threshold", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Приоритет (Priority)"
+                                            type="number"
+                                            value={draft.priority}
+                                            onChange={(value) => setField("priority", value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Настройки поставщика по магазину</h2>
+                                <p style={mutedTextStyle}>
+                                    Глобальные настройки поставщика применяются ко всем магазинам по умолчанию.
+                                    Параметры ниже переопределяют их только для выбранного магазина.
+                                </p>
+
+                                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "12px", alignItems: "end" }}>
+                                    <div style={{ display: "grid", gap: "12px" }}>
+                                        <label style={{ display: "grid", gap: "6px" }}>
+                                            <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Предприятие</span>
+                                            <select
+                                                value={selectedStoreEnterpriseCode}
+                                                onChange={(event) => handleStoreEnterpriseSelection(event.target.value)}
+                                                style={inputStyle}
+                                                disabled={storesLoading || !selectedCode}
+                                            >
+                                                <option value="">Выберите предприятие</option>
+                                                {businessStoreEnterpriseOptions.map((enterprise) => (
+                                                    <option key={enterprise.enterprise_code} value={enterprise.enterprise_code}>
+                                                        {enterprise.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label style={{ display: "grid", gap: "6px" }}>
+                                            <span style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>Магазин</span>
+                                            <select
+                                                value={selectedStoreId}
+                                                onChange={(event) => handleStoreSelection(event.target.value)}
+                                                style={inputStyle}
+                                                disabled={storesLoading || !selectedCode || !selectedStoreEnterpriseCode}
+                                            >
+                                                <option value="">Выберите магазин</option>
+                                                {filteredBusinessStores.map((store) => (
+                                                    <option key={store.id} value={store.id}>
+                                                        {formatStoreLabel(store)}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleStoreSettingsSave}
+                                        style={buttonPrimaryStyle}
+                                        disabled={!selectedStoreId || !selectedCode}
+                                    >
+                                        Сохранить настройки магазина
+                                    </button>
+                                </div>
+
+                                {storesError ? (
+                                    <div style={{ color: "#b91c1c", fontWeight: 600 }}>{storesError}</div>
+                                ) : null}
+                                {storeSettingsError ? (
+                                    <div style={{ color: "#b91c1c", fontWeight: 600 }}>{storeSettingsError}</div>
+                                ) : null}
+                                {storeSettingsSaveError ? (
+                                    <div style={{ color: "#b91c1c", fontWeight: 600 }}>{storeSettingsSaveError}</div>
+                                ) : null}
+                                {storeSettingsSaveSuccess ? (
+                                    <div style={{ color: "#166534", fontWeight: 600 }}>{storeSettingsSaveSuccess}</div>
+                                ) : null}
+                                {storeSettingsLoading ? <div style={mutedTextStyle}>Загрузка настроек магазина…</div> : null}
+
+                                <div style={{ display: "grid", gap: "16px" }}>
+                                    <div style={{ display: "grid", gap: "12px" }}>
+                                        <h3 style={{ margin: 0, fontSize: "16px", color: "#111827" }}>Статус поставщика в магазине</h3>
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
+                                            <SupplierCheckbox
+                                                label="Активный для магазина"
+                                                checked={Boolean(storeSettingsDraft.is_active)}
+                                                onChange={(value) => setStoreSettingsField("is_active", value)}
+                                            />
+                                            <SupplierInput
+                                                label="Приоритет"
+                                                type="number"
+                                                value={storeSettingsDraft.priority_override}
+                                                onChange={(value) => setStoreSettingsField("priority_override", value)}
+                                            />
+                                            <SupplierCheckbox
+                                                label="Режим демпинга"
+                                                checked={Boolean(storeSettingsDraft.dumping_mode)}
+                                                onChange={(value) => setStoreSettingsField("dumping_mode", value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div style={{ display: "grid", gap: "12px" }}>
+                                        <h3 style={{ margin: 0, fontSize: "16px", color: "#111827" }}>Ценообразование для магазина</h3>
+                                        <p style={{ ...mutedTextStyle, margin: 0 }}>
+                                            Эти настройки применяются для выбранной пары `магазин + поставщик`.
+                                            Фиксированная дополнительная наценка имеет приоритет над диапазоном min/max.
+                                            Если фиксированное значение пустое, для товаров используется стабильная наценка в пределах диапазона.
+                                        </p>
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                            <SupplierInput
+                                                label="Минимальная ценовая надбавка (обязательно)"
+                                                type="number"
+                                                value={storeSettingsDraft.min_markup_threshold}
+                                                onChange={(value) => setStoreSettingsField("min_markup_threshold", value)}
+                                            />
+                                            <SupplierCheckbox
+                                                label="Дополнительная наценка включена"
+                                                checked={Boolean(storeSettingsDraft.extra_markup_enabled)}
+                                                onChange={(value) => setStoreSettingsField("extra_markup_enabled", value)}
+                                            />
+                                            <SupplierInput
+                                                label="Режим дополнительной наценки"
+                                                value={storeSettingsDraft.extra_markup_mode || "percent"}
+                                                onChange={(value) => setStoreSettingsField("extra_markup_mode", value)}
+                                                disabled
+                                            />
+                                            <SupplierInput
+                                                label="Фиксированная дополнительная наценка (%)"
+                                                type="number"
+                                                value={storeSettingsDraft.extra_markup_value}
+                                                onChange={(value) => setStoreSettingsField("extra_markup_value", value)}
+                                            />
+                                            <SupplierInput
+                                                label="Минимум диапазона доп. наценки (%)"
+                                                type="number"
+                                                value={storeSettingsDraft.extra_markup_min}
+                                                onChange={(value) => setStoreSettingsField("extra_markup_min", value)}
+                                            />
+                                            <SupplierInput
+                                                label="Максимум диапазона доп. наценки (%)"
+                                                type="number"
+                                                value={storeSettingsDraft.extra_markup_max}
+                                                onChange={(value) => setStoreSettingsField("extra_markup_max", value)}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: "grid", gap: "10px" }}>
+                                    <h3 style={{ margin: 0, fontSize: "16px", color: "#111827" }}>Уже настроенные магазины</h3>
+                                    {storeSettingsOverview.length === 0 ? (
+                                        <div style={mutedTextStyle}>Для этого поставщика пока нет store-specific overrides.</div>
+                                    ) : (
+                                        <div style={{ overflowX: "auto" }}>
+                                            <table style={tableStyle}>
+                                                <thead>
+                                                    <tr>
+                                                        <th style={tableHeadCellStyle}>Магазин</th>
+                                                        <th style={tableHeadCellStyle}>Активный</th>
+                                                        <th style={tableHeadCellStyle}>Приоритет</th>
+                                                        <th style={tableHeadCellStyle}>Мин. надбавка</th>
+                                                        <th style={tableHeadCellStyle}>Доп. наценка</th>
+                                                        <th style={tableHeadCellStyle}>Режим демпинга</th>
+                                                        <th style={tableHeadCellStyle}>Действие</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {storeSettingsOverview.map((item) => (
+                                                        <tr key={`${item.store_id}-${item.id}`}>
+                                                            <td style={tableCellStyle}>
+                                                                <div style={{ fontWeight: 600 }}>{item.store_name || item.store_code}</div>
+                                                                <div style={{ color: "#64748b", fontSize: "12px" }}>
+                                                                    {[item.store_code, item.tabletki_branch ? `Branch ${item.tabletki_branch}` : null]
+                                                                        .filter(Boolean)
+                                                                        .join(" · ")}
+                                                                </div>
+                                                            </td>
+                                                            <td style={tableCellStyle}>{boolSummary(item.is_active)}</td>
+                                                            <td style={tableCellStyle}>{item.priority_override ?? "—"}</td>
+                                                            <td style={tableCellStyle}>{item.min_markup_threshold ?? "—"}</td>
+                                                            <td style={tableCellStyle}>
+                                                                {item.extra_markup_enabled
+                                                                    ? `${item.extra_markup_mode || "percent"} / ${item.extra_markup_value ?? "—"}`
+                                                                    : "Выключена"}
+                                                            </td>
+                                                            <td style={tableCellStyle}>{boolSummary(item.dumping_mode)}</td>
+                                                            <td style={tableCellStyle}>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleStoreSelection(String(item.store_id))}
+                                                                    style={buttonSecondaryStyle}
+                                                                >
+                                                                    Редактировать
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>Заказы</h2>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                    <SupplierCheckbox
+                                        label="Участвует в обработке заказов"
+                                        checked={Boolean(draft.biotus_orders_enabled)}
+                                        onChange={(value) => setField("biotus_orders_enabled", value)}
+                                    />
+                                    <SupplierCheckbox
+                                        label="Fulfillment-режим Новой Почты"
+                                        checked={Boolean(draft.np_fulfillment_enabled)}
+                                        onChange={(value) => setField("np_fulfillment_enabled", value)}
+                                    />
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
+                                <h2 style={sectionTitleStyle}>График недоступности</h2>
+                                <p style={mutedTextStyle}>
+                                    Здесь задаётся окно, в котором поставщик считается временно недоступным и его offers
+                                    не обновляются в dropship pipeline.
+                                </p>
+                                <div style={{ display: "grid", gap: "12px" }}>
+                                    <SupplierCheckbox
+                                        label="Включить окно недоступности (Schedule enabled)"
+                                        checked={Boolean(draft.schedule_enabled)}
+                                        onChange={(value) => setField("schedule_enabled", value)}
+                                    />
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                                        <SupplierSelect
+                                            label="Начало: день"
+                                            value={draft.block_start_day}
+                                            disabled={!draft.schedule_enabled}
+                                            options={DAY_OPTIONS}
+                                            onChange={(value) => setField("block_start_day", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Начало: время"
+                                            type="time"
+                                            value={draft.block_start_time}
+                                            disabled={!draft.schedule_enabled}
+                                            onChange={(value) => setField("block_start_time", value)}
+                                        />
+                                        <SupplierSelect
+                                            label="Конец: день"
+                                            value={draft.block_end_day}
+                                            disabled={!draft.schedule_enabled}
+                                            options={DAY_OPTIONS}
+                                            onChange={(value) => setField("block_end_day", value)}
+                                        />
+                                        <SupplierInput
+                                            label="Конец: время"
+                                            type="time"
+                                            value={draft.block_end_time}
+                                            disabled={!draft.schedule_enabled}
+                                            onChange={(value) => setField("block_end_time", value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
                                 <h2 style={sectionTitleStyle}>Города</h2>
                                 <p style={mutedTextStyle}>
-                                    Выберите города поставщика. Пустое значение не означает “все города”: в текущем runtime
-                                    такой поставщик пропускается при генерации offers.
+                                    Временный технический блок. После отвязки нового контура от городов он больше не является
+                                    основной рабочей настройкой поставщика.
                                 </p>
                                 <div style={{ display: "grid", gap: "12px" }}>
                                     <div style={{ display: "grid", gap: "8px" }}>
@@ -804,120 +1496,6 @@ const SuppliersPage = () => {
                                         <button type="button" onClick={addCustomCity} style={buttonSecondaryStyle}>
                                             Добавить
                                         </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
-                                <h2 style={sectionTitleStyle}>Источник / подключение</h2>
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
-                                    <SupplierInput
-                                        label="Основной источник / URL / токен"
-                                        value={draft.feed_url}
-                                        onChange={(value) => setField("feed_url", value)}
-                                    />
-                                    <SupplierInput
-                                        label="Дополнительный источник / параметр"
-                                        value={draft.gdrive_folder}
-                                        onChange={(value) => setField("gdrive_folder", value)}
-                                    />
-                                </div>
-                            </div>
-
-                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
-                                <h2 style={sectionTitleStyle}>Ценообразование</h2>
-                                <div style={{ display: "grid", gap: "12px" }}>
-                                    <SupplierCheckbox
-                                        label="Есть РРЦ (RRP)"
-                                        checked={Boolean(draft.is_rrp)}
-                                        onChange={(value) => setField("is_rrp", value)}
-                                    />
-                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
-                                        <SupplierInput
-                                            label="Параметр для расчёта оптовой цены (%)"
-                                            type="number"
-                                            value={draft.profit_percent}
-                                            onChange={(value) => setField("profit_percent", value)}
-                                        />
-                                        <SupplierInput
-                                            label="Наценка для розничной цены (%)"
-                                            type="number"
-                                            value={draft.retail_markup}
-                                            onChange={(value) => setField("retail_markup", value)}
-                                        />
-                                        <SupplierInput
-                                            label="Минимальная ценовая надбавка"
-                                            type="number"
-                                            value={draft.min_markup_threshold}
-                                            onChange={(value) => setField("min_markup_threshold", value)}
-                                        />
-                                        <SupplierInput
-                                            label="Приоритет (Priority)"
-                                            type="number"
-                                            value={draft.priority}
-                                            onChange={(value) => setField("priority", value)}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
-                                <h2 style={sectionTitleStyle}>Заказы</h2>
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
-                                    <SupplierCheckbox
-                                        label="Участвует в обработке заказов Biotus"
-                                        checked={Boolean(draft.biotus_orders_enabled)}
-                                        onChange={(value) => setField("biotus_orders_enabled", value)}
-                                    />
-                                    <SupplierCheckbox
-                                        label="Fulfillment-режим Новой Почты"
-                                        checked={Boolean(draft.np_fulfillment_enabled)}
-                                        onChange={(value) => setField("np_fulfillment_enabled", value)}
-                                    />
-                                </div>
-                            </div>
-
-                            <div style={{ ...cardStyle, padding: "18px 20px", display: "grid", gap: "14px" }}>
-                                <h2 style={sectionTitleStyle}>График недоступности</h2>
-                                <p style={mutedTextStyle}>
-                                    Здесь задаётся окно, в котором поставщик считается временно недоступным и его offers
-                                    не обновляются в dropship pipeline.
-                                </p>
-                                <div style={{ display: "grid", gap: "12px" }}>
-                                    <SupplierCheckbox
-                                        label="Включить окно недоступности (Schedule enabled)"
-                                        checked={Boolean(draft.schedule_enabled)}
-                                        onChange={(value) => setField("schedule_enabled", value)}
-                                    />
-                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
-                                        <SupplierSelect
-                                            label="Начало: день"
-                                            value={draft.block_start_day}
-                                            disabled={!draft.schedule_enabled}
-                                            options={DAY_OPTIONS}
-                                            onChange={(value) => setField("block_start_day", value)}
-                                        />
-                                        <SupplierInput
-                                            label="Начало: время"
-                                            type="time"
-                                            value={draft.block_start_time}
-                                            disabled={!draft.schedule_enabled}
-                                            onChange={(value) => setField("block_start_time", value)}
-                                        />
-                                        <SupplierSelect
-                                            label="Конец: день"
-                                            value={draft.block_end_day}
-                                            disabled={!draft.schedule_enabled}
-                                            options={DAY_OPTIONS}
-                                            onChange={(value) => setField("block_end_day", value)}
-                                        />
-                                        <SupplierInput
-                                            label="Конец: время"
-                                            type="time"
-                                            value={draft.block_end_time}
-                                            disabled={!draft.schedule_enabled}
-                                            onChange={(value) => setField("block_end_time", value)}
-                                        />
                                     </div>
                                 </div>
                             </div>

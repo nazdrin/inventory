@@ -74,6 +74,8 @@ const getAuthHeaders = () => {
         : {};
 };
 
+export { getAuthHeaders, handleAuthError, redirectToLogin, getAuthToken };
+
 // 🔹 Получение настроек разработчика по логину
 const getSetting = async () => {
     const login = getStoredLogin();

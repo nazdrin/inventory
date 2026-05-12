@@ -8,6 +8,10 @@ import DropshipEnterprisePanel from "./pages/DropshipEnterprisePanel";
 import FormatsPage from "./pages/FormatsPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import BusinessSettingsPage from "./pages/BusinessSettingsPage";
+import BusinessStoresPage from "./pages/BusinessStoresPage";
+import BusinessOrganizationsPage from "./pages/BusinessOrganizationsPage";
+import PaymentReportsPage from "./pages/PaymentReportsPage";
+import OrderReportsPage from "./pages/OrderReportsPage";
 
 import Login from "./pages/Login";
 
@@ -161,6 +165,62 @@ const App = () => {
                         >
                             Business Settings
                         </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/business-stores")}
+                        >
+                            Business-продавцы
+                        </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/business-organizations")}
+                        >
+                            Организации и кассы
+                        </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/payment-reports")}
+                        >
+                            Платежи
+                        </button>
+                        <button
+                            style={{
+                                padding: "10px 20px",
+                                backgroundColor: "#007BFF",
+                                marginLeft: 10,
+                                color: "white",
+                                border: "none",
+                                cursor: "pointer",
+                                borderRadius: "5px",
+                            }}
+                            onClick={() => navigate("/order-reports")}
+                        >
+                            Заказы
+                        </button>
                     </>
                 )}
             </div>
@@ -194,6 +254,22 @@ const App = () => {
                 <Route
                     path="/business"
                     element={<PrivateRoute element={<BusinessSettingsPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/business-stores"
+                    element={<PrivateRoute element={<BusinessStoresPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/business-organizations"
+                    element={<PrivateRoute element={<BusinessOrganizationsPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/payment-reports"
+                    element={<PrivateRoute element={<PaymentReportsPage authUser={authUser} />} />}
+                />
+                <Route
+                    path="/order-reports"
+                    element={<PrivateRoute element={<OrderReportsPage authUser={authUser} />} />}
                 />
             </Routes>
         </div>

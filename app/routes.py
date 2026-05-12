@@ -1,15 +1,16 @@
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, Request, Security
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, Request, Security, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from fastapi.security import HTTPBearer
 from typing import List, Any
 import os
 import json
 import tempfile
 import math
-from datetime import timedelta
+from datetime import timedelta, time
 
 from app import crud, schemas, database
 from app.schemas import (
@@ -20,6 +21,14 @@ from app.schemas import (
     SupplierSectionVM, BusinessSettingsVM, BusinessSectionVM, BusinessSettingItemVM,
     BusinessEnterpriseCandidateVM, BusinessEnterpriseOptionVM, BusinessSettingsUpdateSchema,
     BusinessEnterpriseOperationalFieldsUpdateSchema, BusinessPricingSettingsUpdateSchema,
+    BusinessStoreCreate, BusinessStoreUpdate, BusinessStoreOut, LegacyScopeOut,
+    BusinessEnterpriseOptionOut, BusinessStoreMappingBranchOptionOut,
+    BusinessStoreSupplierSettingsUpsertSchema, BusinessStoreSupplierSettingsOut,
+    BusinessSupplierStoreSettingsOverviewOut,
+    BusinessOrganizationCreate, BusinessOrganizationUpdate, BusinessOrganizationOut,
+    BusinessAccountCreate, BusinessAccountUpdate, BusinessAccountOut,
+    CheckboxCashRegisterCreate, CheckboxCashRegisterUpdate, CheckboxCashRegisterOut,
+    CheckboxReceiptExclusionCreate, CheckboxReceiptExclusionUpdate, CheckboxReceiptExclusionOut,
 )
 from app.database import (
     DeveloperSettings, EnterpriseSettings, DataFormat, MappingBranch, AsyncSessionLocal
@@ -51,13 +60,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.auth import verify_token  # как у enterprise
-from app.models import DropshipEnterprise, BusinessSettings
+from app.models import (
+    DropshipEnterprise,
+    BusinessSettings,
+    BusinessStore,
+    Offer,
+    BusinessStoreProductCode,
+    BusinessStoreProductName,
+    BusinessStoreProductPriceAdjustment,
+    BusinessStoreSupplierSettings,
+    BusinessEnterpriseProductCode,
+    BusinessEnterpriseProductName,
+    PaymentBusinessEntity,
+    PaymentBusinessAccount,
+    CheckboxCashRegister,
+    CheckboxReceiptExclusion,
+)
 from app.schemas import DropshipEnterpriseSchema
+from app.business.business_store_name_generator import cleanup_store_product_names
+from app.integrations.checkbox.client import CheckboxClient
+from app.integrations.checkbox.config import load_checkbox_settings
+from app.integrations.checkbox.resolver import settings_for_register
+from app.integrations.checkbox.shift_service import close_current_shift, ensure_open_shift
 from app.services.business_pricing_settings_resolver import (
     BUSINESS_PRICING_FIELD_SPECS,
     BUSINESS_PRICING_GROUP_SPECS,
     BusinessPricingSettingsSnapshot,
     load_business_pricing_settings_snapshot,
+)
+from app.business.business_store_export_dry_run import (
+    build_store_catalog_dry_run,
+    build_store_stock_dry_run,
+)
+from app.business.business_store_catalog_preview import (
+    build_effective_business_store_catalog_payload_preview,
+)
+from app.business.business_store_stock_preview import build_store_stock_payload_preview
+from app.services.business_store_branch_sync_service import (
+    apply_business_store_branch_sync,
+    build_business_store_branch_sync_report,
 )
 
 
@@ -114,6 +155,29 @@ def _mapping_field_notes(data_format: str | None, has_google_folder: bool) -> li
     if has_google_folder:
         notes.append("google_folder_id is only relevant for file-driven branch/folder flows")
     return notes
+
+
+def _parse_payment_report_datetime(value: str, *, end_of_day: bool = False) -> datetime:
+    text_value = str(value or "").strip()
+    if not text_value:
+        raise HTTPException(status_code=400, detail="period date is required")
+    try:
+        date_value = datetime.strptime(text_value, "%Y-%m-%d").date()
+        return datetime.combine(date_value, time.max if end_of_day else time.min).replace(microsecond=0)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid period date/datetime: {value}") from exc
+
+
+def _parse_payment_report_period(period_from: str, period_to: str) -> tuple[datetime, datetime]:
+    parsed_from = _parse_payment_report_datetime(period_from)
+    parsed_to = _parse_payment_report_datetime(period_to, end_of_day=True)
+    if parsed_to < parsed_from:
+        raise HTTPException(status_code=400, detail="period_to must be greater than or equal to period_from")
+    return parsed_from, parsed_to
 
 
 def _mapping_overloaded_fields(data_format: str | None, has_google_folder: bool) -> list[str]:
@@ -199,6 +263,26 @@ def _supplier_display_name(item: DropshipEnterprise) -> str:
     return name or code or "Supplier"
 
 
+def _format_supplier_connected_store_label(store: BusinessStore) -> str:
+    parts: list[str] = [str(store.store_name or store.store_code or "Магазин")]
+    if getattr(store, "tabletki_branch", None):
+        parts.append(f"Branch {store.tabletki_branch}")
+    return " · ".join(parts)
+
+
+def _build_supplier_connected_store_summary(store_labels: list[str], inactive_links_count: int = 0) -> str:
+    if store_labels:
+        preview = store_labels[:3]
+        hidden_count = max(0, len(store_labels) - len(preview))
+        summary = ", ".join(preview)
+        if hidden_count:
+            summary = f"{summary} +{hidden_count}"
+        return summary
+    if inactive_links_count > 0:
+        return "Подключения есть, но выключены"
+    return "Магазины не подключены"
+
+
 def _supplier_sections() -> list[SupplierSectionVM]:
     return [
         SupplierSectionVM(key="main", title="Основное"),
@@ -210,7 +294,12 @@ def _supplier_sections() -> list[SupplierSectionVM]:
     ]
 
 
-def _build_supplier_list_item_vm(item: DropshipEnterprise) -> SupplierListItemVM:
+def _build_supplier_list_item_vm(
+    item: DropshipEnterprise,
+    store_labels: list[str] | None = None,
+    inactive_links_count: int = 0,
+) -> SupplierListItemVM:
+    resolved_store_labels = list(store_labels or [])
     return SupplierListItemVM(
         code=item.code,
         display_name=_supplier_display_name(item),
@@ -219,6 +308,12 @@ def _build_supplier_list_item_vm(item: DropshipEnterprise) -> SupplierListItemVM
         source_summary=_supplier_source_summary(item),
         pricing_summary=_supplier_pricing_summary(item),
         flags_summary=_supplier_flags_summary(item),
+        connected_stores_count=len(resolved_store_labels),
+        connected_store_labels=resolved_store_labels,
+        connected_stores_summary=_build_supplier_connected_store_summary(
+            resolved_store_labels,
+            inactive_links_count=inactive_links_count,
+        ),
     )
 
 
@@ -439,6 +534,8 @@ def _enterprise_values(enterprise: EnterpriseSettings) -> dict:
         "stock_upload_frequency": enterprise.stock_upload_frequency,
         "catalog_enabled": bool(enterprise.catalog_enabled),
         "stock_enabled": bool(enterprise.stock_enabled),
+        "business_runtime_mode": enterprise.business_runtime_mode,
+        "business_stock_mode": enterprise.business_stock_mode,
         "order_fetcher": bool(enterprise.order_fetcher),
         "tabletki_login": enterprise.tabletki_login,
         "tabletki_password": enterprise.tabletki_password,
@@ -1261,7 +1358,6 @@ def _build_business_sections(
     token_hint_target_code = target_primary_code or master_catalog_target
     token_hint_target = enterprise_lookup.get(str(token_hint_target_code or ""))
     token_presence = bool((getattr(token_hint_target, "token", None) or "").strip()) if token_hint_target else False
-
     if target_enterprise is not None:
         target_items = [
             _business_item("enterprise_name", "Текущее предприятие", target_enterprise.enterprise_name, "EnterpriseSettings", group="Сейчас используется"),
@@ -1807,7 +1903,38 @@ async def get_all_dropship_enterprises(db: AsyncSession = Depends(get_db)):
 async def get_suppliers_view(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DropshipEnterprise))
     items = result.scalars().all()
-    return [_build_supplier_list_item_vm(item) for item in items]
+    settings_rows = (
+        await db.execute(
+            select(BusinessStoreSupplierSettings, BusinessStore)
+            .join(BusinessStore, BusinessStore.id == BusinessStoreSupplierSettings.store_id)
+            .order_by(BusinessStore.store_name.asc(), BusinessStore.store_code.asc())
+        )
+    ).all()
+
+    active_store_labels_by_supplier: dict[str, list[str]] = {}
+    inactive_links_count_by_supplier: dict[str, int] = {}
+
+    for settings, store in settings_rows:
+        supplier_code = str(settings.supplier_code or "").strip()
+        if not supplier_code:
+            continue
+        if bool(settings.is_active) and bool(getattr(store, "is_active", True)):
+            active_store_labels_by_supplier.setdefault(supplier_code, []).append(
+                _format_supplier_connected_store_label(store)
+            )
+        else:
+            inactive_links_count_by_supplier[supplier_code] = (
+                inactive_links_count_by_supplier.get(supplier_code, 0) + 1
+            )
+
+    return [
+        _build_supplier_list_item_vm(
+            item,
+            store_labels=active_store_labels_by_supplier.get(str(item.code or "").strip(), []),
+            inactive_links_count=inactive_links_count_by_supplier.get(str(item.code or "").strip(), 0),
+        )
+        for item in items
+    ]
 
 
 @router.get("/suppliers/view/{code}", response_model=SupplierDetailVM, dependencies=[Depends(verify_token)])
@@ -1817,6 +1944,49 @@ async def get_supplier_view_detail(code: str, db: AsyncSession = Depends(get_db)
     if not item:
         raise HTTPException(status_code=404, detail="Supplier not found.")
     return _build_supplier_detail_vm(item)
+
+
+@router.get(
+    "/business-suppliers/{supplier_code}/store-settings",
+    response_model=List[BusinessSupplierStoreSettingsOverviewOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_supplier_store_settings_overview(
+    supplier_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    normalized_supplier_code = str(supplier_code or "").strip()
+    if not normalized_supplier_code:
+        raise HTTPException(status_code=400, detail="supplier_code is required.")
+
+    result = await db.execute(
+        select(BusinessStoreSupplierSettings, BusinessStore)
+        .join(BusinessStore, BusinessStore.id == BusinessStoreSupplierSettings.store_id)
+        .where(BusinessStoreSupplierSettings.supplier_code == normalized_supplier_code)
+        .order_by(BusinessStore.store_name.asc(), BusinessStore.store_code.asc())
+    )
+    rows = result.all()
+    return [
+        BusinessSupplierStoreSettingsOverviewOut(
+            id=int(settings.id),
+            store_id=int(store.id),
+            store_code=store.store_code,
+            store_name=store.store_name,
+            enterprise_code=store.enterprise_code,
+            tabletki_branch=store.tabletki_branch,
+            is_active=bool(settings.is_active),
+            priority_override=settings.priority_override,
+            min_markup_threshold=settings.min_markup_threshold,
+            extra_markup_enabled=bool(settings.extra_markup_enabled),
+            extra_markup_mode=settings.extra_markup_mode,
+            extra_markup_value=settings.extra_markup_value,
+            extra_markup_min=settings.extra_markup_min,
+            extra_markup_max=settings.extra_markup_max,
+            dumping_mode=settings.dumping_mode,
+            updated_at=settings.updated_at,
+        )
+        for settings, store in rows
+    ]
 
 # Get by code
 @router.get("/dropship/enterprises/{code}", dependencies=[Depends(verify_token)])
@@ -2093,7 +2263,9 @@ async def get_enterprise_by_code(enterprise_code: str, db: AsyncSession = Depend
     enterprise = result.scalars().first()
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
-    return EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True)
+    payload = EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True).model_dump()
+    payload.update(await _enterprise_runtime_mode_metadata(db, enterprise))
+    return payload
 
 
 @router.get(
@@ -2127,12 +2299,33 @@ async def update_enterprise_settings(enterprise_code: str, updated_settings: Ent
     if not enterprise:
         raise HTTPException(status_code=404, detail="Enterprise not found.")
 
+    current_runtime_mode = str(enterprise.business_runtime_mode or "baseline")
+    requested_runtime_mode = str(updated_settings.business_runtime_mode or current_runtime_mode)
+    if (
+        current_runtime_mode == "custom"
+        and requested_runtime_mode == "baseline"
+        and await _enterprise_has_catalog_identity_mappings(db, enterprise.enterprise_code)
+    ):
+        raise HTTPException(status_code=400, detail=ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE)
+
     for key, value in updated_settings.model_dump(exclude_unset=True).items():
         setattr(enterprise, key, value)
 
+    if str(enterprise.business_runtime_mode or "baseline") == "baseline":
+        stores = (
+            await db.execute(
+                select(BusinessStore).where(BusinessStore.enterprise_code == enterprise.enterprise_code)
+            )
+        ).scalars().all()
+        for store in stores:
+            _apply_baseline_business_store_identity_defaults(store)
+
     await db.commit()
     await db.refresh(enterprise)
-    return {"detail": "Enterprise settings updated successfully", "data": enterprise}
+    return {
+        "detail": "Enterprise settings updated successfully",
+        "data": EnterpriseSettingsSchema.model_validate(enterprise, from_attributes=True).model_dump(),
+    }
 
 # 🔒 Эндпоинты форматов данных
 @router.post("/data_formats/", dependencies=[Depends(verify_token)])
@@ -2254,6 +2447,1292 @@ async def update_mapping_branch(
 
     return await _build_branch_mapping_detail_response(db, branch)
 
+
+def _normalize_optional_query_string(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+async def _get_business_store_or_404(db: AsyncSession, store_id: int) -> BusinessStore:
+    result = await db.execute(select(BusinessStore).where(BusinessStore.id == int(store_id)))
+    store = result.scalar_one_or_none()
+    if store is None:
+        raise HTTPException(status_code=404, detail="BusinessStore not found.")
+    return store
+
+
+def _apply_baseline_business_store_identity_defaults(store: BusinessStore) -> None:
+    store.is_legacy_default = True
+    store.code_strategy = "legacy_same"
+    store.code_prefix = None
+    store.name_strategy = "base"
+
+
+ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE = (
+    "Для підприємства вже створені індивідуальні коди або назви каталогу. "
+    "Зміну режиму заблоковано."
+)
+
+
+async def _enterprise_has_catalog_identity_mappings(
+    db: AsyncSession,
+    enterprise_code: str | None,
+) -> bool:
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    if not normalized_enterprise_code:
+        return False
+
+    code_mapping_result = await db.execute(
+        select(BusinessEnterpriseProductCode.id)
+        .where(BusinessEnterpriseProductCode.enterprise_code == normalized_enterprise_code)
+        .limit(1)
+    )
+    if code_mapping_result.scalar_one_or_none() is not None:
+        return True
+
+    name_mapping_result = await db.execute(
+        select(BusinessEnterpriseProductName.id)
+        .where(BusinessEnterpriseProductName.enterprise_code == normalized_enterprise_code)
+        .limit(1)
+    )
+    return name_mapping_result.scalar_one_or_none() is not None
+
+
+async def _enterprise_runtime_mode_metadata(
+    db: AsyncSession,
+    enterprise: EnterpriseSettings,
+) -> dict[str, Any]:
+    has_enterprise_catalog_mappings = await _enterprise_has_catalog_identity_mappings(
+        db,
+        enterprise.enterprise_code,
+    )
+    runtime_mode_switch_locked = bool(
+        (enterprise.business_runtime_mode or "baseline") == "custom"
+        and has_enterprise_catalog_mappings
+    )
+    return {
+        "has_enterprise_catalog_mappings": has_enterprise_catalog_mappings,
+        "runtime_mode_switch_locked": runtime_mode_switch_locked,
+        "runtime_mode_switch_lock_reason": (
+            ENTERPRISE_RUNTIME_MODE_LOCK_MESSAGE if runtime_mode_switch_locked else None
+        ),
+    }
+
+
+async def _mapping_branch_exists_for_store(
+    db: AsyncSession,
+    *,
+    enterprise_code: str | None,
+    tabletki_branch: str | None,
+) -> bool:
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    normalized_branch = _normalize_optional_query_string(tabletki_branch)
+    if not normalized_enterprise_code or not normalized_branch:
+        return False
+
+    result = await db.execute(
+        select(MappingBranch.branch).where(
+            MappingBranch.enterprise_code == normalized_enterprise_code,
+            MappingBranch.branch == normalized_branch,
+        ).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _validate_business_store_branch_mapping(
+    db: AsyncSession,
+    *,
+    enterprise_code: str | None,
+    tabletki_branch: str | None,
+    is_active: bool,
+) -> None:
+    if not bool(is_active):
+        return
+
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    normalized_branch = _normalize_optional_query_string(tabletki_branch)
+    if not normalized_enterprise_code or not normalized_branch:
+        return
+
+    if not await _mapping_branch_exists_for_store(
+        db,
+        enterprise_code=normalized_enterprise_code,
+        tabletki_branch=normalized_branch,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Active store branch must exist in mapping_branch for the same enterprise_code: "
+                f"enterprise_code={normalized_enterprise_code}, branch={normalized_branch}"
+            ),
+        )
+
+
+def _checkbox_cash_register_out(row: CheckboxCashRegister) -> CheckboxCashRegisterOut:
+    return CheckboxCashRegisterOut(
+        id=int(row.id),
+        business_organization_id=int(row.business_organization_id),
+        business_store_id=int(row.business_store_id) if row.business_store_id is not None else None,
+        enterprise_code=row.enterprise_code,
+        register_name=row.register_name,
+        cash_register_code=row.cash_register_code,
+        checkbox_license_key_set=bool(row.checkbox_license_key),
+        cashier_login=row.cashier_login,
+        cashier_password_set=bool(row.cashier_password),
+        cashier_pin_set=bool(row.cashier_pin),
+        api_base_url=row.api_base_url,
+        is_test_mode=bool(row.is_test_mode),
+        is_active=bool(row.is_active),
+        is_default=bool(row.is_default),
+        shift_open_mode=row.shift_open_mode,
+        shift_open_time=row.shift_open_time,
+        shift_close_time=row.shift_close_time,
+        timezone=row.timezone,
+        receipt_notifications_enabled=bool(row.receipt_notifications_enabled),
+        shift_notifications_enabled=bool(row.shift_notifications_enabled),
+        notes=row.notes,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _business_organization_out(db: AsyncSession, row: PaymentBusinessEntity) -> BusinessOrganizationOut:
+    accounts = list(
+        (
+            await db.execute(
+                select(PaymentBusinessAccount)
+                .where(PaymentBusinessAccount.business_entity_id == row.id)
+                .order_by(PaymentBusinessAccount.is_active.desc(), PaymentBusinessAccount.label.asc(), PaymentBusinessAccount.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    registers = list(
+        (
+            await db.execute(
+                select(CheckboxCashRegister)
+                .where(CheckboxCashRegister.business_organization_id == row.id)
+                .order_by(CheckboxCashRegister.is_active.desc(), CheckboxCashRegister.is_default.desc(), CheckboxCashRegister.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    exclusions = list(
+        (
+            await db.execute(
+                select(CheckboxReceiptExclusion)
+                .where(CheckboxReceiptExclusion.business_organization_id == row.id)
+                .order_by(CheckboxReceiptExclusion.is_active.desc(), CheckboxReceiptExclusion.supplier_code.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return BusinessOrganizationOut(
+        id=int(row.id),
+        salesdrive_organization_id=row.salesdrive_organization_id,
+        short_name=row.short_name,
+        full_name=row.full_name,
+        tax_id=row.tax_id,
+        entity_type=row.entity_type,
+        verification_status=row.verification_status,
+        vat_enabled=bool(row.vat_enabled),
+        vat_payer=bool(row.vat_payer),
+        without_stamp=bool(row.without_stamp),
+        signer_name=row.signer_name,
+        signer_position=row.signer_position,
+        chief_accountant_name=row.chief_accountant_name,
+        cashier_name=row.cashier_name,
+        address=row.address,
+        postal_code=row.postal_code,
+        city=row.city,
+        region=row.region,
+        country=row.country,
+        phone=row.phone,
+        is_active=bool(row.is_active),
+        notes=row.notes,
+        accounts=[BusinessAccountOut.model_validate(item, from_attributes=True) for item in accounts],
+        cash_registers=[_checkbox_cash_register_out(item) for item in registers],
+        receipt_exclusions=[
+            CheckboxReceiptExclusionOut.model_validate(item, from_attributes=True)
+            for item in exclusions
+        ],
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _get_business_organization_or_404(
+    db: AsyncSession,
+    organization_id: int,
+) -> PaymentBusinessEntity:
+    row = await db.scalar(select(PaymentBusinessEntity).where(PaymentBusinessEntity.id == int(organization_id)))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Business organization not found.")
+    return row
+
+
+def _business_store_out(store: BusinessStore, organization: PaymentBusinessEntity | None = None) -> BusinessStoreOut:
+    data = BusinessStoreOut.model_validate(store, from_attributes=True)
+    data.organization_short_name = organization.short_name if organization else None
+    data.organization_tax_id = organization.tax_id if organization else None
+    data.organization_salesdrive_id = organization.salesdrive_organization_id if organization else None
+    return data
+
+
+@router.get(
+    "/business-organizations",
+    response_model=List[BusinessOrganizationOut],
+    dependencies=[Depends(verify_token)],
+)
+async def list_business_organizations(
+    is_active: bool | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(PaymentBusinessEntity).order_by(PaymentBusinessEntity.is_active.desc(), PaymentBusinessEntity.short_name.asc())
+    if is_active is not None:
+        stmt = stmt.where(PaymentBusinessEntity.is_active.is_(bool(is_active)))
+    rows = list((await db.execute(stmt)).scalars().all())
+    return [await _business_organization_out(db, row) for row in rows]
+
+
+@router.post(
+    "/business-organizations",
+    response_model=BusinessOrganizationOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_business_organization(
+    payload: BusinessOrganizationCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    obj = PaymentBusinessEntity(**payload.model_dump())
+    obj.normalized_name = (payload.full_name or payload.short_name or "").strip().lower() or None
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return await _business_organization_out(db, obj)
+
+
+@router.put(
+    "/business-organizations/{organization_id}",
+    response_model=BusinessOrganizationOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_organization(
+    organization_id: int,
+    payload: BusinessOrganizationUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    obj = await _get_business_organization_or_404(db, organization_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, key, value)
+    if "short_name" in payload.model_fields_set or "full_name" in payload.model_fields_set:
+        obj.normalized_name = (obj.full_name or obj.short_name or "").strip().lower() or None
+    await db.commit()
+    await db.refresh(obj)
+    return await _business_organization_out(db, obj)
+
+
+@router.post(
+    "/business-organizations/{organization_id}/accounts",
+    response_model=BusinessAccountOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_business_organization_account(
+    organization_id: int,
+    payload: BusinessAccountCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = PaymentBusinessAccount(business_entity_id=int(organization_id), **payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessAccountOut.model_validate(obj, from_attributes=True)
+
+
+@router.put(
+    "/business-organizations/{organization_id}/accounts/{account_id}",
+    response_model=BusinessAccountOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_organization_account(
+    organization_id: int,
+    account_id: int,
+    payload: BusinessAccountUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = await db.scalar(
+        select(PaymentBusinessAccount).where(
+            PaymentBusinessAccount.id == int(account_id),
+            PaymentBusinessAccount.business_entity_id == int(organization_id),
+        )
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Business account not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, key, value)
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessAccountOut.model_validate(obj, from_attributes=True)
+
+
+@router.post(
+    "/business-organizations/{organization_id}/checkbox-registers",
+    response_model=CheckboxCashRegisterOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_checkbox_cash_register(
+    organization_id: int,
+    payload: CheckboxCashRegisterCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = CheckboxCashRegister(business_organization_id=int(organization_id), **payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return _checkbox_cash_register_out(obj)
+
+
+@router.put(
+    "/business-organizations/{organization_id}/checkbox-registers/{register_id}",
+    response_model=CheckboxCashRegisterOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_checkbox_cash_register(
+    organization_id: int,
+    register_id: int,
+    payload: CheckboxCashRegisterUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = await db.scalar(
+        select(CheckboxCashRegister).where(
+            CheckboxCashRegister.id == int(register_id),
+            CheckboxCashRegister.business_organization_id == int(organization_id),
+        )
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Checkbox cash register not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if key in {"checkbox_license_key", "cashier_password", "cashier_pin"} and value in (None, ""):
+            continue
+        setattr(obj, key, value)
+    await db.commit()
+    await db.refresh(obj)
+    return _checkbox_cash_register_out(obj)
+
+
+@router.post(
+    "/business-organizations/{organization_id}/checkbox-registers/{register_id}/test",
+    dependencies=[Depends(verify_token)],
+)
+async def test_checkbox_cash_register(
+    organization_id: int,
+    register_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    register = await db.scalar(
+        select(CheckboxCashRegister).where(
+            CheckboxCashRegister.id == int(register_id),
+            CheckboxCashRegister.business_organization_id == int(organization_id),
+        )
+    )
+    if register is None:
+        raise HTTPException(status_code=404, detail="Checkbox cash register not found.")
+
+    action = str(payload.get("action") or "auth").strip()
+    if action not in {"auth", "open_shift", "close_shift"}:
+        raise HTTPException(status_code=400, detail="Unsupported checkbox test action.")
+
+    settings = settings_for_register(load_checkbox_settings(), register)
+    client = CheckboxClient(settings)
+    token = await client.signin()
+    result: dict[str, Any] = {"action": action, "status": "ok"}
+    if action == "open_shift":
+        shift = await ensure_open_shift(
+            db,
+            client=client,
+            settings=settings,
+            token=token,
+            enterprise_code=str(register.enterprise_code or ""),
+            cash_register_code=settings.default_cash_register_code,
+            business_organization_id=int(register.business_organization_id),
+            cash_register_id=int(register.id),
+        )
+        result["shift_id"] = shift.checkbox_shift_id if shift else None
+        result["shift_status"] = shift.status if shift else None
+    elif action == "close_shift":
+        shift = await close_current_shift(
+            db,
+            client=client,
+            settings=settings,
+            token=token,
+            enterprise_code=str(register.enterprise_code or ""),
+            cash_register_code=settings.default_cash_register_code,
+            business_organization_id=int(register.business_organization_id),
+            cash_register_id=int(register.id),
+        )
+        result["shift_id"] = shift.checkbox_shift_id if shift else None
+        result["shift_status"] = shift.status if shift else None
+    return result
+
+
+@router.post(
+    "/business-organizations/{organization_id}/checkbox-exclusions",
+    response_model=CheckboxReceiptExclusionOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_checkbox_receipt_exclusion(
+    organization_id: int,
+    payload: CheckboxReceiptExclusionCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = CheckboxReceiptExclusion(business_organization_id=int(organization_id), **payload.model_dump())
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return CheckboxReceiptExclusionOut.model_validate(obj, from_attributes=True)
+
+
+@router.put(
+    "/business-organizations/{organization_id}/checkbox-exclusions/{exclusion_id}",
+    response_model=CheckboxReceiptExclusionOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_checkbox_receipt_exclusion(
+    organization_id: int,
+    exclusion_id: int,
+    payload: CheckboxReceiptExclusionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_organization_or_404(db, organization_id)
+    obj = await db.scalar(
+        select(CheckboxReceiptExclusion).where(
+            CheckboxReceiptExclusion.id == int(exclusion_id),
+            CheckboxReceiptExclusion.business_organization_id == int(organization_id),
+        )
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Checkbox receipt exclusion not found.")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, key, value)
+    await db.commit()
+    await db.refresh(obj)
+    return CheckboxReceiptExclusionOut.model_validate(obj, from_attributes=True)
+
+
+@router.get(
+    "/business-stores",
+    response_model=List[BusinessStoreOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_stores(
+    enterprise_code: str | None = Query(default=None),
+    migration_status: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+    legacy_scope_key: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(BusinessStore).order_by(BusinessStore.store_name.asc(), BusinessStore.store_code.asc())
+
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    normalized_migration_status = _normalize_optional_query_string(migration_status)
+    normalized_legacy_scope_key = _normalize_optional_query_string(legacy_scope_key)
+
+    if normalized_enterprise_code:
+        stmt = stmt.where(BusinessStore.enterprise_code == normalized_enterprise_code)
+    if normalized_migration_status:
+        stmt = stmt.where(BusinessStore.migration_status == normalized_migration_status)
+    if is_active is not None:
+        stmt = stmt.where(BusinessStore.is_active.is_(bool(is_active)))
+    if normalized_legacy_scope_key:
+        stmt = stmt.where(BusinessStore.legacy_scope_key == normalized_legacy_scope_key)
+
+    stores = list((await db.execute(stmt)).scalars().all())
+    organization_ids = {int(item.business_organization_id) for item in stores if item.business_organization_id}
+    organizations: dict[int, PaymentBusinessEntity] = {}
+    if organization_ids:
+        org_rows = (
+            await db.execute(
+                select(PaymentBusinessEntity).where(PaymentBusinessEntity.id.in_(organization_ids))
+            )
+        ).scalars().all()
+        organizations = {int(item.id): item for item in org_rows}
+    return [
+        _business_store_out(
+            row,
+            organizations.get(int(row.business_organization_id)) if row.business_organization_id else None,
+        )
+        for row in stores
+    ]
+
+
+@router.get(
+    "/business-stores/meta/legacy-scopes",
+    response_model=List[LegacyScopeOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_legacy_scopes(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(
+            Offer.city.label("legacy_scope_key"),
+            func.count(Offer.id).label("rows_count"),
+            func.count(func.distinct(Offer.product_code)).label("products_count"),
+        )
+        .group_by(Offer.city)
+        .order_by(Offer.city.asc())
+    )
+    rows = result.fetchall()
+    return [
+        LegacyScopeOut(
+            legacy_scope_key=str(row.legacy_scope_key),
+            rows_count=int(row.rows_count or 0),
+            products_count=int(row.products_count or 0),
+        )
+        for row in rows
+        if str(row.legacy_scope_key or "").strip()
+    ]
+
+
+@router.get(
+    "/business-stores/meta/business-enterprises",
+    response_model=List[BusinessEnterpriseOptionOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_business_enterprises(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(EnterpriseSettings)
+        .where(func.lower(func.coalesce(EnterpriseSettings.data_format, "")) == "business")
+        .order_by(EnterpriseSettings.enterprise_name.asc(), EnterpriseSettings.enterprise_code.asc())
+    )
+    rows = result.scalars().all()
+    return [
+        BusinessEnterpriseOptionOut(
+            enterprise_code=row.enterprise_code,
+            enterprise_name=row.enterprise_name,
+            branch_id=row.branch_id,
+            catalog_enabled=bool(row.catalog_enabled),
+            stock_enabled=bool(row.stock_enabled),
+            order_fetcher=bool(row.order_fetcher),
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/business-stores/meta/mapping-branches",
+    response_model=List[BusinessStoreMappingBranchOptionOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_mapping_branches(
+    enterprise_code: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    normalized_enterprise_code = _normalize_optional_query_string(enterprise_code)
+    if not normalized_enterprise_code:
+        raise HTTPException(status_code=400, detail="enterprise_code is required.")
+
+    enterprise = (
+        await db.execute(
+            select(EnterpriseSettings).where(EnterpriseSettings.enterprise_code == normalized_enterprise_code).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    rows = (
+        await db.execute(
+            select(MappingBranch)
+            .where(MappingBranch.enterprise_code == normalized_enterprise_code)
+            .order_by(MappingBranch.branch.asc())
+        )
+    ).scalars().all()
+
+    primary_branch = _normalize_optional_query_string(getattr(enterprise, "branch_id", None))
+    return [
+        BusinessStoreMappingBranchOptionOut(
+            enterprise_code=normalized_enterprise_code,
+            branch=str(row.branch),
+            mapping_store_hint=_normalize_optional_query_string(row.store_id),
+            is_primary_enterprise_branch=bool(primary_branch and str(row.branch) == primary_branch),
+        )
+        for row in rows
+        if _normalize_optional_query_string(row.branch)
+    ]
+
+
+@router.get(
+    "/business-stores/branch-sync",
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_branch_sync_report(
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await build_business_store_branch_sync_report(db, enterprise_code=enterprise_code)
+
+
+@router.post(
+    "/business-stores/branch-sync/apply",
+    dependencies=[Depends(verify_token)],
+)
+async def apply_business_store_branch_sync_route(
+    enterprise_code: str | None = Query(default=None),
+    dry_run: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+):
+    return await apply_business_store_branch_sync(
+        db,
+        enterprise_code=enterprise_code,
+        dry_run=bool(dry_run),
+    )
+
+
+@router.get(
+    "/business-stores/{store_id}",
+    response_model=BusinessStoreOut,
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store(store_id: int, db: AsyncSession = Depends(get_db)):
+    store = await _get_business_store_or_404(db, store_id)
+    return BusinessStoreOut.model_validate(store, from_attributes=True)
+
+
+@router.get(
+    "/business-stores/{store_id}/supplier-settings",
+    response_model=List[BusinessStoreSupplierSettingsOut],
+    dependencies=[Depends(verify_token)],
+)
+async def get_business_store_supplier_settings(
+    store_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    result = await db.execute(
+        select(BusinessStoreSupplierSettings)
+        .where(BusinessStoreSupplierSettings.store_id == int(store_id))
+        .order_by(
+            BusinessStoreSupplierSettings.supplier_code.asc(),
+            BusinessStoreSupplierSettings.id.asc(),
+        )
+    )
+    return [
+        BusinessStoreSupplierSettingsOut.model_validate(row, from_attributes=True)
+        for row in result.scalars().all()
+    ]
+
+
+@router.put(
+    "/business-stores/{store_id}/supplier-settings/{supplier_code}",
+    response_model=BusinessStoreSupplierSettingsOut,
+    dependencies=[Depends(verify_token)],
+)
+async def upsert_business_store_supplier_settings(
+    store_id: int,
+    supplier_code: str,
+    payload: BusinessStoreSupplierSettingsUpsertSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    result = await db.execute(
+        select(DropshipEnterprise.code).where(DropshipEnterprise.code == str(payload.supplier_code or "").strip()).limit(1)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+    normalized_supplier_code = str(supplier_code or "").strip()
+    if not normalized_supplier_code:
+        raise HTTPException(status_code=400, detail="supplier_code is required.")
+    if normalized_supplier_code != str(payload.supplier_code or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="supplier_code in path must match supplier_code in payload.",
+        )
+
+    existing = (
+        await db.execute(
+            select(BusinessStoreSupplierSettings)
+            .where(
+                BusinessStoreSupplierSettings.store_id == int(store_id),
+                BusinessStoreSupplierSettings.supplier_code == normalized_supplier_code,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    values = payload.model_dump(exclude={"supplier_code"})
+    if existing is None:
+        obj = BusinessStoreSupplierSettings(
+            store_id=int(store_id),
+            supplier_code=normalized_supplier_code,
+            **values,
+        )
+        db.add(obj)
+    else:
+        obj = existing
+        for key, value in values.items():
+            setattr(obj, key, value)
+
+    await db.commit()
+    await db.refresh(obj)
+    return BusinessStoreSupplierSettingsOut.model_validate(obj, from_attributes=True)
+
+
+@router.post(
+    "/business-stores",
+    response_model=BusinessStoreOut,
+    dependencies=[Depends(verify_token)],
+)
+async def create_business_store(payload: BusinessStoreCreate, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(
+        select(BusinessStore).where(BusinessStore.store_code == payload.store_code)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=400, detail="BusinessStore with this store_code already exists.")
+    if payload.business_organization_id is not None:
+        await _get_business_organization_or_404(db, int(payload.business_organization_id))
+
+    await _validate_business_store_branch_mapping(
+        db,
+        enterprise_code=payload.enterprise_code,
+        tabletki_branch=payload.tabletki_branch,
+        is_active=bool(payload.is_active),
+    )
+
+    enterprise_runtime_mode = (
+        await db.execute(
+            select(EnterpriseSettings.business_runtime_mode).where(
+                EnterpriseSettings.enterprise_code == payload.enterprise_code
+            )
+        )
+    ).scalar_one_or_none()
+    is_baseline_enterprise = str(enterprise_runtime_mode or "baseline") == "baseline"
+
+    obj = BusinessStore(
+        store_code=payload.store_code,
+        store_name=payload.store_name,
+        business_organization_id=payload.business_organization_id,
+        legal_entity_name=payload.legal_entity_name,
+        tax_identifier=payload.tax_identifier,
+        is_active=payload.is_active,
+        is_legacy_default=payload.is_legacy_default,
+        enterprise_code=payload.enterprise_code,
+        legacy_scope_key=payload.legacy_scope_key,
+        tabletki_enterprise_code=payload.tabletki_enterprise_code,
+        tabletki_branch=payload.tabletki_branch,
+        salesdrive_enterprise_code=payload.salesdrive_enterprise_code,
+        salesdrive_enterprise_id=payload.salesdrive_enterprise_id,
+        salesdrive_store_name=payload.salesdrive_store_name,
+        catalog_enabled=payload.catalog_enabled,
+        stock_enabled=payload.stock_enabled,
+        orders_enabled=payload.orders_enabled,
+        catalog_only_in_stock=payload.catalog_only_in_stock,
+        code_strategy=payload.code_strategy,
+        code_prefix=payload.code_prefix,
+        name_strategy=payload.name_strategy,
+        extra_markup_enabled=payload.extra_markup_enabled,
+        extra_markup_mode=payload.extra_markup_mode,
+        extra_markup_min=payload.extra_markup_min,
+        extra_markup_max=payload.extra_markup_max,
+        extra_markup_strategy=payload.extra_markup_strategy,
+        takes_over_legacy_scope=payload.takes_over_legacy_scope,
+        migration_status=payload.migration_status,
+    )
+    if is_baseline_enterprise:
+        _apply_baseline_business_store_identity_defaults(obj)
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    organization = None
+    if obj.business_organization_id:
+        organization = await db.scalar(
+            select(PaymentBusinessEntity).where(PaymentBusinessEntity.id == obj.business_organization_id)
+        )
+    return _business_store_out(obj, organization)
+
+
+@router.put(
+    "/business-stores/{store_id}",
+    response_model=BusinessStoreOut,
+    dependencies=[Depends(verify_token)],
+)
+async def update_business_store(
+    store_id: int,
+    payload: BusinessStoreUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    store = await _get_business_store_or_404(db, store_id)
+    if "business_organization_id" in payload.model_fields_set and payload.business_organization_id is not None:
+        await _get_business_organization_or_404(db, int(payload.business_organization_id))
+    current_mapping_exists = await _mapping_branch_exists_for_store(
+        db,
+        enterprise_code=store.enterprise_code,
+        tabletki_branch=store.tabletki_branch,
+    )
+    effective_enterprise_code = (
+        payload.enterprise_code if "enterprise_code" in payload.model_fields_set else store.enterprise_code
+    )
+    effective_tabletki_branch = (
+        payload.tabletki_branch if "tabletki_branch" in payload.model_fields_set else store.tabletki_branch
+    )
+    effective_is_active = (
+        payload.is_active if "is_active" in payload.model_fields_set else store.is_active
+    )
+    branch_or_active_changed = (
+        _normalize_optional_query_string(effective_enterprise_code) != _normalize_optional_query_string(store.enterprise_code)
+        or _normalize_optional_query_string(effective_tabletki_branch) != _normalize_optional_query_string(store.tabletki_branch)
+        or bool(effective_is_active) != bool(store.is_active)
+    )
+    should_validate_branch = bool(effective_is_active) and (bool(current_mapping_exists) or branch_or_active_changed)
+    if should_validate_branch:
+        await _validate_business_store_branch_mapping(
+            db,
+            enterprise_code=effective_enterprise_code,
+            tabletki_branch=effective_tabletki_branch,
+            is_active=bool(effective_is_active),
+        )
+
+    enterprise_result = await db.execute(
+        select(EnterpriseSettings.business_runtime_mode).where(
+            EnterpriseSettings.enterprise_code == effective_enterprise_code
+        )
+    )
+    effective_runtime_mode = str(enterprise_result.scalar_one_or_none() or "baseline")
+    baseline_scope_or_branch_change = (
+        effective_runtime_mode == "baseline"
+        and (
+            (
+                "legacy_scope_key" in payload.model_fields_set
+                and _normalize_optional_query_string(payload.legacy_scope_key)
+                != _normalize_optional_query_string(store.legacy_scope_key)
+            )
+            or (
+                "tabletki_branch" in payload.model_fields_set
+                and _normalize_optional_query_string(payload.tabletki_branch)
+                != _normalize_optional_query_string(store.tabletki_branch)
+            )
+        )
+    )
+    if baseline_scope_or_branch_change:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Для підприємства в базовому режимі не можна змінювати Branch магазина "
+                "та Scope остатков через store overlay."
+            ),
+        )
+
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(store, key, value)
+
+    if effective_runtime_mode == "baseline":
+        _apply_baseline_business_store_identity_defaults(store)
+
+    await db.commit()
+    await db.refresh(store)
+    organization = None
+    if store.business_organization_id:
+        organization = await db.scalar(
+            select(PaymentBusinessEntity).where(PaymentBusinessEntity.id == store.business_organization_id)
+        )
+    return _business_store_out(store, organization)
+
+
+@router.post(
+    "/business-stores/{store_id}/dry-run",
+    dependencies=[Depends(verify_token)],
+)
+async def dry_run_business_store(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    auto_generate_missing_codes = bool(payload.get("auto_generate_missing_codes", False))
+    auto_generate_missing_names = bool(payload.get("auto_generate_missing_names", False))
+    auto_generate_missing_price_adjustments = bool(
+        payload.get("auto_generate_missing_price_adjustments", False)
+    )
+    stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=auto_generate_missing_codes,
+        auto_generate_missing_price_adjustments=auto_generate_missing_price_adjustments,
+    )
+    catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=auto_generate_missing_codes,
+        auto_generate_missing_names=auto_generate_missing_names,
+    )
+    warnings = list(stock.get("warnings") or []) + list(catalog.get("warnings") or [])
+    return {
+        "store_id": int(store_id),
+        "auto_generate_missing_codes": auto_generate_missing_codes,
+        "auto_generate_missing_names": auto_generate_missing_names,
+        "auto_generate_missing_price_adjustments": auto_generate_missing_price_adjustments,
+        "stock": {
+            "status": stock.get("status"),
+            "total_offer_rows": stock.get("total_offer_rows"),
+            "unique_internal_products": stock.get("unique_internal_products"),
+            "products_with_mapping": stock.get("products_with_mapping"),
+            "products_missing_mapping": stock.get("products_missing_mapping"),
+            "extra_markup_enabled": stock.get("extra_markup_enabled"),
+            "extra_markup_mode": stock.get("extra_markup_mode"),
+            "extra_markup_min": stock.get("extra_markup_min"),
+            "extra_markup_max": stock.get("extra_markup_max"),
+            "products_with_price_adjustment": stock.get("products_with_price_adjustment"),
+            "products_missing_price_adjustment": stock.get("products_missing_price_adjustment"),
+            "sample_items": stock.get("sample_items") or [],
+            "missing_mapping_samples": stock.get("missing_mapping_samples") or [],
+            "missing_price_adjustment_samples": stock.get("missing_price_adjustment_samples") or [],
+        },
+        "catalog": {
+            "status": catalog.get("status"),
+            "catalog_source": catalog.get("catalog_source"),
+            "code_strategy": catalog.get("code_strategy"),
+            "name_strategy": catalog.get("name_strategy"),
+            "master_catalog_total": catalog.get("master_catalog_total"),
+            "catalog_products_to_export": catalog.get("catalog_products_to_export"),
+            "products_with_mapping": catalog.get("products_with_mapping"),
+            "products_missing_mapping": catalog.get("products_missing_mapping"),
+            "products_with_name_mapping": catalog.get("products_with_name_mapping"),
+            "products_missing_name_mapping": catalog.get("products_missing_name_mapping"),
+            "sample_items": catalog.get("sample_items") or [],
+            "missing_mapping_samples": catalog.get("missing_mapping_samples") or [],
+            "missing_name_samples": catalog.get("missing_name_samples") or [],
+        },
+        "warnings": warnings,
+    }
+
+
+@router.post(
+    "/business-stores/{store_id}/generate-missing-codes",
+    dependencies=[Depends(verify_token)],
+)
+async def generate_business_store_missing_codes(store_id: int, db: AsyncSession = Depends(get_db)):
+    await _get_business_store_or_404(db, store_id)
+
+    before_stock = await build_store_stock_dry_run(db, int(store_id), auto_generate_missing_codes=False)
+    before_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+    before_count_result = await db.execute(
+        select(func.count(BusinessStoreProductCode.id)).where(BusinessStoreProductCode.store_id == int(store_id))
+    )
+    before_count = int(before_count_result.scalar_one() or 0)
+
+    await build_store_stock_dry_run(db, int(store_id), auto_generate_missing_codes=True)
+    await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=True,
+        auto_generate_missing_names=False,
+    )
+    await db.commit()
+
+    after_count_result = await db.execute(
+        select(func.count(BusinessStoreProductCode.id)).where(BusinessStoreProductCode.store_id == int(store_id))
+    )
+    after_count = int(after_count_result.scalar_one() or 0)
+
+    stock = await build_store_stock_dry_run(db, int(store_id), auto_generate_missing_codes=False)
+    catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+
+    return {
+        "store_id": int(store_id),
+        "generated_codes": max(0, after_count - before_count),
+        "before": {
+            "stock_missing_mappings": before_stock.get("products_missing_mapping"),
+            "catalog_missing_mappings": before_catalog.get("products_missing_mapping"),
+        },
+        "after": {
+            "stock_missing_mappings": stock.get("products_missing_mapping"),
+            "catalog_missing_mappings": catalog.get("products_missing_mapping"),
+        },
+        "stock": {
+            "status": stock.get("status"),
+            "total_offer_rows": stock.get("total_offer_rows"),
+            "unique_internal_products": stock.get("unique_internal_products"),
+            "products_with_mapping": stock.get("products_with_mapping"),
+            "products_missing_mapping": stock.get("products_missing_mapping"),
+            "sample_items": stock.get("sample_items") or [],
+            "missing_mapping_samples": stock.get("missing_mapping_samples") or [],
+        },
+        "catalog": {
+            "status": catalog.get("status"),
+            "catalog_source": catalog.get("catalog_source"),
+            "name_strategy": catalog.get("name_strategy"),
+            "master_catalog_total": catalog.get("master_catalog_total"),
+            "catalog_products_to_export": catalog.get("catalog_products_to_export"),
+            "products_with_mapping": catalog.get("products_with_mapping"),
+            "products_missing_mapping": catalog.get("products_missing_mapping"),
+            "products_with_name_mapping": catalog.get("products_with_name_mapping"),
+            "products_missing_name_mapping": catalog.get("products_missing_name_mapping"),
+            "sample_items": catalog.get("sample_items") or [],
+            "missing_mapping_samples": catalog.get("missing_mapping_samples") or [],
+            "missing_name_samples": catalog.get("missing_name_samples") or [],
+        },
+        "warnings": list(stock.get("warnings") or []) + list(catalog.get("warnings") or []),
+    }
+
+
+@router.post(
+    "/business-stores/{store_id}/catalog-preview",
+    dependencies=[Depends(verify_token)],
+)
+async def preview_business_store_catalog(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    limit_raw = payload.get("limit", 100)
+    try:
+        limit = None if limit_raw is None else int(limit_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="limit must be an integer or null.") from exc
+    if limit is not None and limit < 0:
+        raise HTTPException(status_code=400, detail="limit must be >= 0 or null.")
+
+    try:
+        return await build_effective_business_store_catalog_payload_preview(
+            db,
+            int(store_id),
+            limit=limit,
+            include_not_exportable=bool(payload.get("include_not_exportable", True)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/business-stores/{store_id}/stock-preview",
+    dependencies=[Depends(verify_token)],
+)
+async def preview_business_store_stock(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    limit_raw = payload.get("limit", 100)
+    try:
+        limit = None if limit_raw is None else int(limit_raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="limit must be an integer or null.") from exc
+    if limit is not None and limit < 0:
+        raise HTTPException(status_code=400, detail="limit must be >= 0 or null.")
+
+    try:
+        return await build_store_stock_payload_preview(
+            db,
+            int(store_id),
+            limit=limit,
+            include_not_exportable=bool(payload.get("include_not_exportable", True)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/business-stores/{store_id}/generate-missing-names",
+    dependencies=[Depends(verify_token)],
+)
+async def generate_business_store_missing_names(store_id: int, db: AsyncSession = Depends(get_db)):
+    store = await _get_business_store_or_404(db, store_id)
+
+    before_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+    before_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductName.id)).where(
+                    BusinessStoreProductName.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    generated_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=True,
+    )
+    await db.commit()
+
+    after_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductName.id)).where(
+                    BusinessStoreProductName.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    after_catalog = await build_store_catalog_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_names=False,
+    )
+
+    return {
+        "store_id": int(store_id),
+        "store_code": store.store_code,
+        "generated_names": max(0, after_count - before_count),
+        "summary": {
+            "generated_count": max(0, after_count - before_count),
+            "missing_count_after": after_catalog.get("products_missing_name_mapping"),
+            "generated_preview_samples": [
+                item
+                for item in (generated_catalog.get("sample_items") or [])
+                if item.get("name_mapping_generated")
+            ][:20],
+        },
+        "before": {
+            "catalog_missing_name_mappings": before_catalog.get("products_missing_name_mapping"),
+        },
+        "after": {
+            "catalog_missing_name_mappings": after_catalog.get("products_missing_name_mapping"),
+        },
+        "catalog": {
+            "status": after_catalog.get("status"),
+            "catalog_source": after_catalog.get("catalog_source"),
+            "name_strategy": after_catalog.get("name_strategy"),
+            "catalog_products_to_export": after_catalog.get("catalog_products_to_export"),
+            "products_with_name_mapping": after_catalog.get("products_with_name_mapping"),
+            "products_missing_name_mapping": after_catalog.get("products_missing_name_mapping"),
+            "sample_items": after_catalog.get("sample_items") or [],
+            "missing_name_samples": after_catalog.get("missing_name_samples") or [],
+        },
+    }
+
+
+@router.post(
+    "/business-stores/{store_id}/cleanup-product-names",
+    dependencies=[Depends(verify_token)],
+)
+async def cleanup_business_store_product_names(
+    store_id: int,
+    payload: dict[str, Any] = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_business_store_or_404(db, store_id)
+    if not bool(payload.get("confirm")):
+        raise HTTPException(status_code=400, detail="confirm=true is required for cleanup-product-names.")
+
+    result = await cleanup_store_product_names(
+        db,
+        int(store_id),
+        mode=str(payload.get("mode") or "deactivate"),
+    )
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/business-stores/{store_id}/generate-missing-price-adjustments",
+    dependencies=[Depends(verify_token)],
+)
+async def generate_business_store_missing_price_adjustments(
+    store_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    store = await _get_business_store_or_404(db, store_id)
+
+    before_stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_price_adjustments=False,
+    )
+    before_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductPriceAdjustment.id)).where(
+                    BusinessStoreProductPriceAdjustment.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    generated_stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_price_adjustments=True,
+    )
+    await db.commit()
+
+    after_count = int(
+        (
+            await db.execute(
+                select(func.count(BusinessStoreProductPriceAdjustment.id)).where(
+                    BusinessStoreProductPriceAdjustment.store_id == int(store_id)
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    after_stock = await build_store_stock_dry_run(
+        db,
+        int(store_id),
+        auto_generate_missing_codes=False,
+        auto_generate_missing_price_adjustments=False,
+    )
+
+    return {
+        "store_id": int(store_id),
+        "store_code": store.store_code,
+        "generated_price_adjustments": max(0, after_count - before_count),
+        "summary": {
+            "generated_count": max(0, after_count - before_count),
+            "missing_count_after": after_stock.get("products_missing_price_adjustment"),
+            "generated_preview_samples": [
+                item
+                for item in (generated_stock.get("sample_items") or [])
+                if item.get("price_adjustment_generated")
+            ][:20],
+        },
+        "before": {
+            "stock_missing_price_adjustments": before_stock.get("products_missing_price_adjustment"),
+        },
+        "after": {
+            "stock_missing_price_adjustments": after_stock.get("products_missing_price_adjustment"),
+        },
+        "stock": {
+            "status": after_stock.get("status"),
+            "extra_markup_enabled": after_stock.get("extra_markup_enabled"),
+            "extra_markup_mode": after_stock.get("extra_markup_mode"),
+            "extra_markup_min": after_stock.get("extra_markup_min"),
+            "extra_markup_max": after_stock.get("extra_markup_max"),
+            "products_with_price_adjustment": after_stock.get("products_with_price_adjustment"),
+            "products_missing_price_adjustment": after_stock.get("products_missing_price_adjustment"),
+            "sample_items": after_stock.get("sample_items") or [],
+            "missing_price_adjustment_samples": after_stock.get("missing_price_adjustment_samples") or [],
+        },
+    }
+
 # 🟢 Публичные эндпоинты
 @router.post("/unipro/data")
 async def receive_unipro_data(request: Request, body: dict):
@@ -2277,6 +3756,15 @@ async def upload_stock(file: UploadFile, enterprise_code: str, db: AsyncSession 
 # ⬇️ НОВЫЙ ПУБЛИЧНЫЙ ЭНДПОИНТ (БЕЗ verify_token)
 from app.business.salesdrive_webhook import process_salesdrive_webhook  # заглушка, см. ниже
 from app.salesdrive_simple.webhook import process_salesdrive_simple_webhook
+
+
+def _salesdrive_payload_items_for_summary(payload: dict) -> list[dict]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
 
 
 @router.post("/webhooks/salesdrive-simple/{branch}", summary="SalesDriveSimple Webhook (public)")
@@ -2339,11 +3827,16 @@ async def salesdrive_webhook(
 
     # Короткая сводка
     info = (payload.get("info") or {})
-    data = (payload.get("data") or {})
+    items = _salesdrive_payload_items_for_summary(payload)
+    first_item = items[0] if items else {}
     sd_logger.info(
-        "Summary: webhookType=%s webhookEvent=%s account=%s order_id=%s status_id=%s",
-        info.get("webhookType"), info.get("webhookEvent"), info.get("account"),
-        data.get("id"), data.get("statusId")
+        "Summary: webhookType=%s webhookEvent=%s account=%s events=%s first_order_id=%s first_status_id=%s",
+        info.get("webhookType"),
+        info.get("webhookEvent"),
+        info.get("account"),
+        len(items),
+        first_item.get("id"),
+        first_item.get("statusId"),
     )
 
     # Полный «как есть» JSON
@@ -2353,3 +3846,439 @@ async def salesdrive_webhook(
     background.add_task(process_salesdrive_webhook, payload)
 
     return {"ok": True}
+
+
+@router.post("/payment-imports/salesdrive", dependencies=[Depends(verify_token)])
+async def run_salesdrive_payment_import(
+    payload: schemas.SalesDrivePaymentImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_import_service import import_salesdrive_payments
+
+    period_from, period_to = _parse_payment_report_period(payload.period_from, payload.period_to)
+    result = await import_salesdrive_payments(
+        db,
+        period_from=period_from,
+        period_to=period_to,
+        payment_type=payload.payment_type,
+    )
+    await db.commit()
+    return {
+        "import_run_id": result.import_run_id,
+        "status": result.status,
+        "incoming_count": result.incoming_count,
+        "outcoming_count": result.outcoming_count,
+        "created_count": result.created_count,
+        "updated_count": result.updated_count,
+        "error_message": result.error_message,
+    }
+
+
+@router.get("/reports/orders/summary", dependencies=[Depends(verify_token)])
+async def get_order_report_summary(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_summary
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_summary(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/funnel", dependencies=[Depends(verify_token)])
+async def get_order_report_funnel(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_funnel
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_funnel(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/by-enterprise", dependencies=[Depends(verify_token)])
+async def get_order_report_by_enterprise(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_by_enterprise
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_by_enterprise(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/by-supplier", dependencies=[Depends(verify_token)])
+async def get_order_report_by_supplier(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_by_supplier
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_by_supplier(db, period_from=parsed_from, period_to=parsed_to, enterprise_code=enterprise_code)
+
+
+@router.get("/reports/orders/details", dependencies=[Depends(verify_token)])
+async def get_order_report_details(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    enterprise_code: str | None = Query(default=None),
+    status_group: str | None = Query(default=None),
+    supplier_code: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.report_service import build_details
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_details(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        enterprise_code=enterprise_code,
+        status_group=status_group,
+        supplier_code=supplier_code,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/reports/orders/expense-settings", dependencies=[Depends(verify_token)])
+async def get_order_report_expense_settings(db: AsyncSession = Depends(get_db)):
+    from app.business.reporting.orders.report_service import list_expense_settings
+
+    return await list_expense_settings(db)
+
+
+@router.put("/reports/orders/expense-settings", dependencies=[Depends(verify_token)])
+async def upsert_order_report_expense_setting(
+    payload: schemas.OrderReportExpenseSettingUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.repository import upsert_expense_setting
+
+    try:
+        active_from = datetime.strptime(payload.active_from, "%Y-%m-%d").date()
+        active_to = datetime.strptime(payload.active_to, "%Y-%m-%d").date() if payload.active_to else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="active_from/active_to must be YYYY-MM-DD") from exc
+    row = await upsert_expense_setting(
+        db,
+        enterprise_code=payload.enterprise_code,
+        expense_percent=payload.expense_percent,
+        active_from=active_from,
+        active_to=active_to,
+    )
+    await db.commit()
+    return {
+        "id": int(row.id),
+        "enterprise_code": row.enterprise_code,
+        "expense_percent": str(row.expense_percent),
+        "active_from": row.active_from.isoformat(),
+        "active_to": row.active_to.isoformat() if row.active_to else None,
+    }
+
+
+@router.post("/reports/orders/sync", dependencies=[Depends(verify_token)])
+async def sync_order_reports(
+    payload: schemas.OrderReportSyncRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.business.reporting.orders.salesdrive_loader import sync_salesdrive_orders
+
+    parsed_from, parsed_to = _parse_payment_report_period(payload.period_from, payload.period_to)
+    result = await sync_salesdrive_orders(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        enterprise_code=payload.enterprise_code,
+        limit=payload.limit,
+        max_pages=payload.max_pages,
+    )
+    await db.commit()
+    return result
+
+
+@router.get("/payment-imports", dependencies=[Depends(verify_token)])
+async def list_payment_imports(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_payment_import_runs_report
+
+    return await build_payment_import_runs_report(db, limit=limit)
+
+
+@router.post("/payment-reports/recalculate", dependencies=[Depends(verify_token)])
+async def recalculate_payment_report(
+    payload: schemas.PaymentPeriodRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_recalculation_service import recalculate_payment_period
+
+    period_from, period_to = _parse_payment_report_period(payload.period_from, payload.period_to)
+    result = await recalculate_payment_period(db, period_from=period_from, period_to=period_to)
+    await db.commit()
+    return {
+        "total_payments": result.total_payments,
+        "internal_pairs": result.internal_pairs,
+        "internal_payments": result.internal_payments,
+        "customer_receipts": result.customer_receipts,
+        "other_receipts": result.other_receipts,
+        "excluded_receipts": result.excluded_receipts,
+        "unknown_incoming": result.unknown_incoming,
+        "supplier_mapped": result.supplier_mapped,
+        "supplier_unmapped": result.supplier_unmapped,
+        "unknown_outgoing": result.unknown_outgoing,
+    }
+
+
+@router.get("/payment-reports/summary", dependencies=[Depends(verify_token)])
+async def get_payment_summary_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_payment_summary
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_payment_summary(db, period_from=parsed_from, period_to=parsed_to)
+
+
+@router.get("/payment-reports/management-summary", dependencies=[Depends(verify_token)])
+async def get_payment_management_summary_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    business_entity_id: int | None = Query(default=None),
+    business_account_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_management_summary_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_management_summary_report(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        business_entity_id=business_entity_id,
+        business_account_id=business_account_id,
+    )
+
+
+@router.get("/payment-reports/account-movements", dependencies=[Depends(verify_token)])
+async def get_payment_account_movements_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    business_entity_id: int | None = Query(default=None),
+    business_account_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_account_movements_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_account_movements_report(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        business_entity_id=business_entity_id,
+        business_account_id=business_account_id,
+    )
+
+
+@router.post("/payment-reports/account-balance-adjustments", dependencies=[Depends(verify_token)])
+async def upsert_payment_account_balance_adjustment(
+    payload: schemas.AccountBalanceAdjustmentUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models import AccountBalanceAdjustment, PaymentBusinessAccount
+
+    balance_date = None
+    if payload.balance_date:
+        try:
+            balance_date = datetime.strptime(payload.balance_date, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="balance_date must be YYYY-MM-DD") from exc
+
+    if payload.period_month:
+        try:
+            period_month = datetime.strptime(payload.period_month, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="period_month must be YYYY-MM-DD") from exc
+    elif balance_date is not None:
+        period_month = balance_date
+    else:
+        raise HTTPException(status_code=400, detail="balance_date is required")
+
+    account = await db.scalar(select(PaymentBusinessAccount).where(PaymentBusinessAccount.id == payload.account_id))
+    if account is None:
+        raise HTTPException(status_code=404, detail="Payment business account not found")
+
+    if balance_date is not None:
+        adjustment = await db.scalar(
+            select(AccountBalanceAdjustment).where(
+                AccountBalanceAdjustment.account_id == payload.account_id,
+                AccountBalanceAdjustment.balance_date == balance_date,
+            )
+        )
+    else:
+        adjustment = await db.scalar(
+            select(AccountBalanceAdjustment).where(
+                AccountBalanceAdjustment.account_id == payload.account_id,
+                AccountBalanceAdjustment.period_month == period_month,
+            )
+        )
+    if adjustment is None:
+        adjustment = AccountBalanceAdjustment(account_id=payload.account_id, period_month=period_month)
+        db.add(adjustment)
+
+    adjustment.balance_date = balance_date
+    adjustment.actual_balance = payload.actual_balance
+    adjustment.opening_balance_adjustment = payload.opening_balance_adjustment
+    adjustment.closing_balance_adjustment = payload.closing_balance_adjustment
+    adjustment.actual_opening_balance = payload.actual_opening_balance
+    adjustment.actual_closing_balance = payload.actual_closing_balance
+    adjustment.comment = payload.comment
+    adjustment.created_by = payload.created_by
+    adjustment.approved_by = payload.approved_by
+    await db.commit()
+    await db.refresh(adjustment)
+    return {
+        "id": int(adjustment.id),
+        "account_id": int(adjustment.account_id),
+        "period_month": adjustment.period_month.isoformat(),
+        "balance_date": adjustment.balance_date.isoformat() if adjustment.balance_date is not None else None,
+        "actual_balance": str(adjustment.actual_balance) if adjustment.actual_balance is not None else None,
+        "opening_balance_adjustment": str(adjustment.opening_balance_adjustment),
+        "closing_balance_adjustment": str(adjustment.closing_balance_adjustment),
+        "actual_opening_balance": str(adjustment.actual_opening_balance)
+        if adjustment.actual_opening_balance is not None
+        else None,
+        "actual_closing_balance": str(adjustment.actual_closing_balance)
+        if adjustment.actual_closing_balance is not None
+        else None,
+        "comment": adjustment.comment,
+    }
+
+
+@router.get("/payment-reports/supplier-payments", dependencies=[Depends(verify_token)])
+async def get_supplier_payments_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_supplier_payments_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_supplier_payments_report(db, period_from=parsed_from, period_to=parsed_to)
+
+
+@router.get("/payment-reports/unmapped-counterparties", dependencies=[Depends(verify_token)])
+async def get_unmapped_counterparties_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    limit: int = Query(default=100, ge=1, le=500),
+    examples: int = Query(default=2, ge=0, le=10),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_unmapped_counterparties_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_unmapped_counterparties_report(
+        db,
+        period_from=parsed_from,
+        period_to=parsed_to,
+        limit=limit,
+        examples=examples,
+    )
+
+
+@router.get("/payment-reports/counterparty-mappings", dependencies=[Depends(verify_token)])
+async def get_payment_counterparty_supplier_mappings(
+    limit: int = Query(default=500, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_counterparty_supplier_mappings_report
+
+    return await build_counterparty_supplier_mappings_report(db, limit=limit)
+
+
+@router.post("/payment-reports/counterparty-mappings", dependencies=[Depends(verify_token)])
+async def create_payment_counterparty_supplier_mapping(
+    payload: schemas.PaymentCounterpartySupplierMappingUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models import DropshipEnterprise, PaymentCounterpartySupplierMapping
+
+    supplier_code = str(payload.supplier_code or "").strip()
+    supplier = await db.scalar(select(DropshipEnterprise).where(DropshipEnterprise.code == supplier_code))
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="Dropship supplier not found")
+
+    pattern = str(payload.counterparty_pattern or "").strip() or None
+    tax_id = str(payload.counterparty_tax_id or "").strip() or None
+    if payload.match_type == "tax_id" and not tax_id:
+        raise HTTPException(status_code=400, detail="counterparty_tax_id is required for tax_id mapping")
+    if payload.match_type != "tax_id" and not pattern:
+        raise HTTPException(status_code=400, detail="counterparty_pattern is required")
+
+    mapping = PaymentCounterpartySupplierMapping(
+        supplier_code=supplier_code,
+        supplier_salesdrive_id=payload.supplier_salesdrive_id,
+        match_type=payload.match_type,
+        field_scope=payload.field_scope,
+        counterparty_pattern=pattern,
+        normalized_pattern=pattern.casefold() if pattern else None,
+        counterparty_tax_id=tax_id,
+        priority=payload.priority,
+        is_active=payload.is_active,
+        notes=payload.notes,
+        created_by=payload.created_by,
+        updated_by=payload.updated_by,
+    )
+    db.add(mapping)
+    await db.commit()
+    await db.refresh(mapping)
+    return {
+        "id": int(mapping.id),
+        "supplier_code": mapping.supplier_code,
+        "supplier_name": supplier.name,
+        "match_type": mapping.match_type,
+        "field_scope": mapping.field_scope,
+        "counterparty_pattern": mapping.counterparty_pattern,
+        "counterparty_tax_id": mapping.counterparty_tax_id,
+        "priority": int(mapping.priority or 100),
+        "is_active": bool(mapping.is_active),
+    }
+
+
+@router.get("/payment-reports/customer-receipts", dependencies=[Depends(verify_token)])
+async def get_customer_receipts_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_customer_receipts_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_customer_receipts_report(db, period_from=parsed_from, period_to=parsed_to)
+
+
+@router.get("/payment-reports/internal-transfers", dependencies=[Depends(verify_token)])
+async def get_internal_transfers_report(
+    period_from: str = Query(...),
+    period_to: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.payment_reporting.payment_report_service import build_internal_transfers_report
+
+    parsed_from, parsed_to = _parse_payment_report_period(period_from, period_to)
+    return await build_internal_transfers_report(db, period_from=parsed_from, period_to=parsed_to)
