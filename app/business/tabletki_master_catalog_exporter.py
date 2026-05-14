@@ -8,7 +8,14 @@ from typing import Any, Dict, List
 from sqlalchemy import func, select
 
 from app.database import get_async_db
-from app.models import DeveloperSettings, EnterpriseSettings, MasterCatalog
+from app.models import (
+    BusinessStore,
+    BusinessStoreOffer,
+    DeveloperSettings,
+    EnterpriseSettings,
+    MasterCatalog,
+    Offer,
+)
 from app.services.notification_service import send_notification
 from app.services.catalog_export_service import SUPPLIER_MAPPING, post_data_to_endpoint
 
@@ -26,6 +33,12 @@ class ExportStats:
     products_selected: int = 0
     products_skipped_archived: int = 0
     offers_count: int = 0
+    catalog_only_in_stock: bool = False
+    stock_scope_store_id: int | None = None
+    stock_scope_store_code: str = ""
+    stock_source: str = "master_all"
+    stock_positive_products: int = 0
+    warnings: List[str] | None = None
     preview_path: str = ""
     sent: bool = False
 
@@ -103,6 +116,12 @@ def _build_preview_document(
         "products_selected": stats.products_selected,
         "products_skipped_archived": stats.products_skipped_archived,
         "offers_count": stats.offers_count,
+        "catalog_only_in_stock": stats.catalog_only_in_stock,
+        "stock_scope_store_id": stats.stock_scope_store_id,
+        "stock_scope_store_code": stats.stock_scope_store_code,
+        "stock_source": stats.stock_source,
+        "stock_positive_products": stats.stock_positive_products,
+        "warnings": stats.warnings or [],
         "payload": payload,
         "preview_rows": preview_rows,
     }
@@ -134,7 +153,113 @@ async def _get_export_settings(enterprise_code: str) -> tuple[DeveloperSettings,
         return developer_settings, enterprise_settings
 
 
-async def _load_master_catalog_rows(limit: int = 0) -> tuple[List[MasterCatalog], int]:
+async def _resolve_main_store_stock_filter(
+    enterprise_settings: EnterpriseSettings,
+) -> tuple[set[str] | None, Dict[str, Any]]:
+    enterprise_code = _clean_text(enterprise_settings.enterprise_code)
+    branch_id = _clean_text(enterprise_settings.branch_id)
+    meta: Dict[str, Any] = {
+        "catalog_only_in_stock": False,
+        "stock_scope_store_id": None,
+        "stock_scope_store_code": "",
+        "stock_source": "master_all",
+        "stock_positive_products": 0,
+        "warnings": [],
+    }
+
+    if not enterprise_code or not branch_id:
+        meta["warnings"].append(
+            "EnterpriseSettings.enterprise_code or branch_id is empty; stock-limited catalog filter is disabled."
+        )
+        return None, meta
+
+    async with get_async_db() as session:
+        stores = (
+            await session.execute(
+                select(BusinessStore).where(
+                    BusinessStore.enterprise_code == enterprise_code,
+                    BusinessStore.tabletki_branch == branch_id,
+                    BusinessStore.is_active.is_(True),
+                )
+            )
+        ).scalars().all()
+
+        if not stores:
+            meta["warnings"].append(
+                "No active main BusinessStore found by enterprise_code + branch_id; stock-limited catalog filter is disabled."
+            )
+            return None, meta
+        if len(stores) > 1:
+            raise RuntimeError(
+                "Ambiguous main BusinessStore for stock-limited Tabletki catalog export: "
+                f"enterprise_code={enterprise_code} branch_id={branch_id}"
+            )
+
+        store = stores[0]
+        meta["catalog_only_in_stock"] = bool(store.catalog_only_in_stock)
+        meta["stock_scope_store_id"] = int(store.id)
+        meta["stock_scope_store_code"] = _clean_text(store.store_code)
+        if not store.catalog_only_in_stock:
+            return None, meta
+
+        store_offer_rows_count = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(BusinessStoreOffer)
+                    .where(BusinessStoreOffer.store_id == int(store.id))
+                )
+            ).scalar_one()
+            or 0
+        )
+
+        if store_offer_rows_count > 0:
+            rows = (
+                await session.execute(
+                    select(BusinessStoreOffer.product_code)
+                    .where(
+                        BusinessStoreOffer.store_id == int(store.id),
+                        func.coalesce(BusinessStoreOffer.stock, 0) > 0,
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+            product_codes = {_clean_text(value) for value in rows if _clean_text(value)}
+            meta["stock_source"] = "business_store_offers"
+        else:
+            legacy_scope_key = _clean_text(store.legacy_scope_key)
+            if not legacy_scope_key:
+                raise RuntimeError(
+                    "Main BusinessStore has catalog_only_in_stock=true, but neither "
+                    "business_store_offers nor legacy_scope_key is available."
+                )
+            rows = (
+                await session.execute(
+                    select(Offer.product_code)
+                    .where(
+                        Offer.city == legacy_scope_key,
+                        func.coalesce(Offer.stock, 0) > 0,
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+            product_codes = {_clean_text(value) for value in rows if _clean_text(value)}
+            meta["stock_source"] = "legacy_offers"
+
+        meta["stock_positive_products"] = len(product_codes)
+        if not product_codes:
+            raise RuntimeError(
+                "Main BusinessStore has catalog_only_in_stock=true, but no products with positive stock were found; "
+                "Tabletki catalog export is stopped to avoid publishing an empty catalog."
+            )
+
+        return product_codes, meta
+
+
+async def _load_master_catalog_rows(
+    limit: int = 0,
+    product_codes: set[str] | None = None,
+) -> tuple[List[MasterCatalog], int]:
     async with get_async_db() as session:
         archived_count = int(
             (
@@ -150,6 +275,8 @@ async def _load_master_catalog_rows(limit: int = 0) -> tuple[List[MasterCatalog]
             .where(MasterCatalog.is_archived.is_(False))
             .order_by(MasterCatalog.sku.asc())
         )
+        if product_codes is not None:
+            stmt = stmt.where(MasterCatalog.sku.in_(sorted(product_codes)))
         if limit and limit > 0:
             stmt = stmt.limit(limit)
 
@@ -170,11 +297,22 @@ async def export_master_catalog_to_tabletki(
     )
 
     stats = ExportStats(enterprise_code=str(enterprise_code))
-    master_rows, archived_count = await _load_master_catalog_rows(limit=limit)
+    developer_settings, enterprise_settings = await _get_export_settings(str(enterprise_code))
+    stock_product_codes, stock_meta = await _resolve_main_store_stock_filter(enterprise_settings)
+
+    stats.catalog_only_in_stock = bool(stock_meta["catalog_only_in_stock"])
+    stats.stock_scope_store_id = stock_meta["stock_scope_store_id"]
+    stats.stock_scope_store_code = stock_meta["stock_scope_store_code"]
+    stats.stock_source = stock_meta["stock_source"]
+    stats.stock_positive_products = int(stock_meta["stock_positive_products"])
+    stats.warnings = list(stock_meta["warnings"])
+
+    master_rows, archived_count = await _load_master_catalog_rows(
+        limit=limit,
+        product_codes=stock_product_codes,
+    )
     stats.products_selected = len(master_rows)
     stats.products_skipped_archived = archived_count
-
-    developer_settings, enterprise_settings = await _get_export_settings(str(enterprise_code))
 
     offers: List[Dict[str, Any]] = []
     preview_rows: List[Dict[str, Any]] = []
@@ -214,6 +352,8 @@ async def export_master_catalog_to_tabletki(
             (
                 "🟡 Master catalog успешно отправлен в Tabletki\n"
                 f"offers_count={stats.offers_count}\n"
+                f"catalog_only_in_stock={stats.catalog_only_in_stock}\n"
+                f"stock_source={stats.stock_source}\n"
                 f"preview_path={stats.preview_path}"
             ),
             str(enterprise_code),

@@ -124,6 +124,8 @@ class EnterpriseSettings(Base, TimestampMixin):
     auto_confirm = Column(Boolean, nullable=False, server_default=text("false"))
     catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
     stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    business_runtime_mode = Column(String(16), nullable=False, server_default=text("'baseline'"))
+    business_stock_mode = Column(String(32), nullable=False, server_default=text("'baseline_legacy'"))
     store_serial = Column(String, nullable=True)
     last_stock_upload = Column(DateTime, nullable=True)
     last_catalog_upload = Column(DateTime, nullable=True)
@@ -132,6 +134,14 @@ class EnterpriseSettings(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_enterprise_settings_data_format", "data_format"),
         Index("ix_enterprise_settings_single_store", "single_store"),
+        CheckConstraint(
+            "business_runtime_mode IN ('baseline', 'custom')",
+            name="ck_enterprise_settings_business_runtime_mode",
+        ),
+        CheckConstraint(
+            "business_stock_mode IN ('baseline_legacy', 'store_aware')",
+            name="ck_enterprise_settings_business_stock_mode",
+        ),
     )
 
 
@@ -297,6 +307,550 @@ class BusinessSettings(Base, TimestampMixin):
             name="ck_business_settings_pricing_jitter_max_ge_min",
         ),
     )
+
+
+class CheckboxReceipt(Base, TimestampMixin):
+    __tablename__ = "checkbox_receipts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    salesdrive_order_id = Column(String(255), nullable=False)
+    salesdrive_external_id = Column(String(255), nullable=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    business_store_id = Column(BigInteger, ForeignKey("business_stores.id"), nullable=True)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    cash_register_id = Column(BigInteger, ForeignKey("checkbox_cash_registers.id"), nullable=True)
+    cash_register_code = Column(String(255), nullable=True)
+    salesdrive_status_id = Column(Integer, nullable=True)
+    checkbox_receipt_id = Column(String(255), nullable=True)
+    checkbox_order_id = Column(String(255), nullable=True)
+    checkbox_shift_id = Column(String(255), nullable=True)
+    checkbox_status = Column(String(32), nullable=False, server_default=text("'draft'"))
+    fiscal_code = Column(String(255), nullable=True)
+    receipt_url = Column(String(1000), nullable=True)
+    total_amount = Column(Numeric(14, 2), nullable=True)
+    items_count = Column(Integer, nullable=True)
+    payload_json = Column(JSONB, nullable=True)
+    response_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, server_default=text("0"))
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    fiscalized_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "salesdrive_order_id",
+            name="uq_checkbox_receipts_enterprise_salesdrive_order",
+        ),
+        Index("ix_checkbox_receipts_enterprise_created", "enterprise_code", "created_at"),
+        Index("ix_checkbox_receipts_store_id", "business_store_id"),
+        Index("ix_checkbox_receipts_organization_id", "business_organization_id"),
+        Index("ix_checkbox_receipts_cash_register_id", "cash_register_id"),
+        Index("ix_checkbox_receipts_receipt_id", "checkbox_receipt_id"),
+        Index("ix_checkbox_receipts_status_retry", "checkbox_status", "next_retry_at"),
+        CheckConstraint(
+            "checkbox_status IN ('draft', 'pending', 'fiscalized', 'failed', 'cancelled', 'skipped')",
+            name="ck_checkbox_receipts_status",
+        ),
+    )
+
+
+class CheckboxShift(Base, TimestampMixin):
+    __tablename__ = "checkbox_shifts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    cash_register_id = Column(BigInteger, ForeignKey("checkbox_cash_registers.id"), nullable=True)
+    cash_register_code = Column(String(255), nullable=True)
+    checkbox_shift_id = Column(String(255), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'opening'"))
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    receipts_count = Column(Integer, nullable=False, server_default=text("0"))
+    receipts_total_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    response_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "cash_register_code",
+            "checkbox_shift_id",
+            name="uq_checkbox_shifts_enterprise_cash_register_shift",
+        ),
+        Index("ix_checkbox_shifts_enterprise_status", "enterprise_code", "status"),
+        Index("ix_checkbox_shifts_organization_status", "business_organization_id", "status"),
+        Index("ix_checkbox_shifts_cash_register_id_status", "cash_register_id", "status"),
+        Index("ix_checkbox_shifts_cash_register_status", "cash_register_code", "status"),
+        CheckConstraint(
+            "status IN ('opening', 'opened', 'closing', 'closed', 'failed')",
+            name="ck_checkbox_shifts_status",
+        ),
+    )
+
+
+class BusinessStore(Base):
+    __tablename__ = "business_stores"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_code = Column(String(255), nullable=False)
+    store_name = Column(String(500), nullable=False)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    legal_entity_name = Column(String(500), nullable=True)
+    tax_identifier = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    is_legacy_default = Column(Boolean, nullable=False, server_default=text("false"))
+    takes_over_legacy_scope = Column(Boolean, nullable=False, server_default=text("false"))
+    migration_status = Column(String(64), nullable=False, server_default=text("'draft'"))
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
+    legacy_scope_key = Column(String(255), nullable=True)
+    tabletki_enterprise_code = Column(String(255), nullable=True)
+    tabletki_branch = Column(String(255), nullable=True)
+    salesdrive_enterprise_code = Column(String(255), nullable=True)
+    salesdrive_enterprise_id = Column(Integer, nullable=True)
+    salesdrive_store_name = Column(String(500), nullable=True)
+    catalog_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    stock_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    orders_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    catalog_only_in_stock = Column(Boolean, nullable=False, server_default=text("true"))
+    code_strategy = Column(String(64), nullable=False, server_default=text("'opaque_mapping'"))
+    code_prefix = Column(String(255), nullable=True)
+    name_strategy = Column(String(64), nullable=False, server_default=text("'base'"))
+    extra_markup_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    extra_markup_mode = Column(String(32), nullable=False, server_default=text("'percent'"))
+    extra_markup_min = Column(Numeric(12, 2), nullable=True)
+    extra_markup_max = Column(Numeric(12, 2), nullable=True)
+    extra_markup_strategy = Column(
+        String(32),
+        nullable=False,
+        server_default=text("'stable_per_product'"),
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("store_code", name="uq_business_stores_store_code"),
+        Index("ix_business_stores_enterprise_code", "enterprise_code"),
+        Index("ix_business_stores_business_organization_id", "business_organization_id"),
+        Index("ix_business_stores_legacy_scope_key", "legacy_scope_key"),
+        Index("ix_business_stores_is_active", "is_active"),
+        Index("ix_business_stores_takes_over_legacy_scope", "takes_over_legacy_scope"),
+        Index("ix_business_stores_migration_status", "migration_status"),
+        Index("ix_business_stores_salesdrive_enterprise_code", "salesdrive_enterprise_code"),
+        Index("ix_business_stores_salesdrive_enterprise_id", "salesdrive_enterprise_id"),
+        Index("ix_business_stores_name_strategy", "name_strategy"),
+        Index("ix_business_stores_extra_markup_enabled", "extra_markup_enabled"),
+        Index(
+            "uq_business_stores_tabletki_identity",
+            "tabletki_enterprise_code",
+            "tabletki_branch",
+            unique=True,
+            postgresql_where=text(
+                "tabletki_enterprise_code IS NOT NULL AND tabletki_branch IS NOT NULL"
+            ),
+        ),
+        CheckConstraint(
+            "code_strategy IN ('opaque_mapping', 'legacy_same', 'prefix_mapping')",
+            name="ck_business_stores_code_strategy",
+        ),
+        CheckConstraint(
+            "name_strategy IN ('base', 'supplier_random')",
+            name="ck_business_stores_name_strategy",
+        ),
+        CheckConstraint(
+            "extra_markup_mode IN ('percent')",
+            name="ck_business_stores_extra_markup_mode",
+        ),
+        CheckConstraint(
+            "extra_markup_strategy IN ('stable_per_product')",
+            name="ck_business_stores_extra_markup_strategy",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_min >= 0)",
+            name="ck_business_stores_extra_markup_min_non_negative",
+        ),
+        CheckConstraint(
+            "(extra_markup_max IS NULL) OR (extra_markup_max >= 0)",
+            name="ck_business_stores_extra_markup_max_non_negative",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_max IS NULL) OR (extra_markup_max >= extra_markup_min)",
+            name="ck_business_stores_extra_markup_max_ge_min",
+        ),
+        CheckConstraint(
+            "migration_status IN ('draft', 'dry_run', 'stock_live', 'catalog_stock_live', 'orders_live', 'disabled')",
+            name="ck_business_stores_migration_status",
+        ),
+    )
+
+
+class BusinessStoreProductCode(Base):
+    __tablename__ = "business_store_product_codes"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_code = Column(String(255), nullable=False)
+    code_source = Column(String(64), nullable=False, server_default=text("'generated'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "internal_product_code",
+            name="uq_business_store_product_codes_store_internal",
+        ),
+        UniqueConstraint(
+            "store_id",
+            "external_product_code",
+            name="uq_business_store_product_codes_store_external",
+        ),
+        Index("ix_business_store_product_codes_internal_product_code", "internal_product_code"),
+        Index("ix_business_store_product_codes_external_product_code", "external_product_code"),
+        Index("ix_business_store_product_codes_is_active", "is_active"),
+        CheckConstraint(
+            "code_source IN ('generated', 'legacy_same', 'prefix_mapping')",
+            name="ck_business_store_product_codes_code_source",
+        ),
+    )
+
+
+class BusinessStoreProductName(Base):
+    __tablename__ = "business_store_product_names"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_name = Column(String(500), nullable=False)
+    name_source = Column(String(64), nullable=False, server_default=text("'catalog_supplier_mapping'"))
+    source_supplier_id = Column(BigInteger, nullable=True)
+    source_supplier_code = Column(String(255), nullable=True)
+    source_supplier_product_id = Column(String(255), nullable=True)
+    source_supplier_product_name_raw = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "internal_product_code",
+            name="uq_business_store_product_names_store_internal",
+        ),
+        Index("ix_bspn_store_id", "store_id"),
+        Index("ix_bspn_internal_code", "internal_product_code"),
+        Index(
+            "ix_bspn_source_supplier",
+            "source_supplier_id",
+            "source_supplier_code",
+        ),
+        Index("ix_bspn_is_active", "is_active"),
+        CheckConstraint(
+            "name_source IN ('catalog_supplier_mapping', 'manual', 'cleaned')",
+            name="ck_business_store_product_names_name_source",
+        ),
+    )
+
+
+class BusinessStoreProductPriceAdjustment(Base):
+    __tablename__ = "business_store_product_price_adjustments"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    markup_percent = Column(Numeric(12, 4), nullable=False)
+    strategy = Column(String(32), nullable=False, server_default=text("'stable_per_product'"))
+    source = Column(String(64), nullable=False, server_default=text("'generated'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "internal_product_code",
+            name="uq_business_store_product_price_adjustments_store_internal",
+        ),
+        Index("ix_bspa_store_id", "store_id"),
+        Index(
+            "ix_bspa_internal_code",
+            "internal_product_code",
+        ),
+        Index(
+            "ix_bspa_is_active",
+            "is_active",
+        ),
+        CheckConstraint(
+            "markup_percent >= 0",
+            name="ck_business_store_product_price_adjustments_markup_non_negative",
+        ),
+        CheckConstraint(
+            "strategy IN ('stable_per_product')",
+            name="ck_business_store_product_price_adjustments_strategy",
+        ),
+    )
+
+
+class BusinessStoreSupplierSettings(Base):
+    __tablename__ = "business_store_supplier_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    supplier_code = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    priority_override = Column(Integer, nullable=True)
+    min_markup_threshold = Column(Numeric(12, 4), nullable=True)
+    extra_markup_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    extra_markup_mode = Column(String(32), nullable=True)
+    extra_markup_value = Column(Numeric(12, 4), nullable=True)
+    extra_markup_min = Column(Numeric(12, 4), nullable=True)
+    extra_markup_max = Column(Numeric(12, 4), nullable=True)
+    dumping_mode = Column(Boolean, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "supplier_code",
+            name="uq_business_store_supplier_settings_store_supplier",
+        ),
+        Index("ix_bsss_store_id", "store_id"),
+        Index("ix_bsss_supplier_code", "supplier_code"),
+        Index("ix_bsss_store_active", "store_id", "is_active"),
+        CheckConstraint(
+            "(priority_override IS NULL) OR (priority_override >= 0)",
+            name="ck_bsss_priority_nn",
+        ),
+        CheckConstraint(
+            "(min_markup_threshold IS NULL) OR (min_markup_threshold >= 0)",
+            name="ck_bsss_min_thr_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_mode IS NULL) OR (extra_markup_mode IN ('percent'))",
+            name="ck_bsss_markup_mode",
+        ),
+        CheckConstraint(
+            "(extra_markup_value IS NULL) OR (extra_markup_value >= 0)",
+            name="ck_bsss_markup_value_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_min >= 0)",
+            name="ck_bsss_markup_min_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_max IS NULL) OR (extra_markup_max >= 0)",
+            name="ck_bsss_markup_max_nn",
+        ),
+        CheckConstraint(
+            "(extra_markup_min IS NULL) OR (extra_markup_max IS NULL) OR (extra_markup_max >= extra_markup_min)",
+            name="ck_bsss_markup_max_ge_min",
+        ),
+    )
+
+
+class BusinessStoreOffer(Base):
+    __tablename__ = "business_store_offers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    store_id = Column(
+        BigInteger,
+        ForeignKey("business_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    tabletki_branch = Column(String(255), nullable=False)
+    supplier_code = Column(String(255), nullable=False)
+    product_code = Column(String(255), nullable=False)
+    market_scope_key = Column(String(255), nullable=True)
+    base_price = Column(Numeric(12, 2), nullable=True)
+    effective_price = Column(Numeric(12, 2), nullable=False)
+    wholesale_price = Column(Numeric(12, 2), nullable=True)
+    stock = Column(Integer, nullable=False, server_default=text("0"))
+    priority_used = Column(Integer, nullable=True)
+    price_source = Column(String(128), nullable=True)
+    pricing_context = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "supplier_code",
+            "product_code",
+            name="uq_business_store_offers_store_supplier_product",
+        ),
+        Index("ix_bso_store_id", "store_id"),
+        Index("ix_bso_enterprise_code", "enterprise_code"),
+        Index("ix_bso_tabletki_branch", "tabletki_branch"),
+        Index("ix_bso_supplier_code", "supplier_code"),
+        Index("ix_bso_product_code", "product_code"),
+        Index("ix_bso_store_product", "store_id", "product_code"),
+        Index("ix_bso_enterprise_branch", "enterprise_code", "tabletki_branch"),
+        CheckConstraint(
+            "effective_price >= 0",
+            name="ck_bso_effective_price_nn",
+        ),
+        CheckConstraint(
+            "(base_price IS NULL) OR (base_price >= 0)",
+            name="ck_bso_base_price_nn",
+        ),
+        CheckConstraint(
+            "(wholesale_price IS NULL) OR (wholesale_price >= 0)",
+            name="ck_bso_wholesale_price_nn",
+        ),
+        CheckConstraint(
+            "stock >= 0",
+            name="ck_bso_stock_nn",
+        ),
+        CheckConstraint(
+            "(priority_used IS NULL) OR (priority_used >= 0)",
+            name="ck_bso_priority_nn",
+        ),
+    )
+
+
+class BusinessEnterpriseProductCode(Base):
+    __tablename__ = "business_enterprise_product_codes"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_code = Column(String(255), nullable=False)
+    code_source = Column(String(64), nullable=False, server_default=text("'generated'"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "internal_product_code",
+            name="uq_business_enterprise_product_codes_enterprise_internal",
+        ),
+        UniqueConstraint(
+            "enterprise_code",
+            "external_product_code",
+            name="uq_business_enterprise_product_codes_enterprise_external",
+        ),
+        Index("ix_bepc_enterprise_code", "enterprise_code"),
+        Index("ix_bepc_internal_code", "internal_product_code"),
+        Index("ix_bepc_external_code", "external_product_code"),
+        Index("ix_bepc_is_active", "is_active"),
+        CheckConstraint(
+            "code_source IN ('generated', 'legacy_same', 'prefix_mapping', 'backfilled_from_store')",
+            name="ck_business_enterprise_product_codes_code_source",
+        ),
+    )
+
+
+class BusinessEnterpriseProductName(Base):
+    __tablename__ = "business_enterprise_product_names"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(
+        String,
+        ForeignKey("enterprise_settings.enterprise_code"),
+        nullable=False,
+    )
+    internal_product_code = Column(String(255), nullable=False)
+    external_product_name = Column(String(500), nullable=False)
+    name_source = Column(String(64), nullable=False, server_default=text("'catalog_supplier_mapping'"))
+    source_supplier_id = Column(BigInteger, nullable=True)
+    source_supplier_code = Column(String(255), nullable=True)
+    source_supplier_product_id = Column(String(255), nullable=True)
+    source_supplier_product_name_raw = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "enterprise_code",
+            "internal_product_code",
+            name="uq_business_enterprise_product_names_enterprise_internal",
+        ),
+        Index("ix_bepn_enterprise_code", "enterprise_code"),
+        Index("ix_bepn_internal_code", "internal_product_code"),
+        Index("ix_bepn_is_active", "is_active"),
+        Index(
+            "ix_bepn_source_supplier",
+            "source_supplier_id",
+            "source_supplier_code",
+        ),
+        CheckConstraint(
+            "name_source IN ('catalog_supplier_mapping', 'manual', 'cleaned', 'backfilled_from_store')",
+            name="ck_business_enterprise_product_names_name_source",
+        ),
+    )
+
 
 # Сопоставление аптек 
 class MappingBranch(Base):
@@ -980,4 +1534,515 @@ class CatalogContent(Base, TimestampMixin):
         Index("ix_catalog_content_sku", "sku"),
         Index("ix_catalog_content_sku_language_code", "sku", "language_code"),
         Index("ix_catalog_content_sku_is_selected", "sku", "is_selected"),
+    )
+
+
+class PaymentBusinessEntity(Base, TimestampMixin):
+    __tablename__ = "payment_business_entities"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    salesdrive_organization_id = Column(String(128), nullable=True)
+    short_name = Column(String(500), nullable=False)
+    full_name = Column(String(1000), nullable=True)
+    normalized_name = Column(String(1000), nullable=True)
+    tax_id = Column(String(64), nullable=True)
+    entity_type = Column(String(32), nullable=False, server_default=text("'other'"))
+    verification_status = Column(String(32), nullable=False, server_default=text("'needs_review'"))
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    verified_by = Column(String(255), nullable=True)
+    vat_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    vat_payer = Column(Boolean, nullable=False, server_default=text("false"))
+    without_stamp = Column(Boolean, nullable=False, server_default=text("false"))
+    signer_name = Column(String(500), nullable=True)
+    signer_position = Column(String(500), nullable=True)
+    chief_accountant_name = Column(String(500), nullable=True)
+    cashier_name = Column(String(500), nullable=True)
+    signature_stamp_image_url = Column(String(1000), nullable=True)
+    logo_image_url = Column(String(1000), nullable=True)
+    address = Column(String(1000), nullable=True)
+    postal_code = Column(String(64), nullable=True)
+    city = Column(String(255), nullable=True)
+    region = Column(String(255), nullable=True)
+    country = Column(String(255), nullable=True)
+    phone = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("salesdrive_organization_id", name="uq_payment_business_entities_salesdrive_org_id"),
+        Index("ix_payment_business_entities_tax_id", "tax_id"),
+        Index("ix_payment_business_entities_verification_status", "verification_status"),
+        CheckConstraint(
+            "entity_type IN ('fop', 'company', 'individual', 'other')",
+            name="ck_payment_business_entities_entity_type",
+        ),
+        CheckConstraint(
+            "verification_status IN ('draft', 'needs_review', 'verified', 'archived')",
+            name="ck_payment_business_entities_verification_status",
+        ),
+    )
+
+
+class PaymentBusinessAccount(Base, TimestampMixin):
+    __tablename__ = "payment_business_accounts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    salesdrive_account_id = Column(String(128), nullable=True)
+    account_number = Column(String(128), nullable=False)
+    account_title = Column(String(500), nullable=True)
+    label = Column(String(255), nullable=True)
+    card_mask = Column(String(64), nullable=True)
+    currency = Column(String(16), nullable=False, server_default=text("'UAH'"))
+    bank_name = Column(String(255), nullable=True)
+    mfo = Column(String(32), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+
+    __table_args__ = (
+        UniqueConstraint("account_number", name="uq_payment_business_accounts_account_number"),
+        UniqueConstraint("salesdrive_account_id", name="uq_payment_business_accounts_salesdrive_account_id"),
+        Index("ix_payment_business_accounts_entity_id", "business_entity_id"),
+        Index("ix_payment_business_accounts_is_active", "is_active"),
+    )
+
+
+class CheckboxCashRegister(Base, TimestampMixin):
+    __tablename__ = "checkbox_cash_registers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    business_store_id = Column(BigInteger, ForeignKey("business_stores.id"), nullable=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
+    register_name = Column(String(500), nullable=False)
+    cash_register_code = Column(String(255), nullable=False)
+    checkbox_license_key = Column(String(1000), nullable=True)
+    cashier_login = Column(String(500), nullable=True)
+    cashier_password = Column(String(1000), nullable=True)
+    cashier_pin = Column(String(255), nullable=True)
+    api_base_url = Column(String(1000), nullable=True)
+    is_test_mode = Column(Boolean, nullable=False, server_default=text("true"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    is_default = Column(Boolean, nullable=False, server_default=text("false"))
+    shift_open_mode = Column(String(32), nullable=False, server_default=text("'on_fiscalization'"))
+    shift_open_time = Column(String(8), nullable=True)
+    shift_close_time = Column(String(8), nullable=True)
+    timezone = Column(String(64), nullable=False, server_default=text("'Europe/Kiev'"))
+    receipt_notifications_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    shift_notifications_enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_organization_id",
+            "cash_register_code",
+            name="uq_checkbox_cash_registers_org_code",
+        ),
+        Index("ix_checkbox_cash_registers_org_active", "business_organization_id", "is_active"),
+        Index("ix_checkbox_cash_registers_store_id", "business_store_id"),
+        Index("ix_checkbox_cash_registers_enterprise_code", "enterprise_code"),
+        CheckConstraint(
+            "shift_open_mode IN ('manual', 'scheduled', 'first_status_4', 'on_fiscalization')",
+            name="ck_checkbox_cash_registers_shift_open_mode",
+        ),
+    )
+
+
+class CheckboxReceiptExclusion(Base, TimestampMixin):
+    __tablename__ = "checkbox_receipt_exclusions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_organization_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    cash_register_id = Column(BigInteger, ForeignKey("checkbox_cash_registers.id"), nullable=True)
+    supplier_code = Column(String(255), nullable=False)
+    supplier_name = Column(String(500), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_organization_id",
+            "cash_register_id",
+            "supplier_code",
+            name="uq_checkbox_receipt_exclusions_org_register_supplier",
+        ),
+        Index("ix_checkbox_receipt_exclusions_org_active", "business_organization_id", "is_active"),
+        Index("ix_checkbox_receipt_exclusions_register_id", "cash_register_id"),
+    )
+
+
+class PaymentImportRun(Base, TimestampMixin):
+    __tablename__ = "payment_import_runs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source_system = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    period_from = Column(DateTime(timezone=True), nullable=False)
+    period_to = Column(DateTime(timezone=True), nullable=False)
+    payment_type = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False, server_default=text("'running'"))
+    started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    incoming_count = Column(Integer, nullable=False, server_default=text("0"))
+    outcoming_count = Column(Integer, nullable=False, server_default=text("0"))
+    created_count = Column(Integer, nullable=False, server_default=text("0"))
+    updated_count = Column(Integer, nullable=False, server_default=text("0"))
+    error_message = Column(Text, nullable=True)
+    request_params = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("ix_payment_import_runs_period", "period_from", "period_to"),
+        Index("ix_payment_import_runs_status", "status"),
+        CheckConstraint(
+            "payment_type IN ('incoming', 'outcoming', 'all')",
+            name="ck_payment_import_runs_payment_type",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'success', 'failed', 'partial')",
+            name="ck_payment_import_runs_status",
+        ),
+    )
+
+
+class PaymentCategory(Base, TimestampMixin):
+    __tablename__ = "payment_categories"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(64), nullable=False)
+    name = Column(String(255), nullable=False)
+    direction = Column(String(16), nullable=False)
+    is_system = Column(Boolean, nullable=False, server_default=text("true"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    sort_order = Column(Integer, nullable=False, server_default=text("0"))
+    description = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_payment_categories_code"),
+        Index("ix_payment_categories_direction", "direction"),
+        CheckConstraint(
+            "direction IN ('incoming', 'outgoing', 'both')",
+            name="ck_payment_categories_direction",
+        ),
+    )
+
+
+class PaymentCounterpartySupplierMapping(Base, TimestampMixin):
+    __tablename__ = "payment_counterparty_supplier_mappings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    supplier_code = Column(String, ForeignKey("dropship_enterprises.code"), nullable=False)
+    supplier_salesdrive_id = Column(Integer, nullable=True)
+    match_type = Column(String(32), nullable=False)
+    field_scope = Column(String(32), nullable=False)
+    counterparty_pattern = Column(String(1000), nullable=True)
+    normalized_pattern = Column(String(1000), nullable=True)
+    counterparty_tax_id = Column(String(64), nullable=True)
+    priority = Column(Integer, nullable=False, server_default=text("100"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    valid_from = Column(Date, nullable=True)
+    valid_to = Column(Date, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=True)
+    updated_by = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("ix_payment_counterparty_supplier_mappings_supplier_code", "supplier_code"),
+        Index("ix_payment_counterparty_supplier_mappings_tax_id", "counterparty_tax_id"),
+        Index("ix_payment_counterparty_supplier_mappings_active_priority", "is_active", "priority"),
+        CheckConstraint(
+            "match_type IN ('tax_id', 'exact', 'contains', 'search_text_contains')",
+            name="ck_payment_counterparty_supplier_mappings_match_type",
+        ),
+        CheckConstraint(
+            "field_scope IN ('tax_id', 'counterparty_name', 'purpose', 'comment', 'search_text')",
+            name="ck_payment_counterparty_supplier_mappings_field_scope",
+        ),
+    )
+
+
+class SalesDrivePayment(Base, TimestampMixin):
+    __tablename__ = "salesdrive_payments"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source_system = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    source_payment_id = Column(String(128), nullable=False)
+    payment_type = Column(String(32), nullable=False)
+    payment_date = Column(DateTime(timezone=True), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    currency = Column(String(16), nullable=False, server_default=text("'UAH'"))
+    counterparty_source_id = Column(String(128), nullable=True)
+    counterparty_name = Column(String(1000), nullable=True)
+    counterparty_normalized_name = Column(String(1000), nullable=True)
+    counterparty_tax_id = Column(String(64), nullable=True)
+    organization_source_id = Column(String(128), nullable=True)
+    organization_name = Column(String(1000), nullable=True)
+    organization_tax_id = Column(String(64), nullable=True)
+    organization_account_source_id = Column(String(128), nullable=True)
+    account_reference = Column(String(128), nullable=True)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    business_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=True)
+    comment = Column(Text, nullable=True)
+    purpose = Column(Text, nullable=True)
+    search_text = Column(Text, nullable=True)
+    incoming_category = Column(String(64), ForeignKey("payment_categories.code"), nullable=True)
+    outgoing_category = Column(String(64), ForeignKey("payment_categories.code"), nullable=True)
+    payment_category = Column(String(64), ForeignKey("payment_categories.code"), nullable=True)
+    is_internal_transfer = Column(Boolean, nullable=False, server_default=text("false"))
+    internal_transfer_pair_id = Column(
+        BigInteger,
+        ForeignKey(
+            "internal_transfer_pairs.id",
+            use_alter=True,
+            name="fk_salesdrive_payments_internal_transfer_pair_id",
+        ),
+        nullable=True,
+    )
+    internal_transfer_reason = Column(Text, nullable=True)
+    supplier_code = Column(String, ForeignKey("dropship_enterprises.code"), nullable=True)
+    supplier_salesdrive_id = Column(Integer, nullable=True)
+    counterparty_supplier_mapping_id = Column(
+        BigInteger,
+        ForeignKey("payment_counterparty_supplier_mappings.id"),
+        nullable=True,
+    )
+    mapping_source = Column(String(64), nullable=True)
+    mapping_status = Column(String(32), nullable=False, server_default=text("'not_applicable'"))
+    raw_status = Column(String(64), nullable=True)
+    raw_payload = Column(JSONB, nullable=False)
+    import_run_id = Column(BigInteger, ForeignKey("payment_import_runs.id"), nullable=True)
+    is_locked = Column(Boolean, nullable=False, server_default=text("false"))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_system",
+            "source_payment_id",
+            "payment_type",
+            name="uq_salesdrive_payments_source_payment_type",
+        ),
+        Index("ix_salesdrive_payments_payment_date", "payment_date"),
+        Index("ix_salesdrive_payments_type_date", "payment_type", "payment_date"),
+        Index("ix_salesdrive_payments_counterparty_tax_id", "counterparty_tax_id"),
+        Index("ix_salesdrive_payments_counterparty_normalized_name", "counterparty_normalized_name"),
+        Index("ix_salesdrive_payments_business_account_date", "business_account_id", "payment_date"),
+        Index("ix_salesdrive_payments_supplier_date", "supplier_code", "payment_date"),
+        Index("ix_salesdrive_payments_mapping_status", "mapping_status"),
+        Index("ix_salesdrive_payments_internal_transfer", "is_internal_transfer"),
+        CheckConstraint(
+            "payment_type IN ('incoming', 'outcoming')",
+            name="ck_salesdrive_payments_payment_type",
+        ),
+        CheckConstraint(
+            "mapping_status IN ('mapped', 'unmapped', 'not_applicable', 'ignored')",
+            name="ck_salesdrive_payments_mapping_status",
+        ),
+    )
+
+
+class InternalTransferPair(Base):
+    __tablename__ = "internal_transfer_pairs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    pair_key = Column(String(255), nullable=False)
+    outcoming_payment_id = Column(BigInteger, ForeignKey("salesdrive_payments.id"), nullable=False)
+    incoming_payment_id = Column(BigInteger, ForeignKey("salesdrive_payments.id"), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
+    outcoming_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    incoming_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    outcoming_date = Column(DateTime(timezone=True), nullable=False)
+    incoming_date = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(Text, nullable=True)
+    match_confidence = Column(Numeric(5, 4), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("pair_key", name="uq_internal_transfer_pairs_pair_key"),
+        UniqueConstraint("outcoming_payment_id", name="uq_internal_transfer_pairs_outcoming_payment_id"),
+        UniqueConstraint("incoming_payment_id", name="uq_internal_transfer_pairs_incoming_payment_id"),
+        Index("ix_internal_transfer_pairs_outcoming_account_id", "outcoming_account_id"),
+        Index("ix_internal_transfer_pairs_incoming_account_id", "incoming_account_id"),
+    )
+
+
+class InternalTransferRule(Base, TimestampMixin):
+    __tablename__ = "internal_transfer_rules"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=False)
+    from_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    to_account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    pairing_window_minutes = Column(Integer, nullable=False, server_default=text("5"))
+    require_exact_amount = Column(Boolean, nullable=False, server_default=text("true"))
+    allow_direct_self_marker = Column(Boolean, nullable=False, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("from_account_id", "to_account_id", name="uq_internal_transfer_rules_account_pair"),
+        Index("ix_internal_transfer_rules_entity_id", "business_entity_id"),
+        Index("ix_internal_transfer_rules_is_active", "is_active"),
+        CheckConstraint("from_account_id <> to_account_id", name="ck_internal_transfer_rules_different_accounts"),
+    )
+
+
+class AccountBalanceAdjustment(Base, TimestampMixin):
+    __tablename__ = "account_balance_adjustments"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    account_id = Column(BigInteger, ForeignKey("payment_business_accounts.id"), nullable=False)
+    period_month = Column(Date, nullable=False)
+    balance_date = Column(Date, nullable=True)
+    actual_balance = Column(Numeric(14, 2), nullable=True)
+    opening_balance_adjustment = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    closing_balance_adjustment = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    actual_opening_balance = Column(Numeric(14, 2), nullable=True)
+    actual_closing_balance = Column(Numeric(14, 2), nullable=True)
+    comment = Column(Text, nullable=True)
+    created_by = Column(String(255), nullable=True)
+    approved_by = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "period_month", name="uq_account_balance_adjustments_account_month"),
+        UniqueConstraint("account_id", "balance_date", name="uq_account_balance_adjustments_account_balance_date"),
+        Index("ix_account_balance_adjustments_balance_date", "balance_date"),
+        Index("ix_account_balance_adjustments_period_month", "period_month"),
+    )
+
+
+class PaymentPeriodLock(Base, TimestampMixin):
+    __tablename__ = "payment_period_locks"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    period_month = Column(Date, nullable=False)
+    business_entity_id = Column(BigInteger, ForeignKey("payment_business_entities.id"), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'open'"))
+    closed_by = Column(String(255), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("period_month", "business_entity_id", name="uq_payment_period_locks_month_entity"),
+        Index("ix_payment_period_locks_status", "status"),
+        CheckConstraint("status IN ('open', 'closed')", name="ck_payment_period_locks_status"),
+    )
+
+
+class ReportOrder(Base, TimestampMixin):
+    __tablename__ = "report_orders"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    business_store_id = Column(BigInteger, ForeignKey("business_stores.id"), nullable=True)
+    branch = Column(String(255), nullable=True)
+    external_order_id = Column(String(255), nullable=False)
+    salesdrive_order_id = Column(String(255), nullable=True)
+    tabletki_order_id = Column(String(255), nullable=True)
+    order_number = Column(String(255), nullable=True)
+    order_created_at = Column(DateTime(timezone=True), nullable=True)
+    order_updated_at = Column(DateTime(timezone=True), nullable=True)
+    sale_date = Column(DateTime(timezone=True), nullable=True)
+    status_id = Column(Integer, nullable=True)
+    status_name = Column(String(255), nullable=True)
+    status_group = Column(String(64), nullable=False, server_default=text("'active'"))
+    is_order = Column(Boolean, nullable=False, server_default=text("true"))
+    is_sale = Column(Boolean, nullable=False, server_default=text("false"))
+    is_return = Column(Boolean, nullable=False, server_default=text("false"))
+    is_cancelled = Column(Boolean, nullable=False, server_default=text("false"))
+    is_deleted = Column(Boolean, nullable=False, server_default=text("false"))
+    customer_city = Column(String(255), nullable=True)
+    payment_type = Column(String(255), nullable=True)
+    delivery_type = Column(String(255), nullable=True)
+    order_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    sale_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    items_quantity = Column(Numeric(14, 3), nullable=False, server_default=text("0"))
+    sale_quantity = Column(Numeric(14, 3), nullable=False, server_default=text("0"))
+    supplier_cost_total = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    gross_profit_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    expense_percent = Column(Numeric(8, 4), nullable=False, server_default=text("0"))
+    expense_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    net_profit_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    raw_hash = Column(String(64), nullable=True)
+    raw_json = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("source", "enterprise_code", "external_order_id", name="uq_report_orders_source_enterprise_external"),
+        Index("ix_report_orders_enterprise_created", "enterprise_code", "order_created_at"),
+        Index("ix_report_orders_enterprise_sale_date", "enterprise_code", "sale_date"),
+        Index("ix_report_orders_status_group", "status_group"),
+        Index("ix_report_orders_salesdrive_order_id", "salesdrive_order_id"),
+        Index("ix_report_orders_tabletki_order_id", "tabletki_order_id"),
+        CheckConstraint("order_amount >= 0", name="ck_report_orders_order_amount_nonneg"),
+        CheckConstraint("sale_amount >= 0", name="ck_report_orders_sale_amount_nonneg"),
+        CheckConstraint("supplier_cost_total >= 0", name="ck_report_orders_cost_nonneg"),
+        CheckConstraint("expense_percent >= 0", name="ck_report_orders_expense_percent_nonneg"),
+    )
+
+
+class ReportOrderItem(Base, TimestampMixin):
+    __tablename__ = "report_order_items"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    report_order_id = Column(BigInteger, ForeignKey("report_orders.id", ondelete="CASCADE"), nullable=False)
+    line_index = Column(Integer, nullable=False)
+    source_product_id = Column(String(255), nullable=True)
+    sku = Column(String(255), nullable=True)
+    barcode = Column(String(255), nullable=True)
+    product_name = Column(String(1000), nullable=True)
+    supplier_name = Column(String(500), nullable=True)
+    supplier_code = Column(String(255), nullable=True)
+    quantity = Column(Numeric(14, 3), nullable=False, server_default=text("0"))
+    sale_price = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    sale_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    cost_price = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    cost_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    gross_profit_amount = Column(Numeric(14, 2), nullable=False, server_default=text("0"))
+    margin_percent = Column(Numeric(8, 4), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("report_order_id", "line_index", name="uq_report_order_items_order_line"),
+        Index("ix_report_order_items_order_id", "report_order_id"),
+        Index("ix_report_order_items_supplier_code", "supplier_code"),
+        Index("ix_report_order_items_sku", "sku"),
+        CheckConstraint("quantity >= 0", name="ck_report_order_items_quantity_nonneg"),
+        CheckConstraint("sale_amount >= 0", name="ck_report_order_items_sale_nonneg"),
+        CheckConstraint("cost_amount >= 0", name="ck_report_order_items_cost_nonneg"),
+    )
+
+
+class ReportEnterpriseExpenseSetting(Base, TimestampMixin):
+    __tablename__ = "report_enterprise_expense_settings"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=False)
+    expense_percent = Column(Numeric(8, 4), nullable=False, server_default=text("0"))
+    active_from = Column(Date, nullable=False)
+    active_to = Column(Date, nullable=True)
+
+    __table_args__ = (
+        Index("ix_report_expense_settings_enterprise", "enterprise_code", "active_from", "active_to"),
+        CheckConstraint("expense_percent >= 0", name="ck_report_expense_settings_percent_nonneg"),
+    )
+
+
+class ReportOrderSyncState(Base, TimestampMixin):
+    __tablename__ = "report_order_sync_state"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source = Column(String(64), nullable=False, server_default=text("'salesdrive'"))
+    enterprise_code = Column(String, ForeignKey("enterprise_settings.enterprise_code"), nullable=True)
+    last_success_at = Column(DateTime(timezone=True), nullable=True)
+    last_sync_from = Column(DateTime(timezone=True), nullable=True)
+    last_sync_to = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(32), nullable=False, server_default=text("'running'"))
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    created_count = Column(Integer, nullable=False, server_default=text("0"))
+    updated_count = Column(Integer, nullable=False, server_default=text("0"))
+    failed_count = Column(Integer, nullable=False, server_default=text("0"))
+    request_params = Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("ix_report_order_sync_state_source_enterprise", "source", "enterprise_code"),
+        Index("ix_report_order_sync_state_status", "status"),
+        CheckConstraint("status IN ('running', 'success', 'failed', 'partial')", name="ck_report_order_sync_state_status"),
     )

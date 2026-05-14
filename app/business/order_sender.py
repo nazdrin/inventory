@@ -14,6 +14,14 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, getcontext
 from app.services.notification_service import send_notification
+from app.business.business_store_order_mapper import (
+    DEBUG_BUSINESS_STORE_ID_FIELD,
+    resolve_business_store_for_order,
+)
+from app.services.business_runtime_mode_service import (
+    BASELINE_BUSINESS_RUNTIME_MODE,
+    normalize_business_runtime_mode,
+)
 # БАЗОВЫЙ URL SalesDrive (используется для /handler/ и /api/order/update/)
 SALESDRIVE_BASE_URL = "https://petrenko.salesdrive.me"  # ← при необходимости замените на ваш домен
 
@@ -27,7 +35,7 @@ from app.business.supplier_identity import (
 
 # === Ваши модели (проверьте реальные имена/поля) ===
 from app.database import get_async_db
-from app.models import Offer, DropshipEnterprise, CatalogMapping, CatalogSupplierMapping, EnterpriseSettings, MasterCatalog
+from app.models import BusinessStore, BusinessStoreOffer, Offer, DropshipEnterprise, CatalogMapping, CatalogSupplierMapping, EnterpriseSettings, MasterCatalog
 import httpx
 from app.services.order_sender import send_orders_to_tabletki
 
@@ -81,6 +89,7 @@ SUPPLIER_CITY_TAG_MAP = {
 
 D14_SUPPLIER_CODE = "D14"
 D14_SALESDRIVE_STOCK_ID = 2
+SALESDRIVE_PAYMENT_METHOD_EXCLUDED_SUPPLIER_CODES = {"D3", "40"}
 
 def _notify_business(msg: str) -> None:
     try:
@@ -108,6 +117,14 @@ class OrderRow:
     price: Decimal
     goodsProducer: Optional[str] = None
     original_price: Optional[Decimal] = None  # ← NEW
+
+
+@dataclass
+class OrderOfferContext:
+    store_id: Optional[int]
+    preferred_source: str
+    branch: Optional[str] = None
+    enterprise_code: Optional[str] = None
 async def _send_to_salesdrive(payload: Dict[str, Any], api_key: str) -> None:
     """
     Отправка заказа в SalesDrive по API, с использованием X-Api-Key.
@@ -317,6 +334,16 @@ async def _fetch_supplier_name(session: AsyncSession, supplier_code: str) -> Opt
 
 def _is_d14_supplier(supplier_code: Optional[str]) -> bool:
     return str(supplier_code or "").strip().upper() == D14_SUPPLIER_CODE
+
+
+def _resolve_salesdrive_payment_method(
+    default_payment_method: Optional[str],
+    supplier_code: Optional[str],
+) -> str:
+    normalized_supplier_code = str(supplier_code or "").strip().upper()
+    if normalized_supplier_code in SALESDRIVE_PAYMENT_METHOD_EXCLUDED_SUPPLIER_CODES:
+        return ""
+    return str(default_payment_method or "").strip()
 async def _get_supplier_priority(session: AsyncSession, supplier_code: str) -> int:
     q = select(DropshipEnterprise.priority).where(DropshipEnterprise.code == str(supplier_code)).limit(1)
     res = await session.execute(q)
@@ -329,17 +356,119 @@ async def _get_supplier_profit_percent(session: AsyncSession, supplier_code: str
     v = res.scalar_one_or_none()
     return _as_decimal(v or 0)
 
-async def _fetch_stock_qty(session: AsyncSession, supplier_code: str, product_code: str) -> Decimal:
+async def _resolve_order_offer_context(
+    session: AsyncSession,
+    *,
+    order: Dict[str, Any],
+    enterprise_code: str,
+    branch: Optional[str] = None,
+) -> OrderOfferContext:
+    salesdrive_context = await resolve_salesdrive_organization_context(
+        session,
+        order=order,
+        enterprise_code=enterprise_code,
+        branch=branch,
+    )
+    store_id = salesdrive_context.get("store_id")
+    return OrderOfferContext(
+        store_id=int(store_id) if store_id not in (None, "") else None,
+        preferred_source="business_store_offers" if store_id not in (None, "") else "offers",
+        branch=salesdrive_context.get("branch"),
+        enterprise_code=salesdrive_context.get("enterprise_code"),
+    )
+
+
+async def _load_offer_records_for_product(
+    session: AsyncSession,
+    product_code: str,
+    offer_context: Optional[OrderOfferContext] = None,
+) -> List[Tuple[str, Decimal, Decimal, Decimal]]:
+    normalized_product_code = str(product_code)
+
+    if offer_context and offer_context.store_id is not None:
+        q = (
+            select(
+                BusinessStoreOffer.supplier_code,
+                BusinessStoreOffer.effective_price,
+                BusinessStoreOffer.wholesale_price,
+                BusinessStoreOffer.stock,
+            )
+            .where(
+                and_(
+                    BusinessStoreOffer.store_id == int(offer_context.store_id),
+                    BusinessStoreOffer.product_code == normalized_product_code,
+                )
+            )
+        )
+        res = await session.execute(q)
+        rows = res.all()
+        if rows:
+            return [
+                (
+                    str(sc),
+                    _as_decimal(price),
+                    _as_decimal(wprice),
+                    _as_decimal(stock),
+                )
+                for sc, price, wprice, stock in rows
+            ]
+
+    q = (
+        select(
+            Offer.supplier_code,
+            Offer.price,
+            Offer.wholesale_price,
+            Offer.stock,
+        )
+        .where(Offer.product_code == normalized_product_code)
+    )
+    res = await session.execute(q)
+    rows = res.all()
+    return [
+        (
+            str(sc),
+            _as_decimal(price),
+            _as_decimal(wprice),
+            _as_decimal(stock),
+        )
+        for sc, price, wprice, stock in rows
+    ]
+
+
+async def _fetch_stock_qty(
+    session: AsyncSession,
+    supplier_code: str,
+    product_code: str,
+    offer_context: Optional[OrderOfferContext] = None,
+) -> Decimal:
     """
     Возвращает остаток по товару у поставщика.
     По умолчанию читаю из Offer.qty. Если у вас остаток в другой таблице,
     замените запрос внутри на вашу схему.
     """
     try:
-        # Вариант через Offers (если там есть поле qty)
+        normalized_supplier_code = str(supplier_code)
+        normalized_product_code = str(product_code)
+        if offer_context and offer_context.store_id is not None:
+            q = (
+                select(BusinessStoreOffer.stock)
+                .where(
+                    and_(
+                        BusinessStoreOffer.store_id == int(offer_context.store_id),
+                        BusinessStoreOffer.supplier_code == normalized_supplier_code,
+                        BusinessStoreOffer.product_code == normalized_product_code,
+                    )
+                )
+                .limit(1)
+            )
+            res = await session.execute(q)
+            v = res.scalar_one_or_none()
+            if v is not None:
+                return _as_decimal(v)
+
         q = (
             select(Offer.stock)
-            .where(and_(Offer.supplier_code == str(supplier_code), Offer.product_code == str(product_code)))
+            .where(and_(Offer.supplier_code == normalized_supplier_code, Offer.product_code == normalized_product_code))
             .limit(1)
         )
         res = await session.execute(q)
@@ -410,42 +539,90 @@ async def _pick_supplier_for_single_item(
     return str(supplier_code), _as_decimal(supplier_price), False
 
 async def _fetch_supplier_price(
-    session: AsyncSession, supplier_code: str, product_code: str
+    session: AsyncSession,
+    supplier_code: str,
+    product_code: str,
+    offer_context: Optional[OrderOfferContext] = None,
 ) -> Optional[Decimal]:
     """
     Цена товара у конкретного поставщика (из offers).
     """
+    normalized_supplier_code = str(supplier_code)
+    normalized_product_code = str(product_code)
+
+    if offer_context and offer_context.store_id is not None:
+        q = (
+            select(BusinessStoreOffer.effective_price)
+            .where(
+                and_(
+                    BusinessStoreOffer.store_id == int(offer_context.store_id),
+                    BusinessStoreOffer.supplier_code == normalized_supplier_code,
+                    BusinessStoreOffer.product_code == normalized_product_code,
+                )
+            )
+            .limit(1)
+        )
+        res = await session.execute(q)
+        value = res.scalar_one_or_none()
+        if value is not None:
+            return _as_decimal(value)
+
     q = (
         select(Offer.price)
         .where(
             and_(
-                Offer.supplier_code == str(supplier_code),
-                Offer.product_code == str(product_code),
+                Offer.supplier_code == normalized_supplier_code,
+                Offer.product_code == normalized_product_code,
             )
         )
         .limit(1)
     )
     res = await session.execute(q)
-    return res.scalar_one_or_none()
+    value = res.scalar_one_or_none()
+    return _as_decimal(value) if value is not None else None
 
 
 # --- NEW: Оптова ціна (wholesale_price) товару у конкретного постачальника ---
 async def _fetch_supplier_wholesale_price(
-    session: AsyncSession, supplier_code: str, product_code: str
+    session: AsyncSession,
+    supplier_code: str,
+    product_code: str,
+    offer_context: Optional[OrderOfferContext] = None,
 ) -> Optional[Decimal]:
-    """Оптова ціна (wholesale_price) товару у конкретного постачальника (з таблиці offers)."""
+    """Оптова ціна товару у конкретного постачальника."""
+    normalized_supplier_code = str(supplier_code)
+    normalized_product_code = str(product_code)
+
+    if offer_context and offer_context.store_id is not None:
+        q = (
+            select(BusinessStoreOffer.wholesale_price)
+            .where(
+                and_(
+                    BusinessStoreOffer.store_id == int(offer_context.store_id),
+                    BusinessStoreOffer.supplier_code == normalized_supplier_code,
+                    BusinessStoreOffer.product_code == normalized_product_code,
+                )
+            )
+            .limit(1)
+        )
+        res = await session.execute(q)
+        value = res.scalar_one_or_none()
+        if value is not None:
+            return _as_decimal(value)
+
     q = (
         select(Offer.wholesale_price)
         .where(
             and_(
-                Offer.supplier_code == str(supplier_code),
-                Offer.product_code == str(product_code),
+                Offer.supplier_code == normalized_supplier_code,
+                Offer.product_code == normalized_product_code,
             )
         )
         .limit(1)
     )
     res = await session.execute(q)
-    return res.scalar_one_or_none()
+    value = res.scalar_one_or_none()
+    return _as_decimal(value) if value is not None else None
 
 # === NEW: поиск поставщиков по допуску и ближайшей цене ===
 from typing import List, Tuple, Optional
@@ -454,18 +631,19 @@ async def _find_suppliers_within_tolerance(
     session: AsyncSession,
     product_code: str,
     order_price: Decimal,
+    offer_context: Optional[OrderOfferContext] = None,
     tolerance: Decimal = PRICE_TOLERANCE,
 ) -> List[Tuple[str, Decimal]]:
     """
     Возвращает список (supplier_code, supplier_price) для товара, где
     |price - order_price| <= tolerance, отсортированный по модулю разницы.
     """
-    q = select(Offer.supplier_code, Offer.price).where(Offer.product_code == str(product_code))
-    res = await session.execute(q)
-    rows = res.all()
     matches: List[Tuple[str, Decimal]] = []
-    for sc, p in rows:
-        p_dec = _as_decimal(p)
+    for sc, p_dec, _wprice, _stock in await _load_offer_records_for_product(
+        session,
+        product_code,
+        offer_context,
+    ):
         if abs(p_dec - order_price) <= tolerance:
             matches.append((str(sc), p_dec))
     matches.sort(key=lambda x: (abs(x[1] - order_price), x[1]))
@@ -477,19 +655,17 @@ async def _find_nearest_supplier_by_price(
     session: AsyncSession,
     product_code: str,
     order_price: Decimal,
+    offer_context: Optional[OrderOfferContext] = None,
 ) -> Optional[Tuple[str, Decimal]]:
     """
     Возвращает (supplier_code, supplier_price) для поставщика с ценой,
     наиболее близкой к order_price (без ограничения по допуску).
     """
-    q = select(Offer.supplier_code, Offer.price).where(Offer.product_code == str(product_code))
-    res = await session.execute(q)
-    rows = res.all()
+    rows = await _load_offer_records_for_product(session, product_code, offer_context)
     if not rows:
         return None
     candidates: List[Tuple[str, Decimal]] = []
-    for sc, p in rows:
-        p_dec = _as_decimal(p)
+    for sc, p_dec, _wprice, _stock in rows:
         candidates.append((str(sc), p_dec))
     candidates.sort(key=lambda x: (abs(x[1] - order_price), x[1]))
     return candidates[0] if candidates else None
@@ -500,6 +676,7 @@ async def _find_nearest_supplier_by_price(
 async def _prefetch_offers_for_products(
     session: AsyncSession,
     product_codes: List[str],
+    offer_context: Optional[OrderOfferContext] = None,
 ) -> Dict[str, Dict[str, Dict[str, Decimal]]]:
     """ 
     Prefetch offers for a list of product codes.
@@ -513,18 +690,39 @@ async def _prefetch_offers_for_products(
 
     NOTE: expects columns Offer.price, Offer.wholesale_price, Offer.stock.
     """
-    q = (
-        select(
-            Offer.supplier_code,
-            Offer.product_code,
-            Offer.price,
-            Offer.wholesale_price,
-            Offer.stock,
+    rows = []
+    if offer_context and offer_context.store_id is not None:
+        q = (
+            select(
+                BusinessStoreOffer.supplier_code,
+                BusinessStoreOffer.product_code,
+                BusinessStoreOffer.effective_price,
+                BusinessStoreOffer.wholesale_price,
+                BusinessStoreOffer.stock,
+            )
+            .where(
+                and_(
+                    BusinessStoreOffer.store_id == int(offer_context.store_id),
+                    BusinessStoreOffer.product_code.in_([str(x) for x in product_codes]),
+                )
+            )
         )
-        .where(Offer.product_code.in_([str(x) for x in product_codes]))
-    )
-    res = await session.execute(q)
-    rows = res.all()
+        res = await session.execute(q)
+        rows = res.all()
+
+    if not rows:
+        q = (
+            select(
+                Offer.supplier_code,
+                Offer.product_code,
+                Offer.price,
+                Offer.wholesale_price,
+                Offer.stock,
+            )
+            .where(Offer.product_code.in_([str(x) for x in product_codes]))
+        )
+        res = await session.execute(q)
+        rows = res.all()
 
     out: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
     for sc, pc, price, wprice, stock in rows:
@@ -1278,6 +1476,144 @@ def _extract_name_parts(order: Dict[str, Any], d: Dict[str, str]) -> Tuple[str, 
     return f, l, m
 
 
+def _extract_business_store_id_from_order_rows(order: Dict[str, Any]) -> tuple[int | None, list[str]]:
+    warnings: list[str] = []
+    rows = order.get("rows")
+    if not isinstance(rows, list):
+        return None, warnings
+
+    store_ids: list[int] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_store_id = row.get(DEBUG_BUSINESS_STORE_ID_FIELD)
+        if raw_store_id in (None, ""):
+            continue
+        try:
+            store_ids.append(int(raw_store_id))
+        except (TypeError, ValueError):
+            warnings.append(f"invalid_business_store_id_debug_field={raw_store_id}")
+
+    if not store_ids:
+        return None, warnings
+
+    unique_store_ids = sorted(set(store_ids))
+    if len(unique_store_ids) > 1:
+        warnings.append(
+            f"multiple_business_store_ids_in_order_rows={','.join(str(item) for item in unique_store_ids)}"
+        )
+    return unique_store_ids[0], warnings
+
+
+async def resolve_salesdrive_organization_context(
+    session: AsyncSession,
+    *,
+    order: Dict[str, Any],
+    enterprise_code: str,
+    branch: Optional[str] = None,
+) -> Dict[str, Any]:
+    warnings: list[str] = []
+    normalized_enterprise_code = str(enterprise_code or "").strip()
+    branch_value = str(order.get("branchID") or branch or "").strip() or None
+    enterprise_runtime_mode = BASELINE_BUSINESS_RUNTIME_MODE
+
+    if normalized_enterprise_code:
+        enterprise_runtime_mode_raw = (
+            await session.execute(
+                select(EnterpriseSettings.business_runtime_mode)
+                .where(EnterpriseSettings.enterprise_code == normalized_enterprise_code)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        enterprise_runtime_mode = normalize_business_runtime_mode(enterprise_runtime_mode_raw)
+
+    store_id, store_id_warnings = _extract_business_store_id_from_order_rows(order)
+    warnings.extend(store_id_warnings)
+
+    store: BusinessStore | None = None
+    if store_id is not None:
+        try:
+            store = await resolve_business_store_for_order(session, store_id=store_id)
+        except Exception as exc:
+            warning = f"store_resolution_by_debug_store_id_failed:{exc}"
+            warnings.append(warning)
+            logger.warning(
+                "SalesDrive organizationId debug-store resolution failed: store_id=%s enterprise_code=%s branch=%s err=%s",
+                store_id,
+                normalized_enterprise_code,
+                branch_value,
+                exc,
+            )
+
+    if store is None and branch_value:
+        try:
+            store = await resolve_business_store_for_order(
+                session,
+                tabletki_branch=branch_value,
+                tabletki_enterprise_code=normalized_enterprise_code or None,
+            )
+        except Exception as exc:
+            warning = f"store_resolution_by_branch_failed:{exc}"
+            warnings.append(warning)
+            logger.warning(
+                "SalesDrive organizationId branch resolution failed: enterprise_code=%s branch=%s err=%s",
+                normalized_enterprise_code,
+                branch_value,
+                exc,
+            )
+
+    organization_id_value = "1"
+    organization_id_source = "fallback_default"
+
+    if store is not None:
+        if getattr(store, "salesdrive_enterprise_id", None) not in (None, ""):
+            organization_id_value = str(store.salesdrive_enterprise_id)
+            organization_id_source = "store_salesdrive_enterprise_id"
+        else:
+            if enterprise_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+                logger.info(
+                    "SalesDrive organizationId baseline fallback used: store_code=%s enterprise_code=%s branch=%s",
+                    getattr(store, "store_code", None),
+                    getattr(store, "enterprise_code", None),
+                    branch_value or getattr(store, "tabletki_branch", None),
+                )
+            else:
+                warnings.append("missing_salesdrive_enterprise_id")
+                logger.warning(
+                    "SalesDrive organizationId fallback used: reason=missing_salesdrive_enterprise_id store_code=%s enterprise_code=%s branch=%s",
+                    getattr(store, "store_code", None),
+                    getattr(store, "enterprise_code", None),
+                    branch_value or getattr(store, "tabletki_branch", None),
+                )
+    else:
+        if enterprise_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE:
+            logger.info(
+                "SalesDrive organizationId baseline fallback used without store resolution: enterprise_code=%s branch=%s",
+                normalized_enterprise_code,
+                branch_value,
+            )
+        else:
+            warnings.append("store_resolution_missing_for_salesdrive_organization")
+            logger.warning(
+                "SalesDrive organizationId fallback used: reason=store_resolution_missing_for_salesdrive_organization enterprise_code=%s branch=%s",
+                normalized_enterprise_code,
+                branch_value,
+            )
+
+    return {
+        "organizationId_value": organization_id_value,
+        "organizationId_source": organization_id_source,
+        "payment_method": "Післяплата",
+        "business_runtime_mode": enterprise_runtime_mode,
+        "order_runtime_path": "baseline_passthrough" if enterprise_runtime_mode == BASELINE_BUSINESS_RUNTIME_MODE else "custom_business",
+        "store_id": int(store.id) if store is not None else None,
+        "store_code": getattr(store, "store_code", None) if store is not None else None,
+        "enterprise_code": getattr(store, "enterprise_code", None) if store is not None else normalized_enterprise_code or None,
+        "branch": branch_value or (getattr(store, "tabletki_branch", None) if store is not None else None),
+        "warnings": warnings,
+    }
+
+
 async def build_salesdrive_payload(
     session: AsyncSession,
     order: Dict[str, Any],
@@ -1287,9 +1623,16 @@ async def build_salesdrive_payload(
     supplier_name: str,
     branch: Optional[str] = None,
     comment_override: Optional[str] = None,
+    offer_context: Optional[OrderOfferContext] = None,
 ) -> Dict[str, Any]:
     d = _delivery_dict(order)
     fName, lName, mName = _extract_name_parts(order, d)
+    salesdrive_context = await resolve_salesdrive_organization_context(
+        session,
+        order=order,
+        enterprise_code=enterprise_code,
+        branch=branch,
+    )
     supplier_changed_note = None
     if order.get("_supplier_changed"):
         supplier_changed_note = _make_supplier_changed_note(rows, supplier_name)
@@ -1325,7 +1668,12 @@ async def build_salesdrive_payload(
 
         w_price: Optional[Decimal] = None
         if effective_supplier_code:
-            w_price = await _fetch_supplier_wholesale_price(session, effective_supplier_code, r.goodsCode)
+            w_price = await _fetch_supplier_wholesale_price(
+                session,
+                effective_supplier_code,
+                r.goodsCode,
+                offer_context,
+            )
 
         w_dec = _as_decimal(w_price or 0)
         line_opt = w_dec * _as_decimal(r.qty)
@@ -1375,6 +1723,11 @@ async def build_salesdrive_payload(
         else:
             city = f"{city} ({supplier_city_tag})"
 
+    payment_method_value = _resolve_salesdrive_payment_method(
+        salesdrive_context.get("payment_method"),
+        supplier_code,
+    )
+
     payload = {
         "getResultData": "1",
         "fName": fName,
@@ -1384,13 +1737,13 @@ async def build_salesdrive_payload(
         "email": "",
         "company": "",
         "products": products,
-        "payment_method": "",
+        "payment_method": payment_method_value,
         "shipping_method": d.get("DeliveryServiceName", ""),
         "shipping_address": d.get("ReceiverWhs", ""),
         "comment": comment_text,
         "sajt": str(branch or ""),
         "externalId": order.get("id", ""),
-        "organizationId": "1",
+        "organizationId": salesdrive_context["organizationId_value"],
         "stockId": D14_SALESDRIVE_STOCK_ID if _is_d14_supplier(supplier_code) else "",
         "novaposhta": _build_novaposhta_block(d),
         "ukrposhta": _build_ukrposhta_block(d),
@@ -1406,6 +1759,9 @@ async def build_salesdrive_payload(
         "qtyOrder": f"🔴x{total_qty}" if total_qty > 1 else "",
         "supplierlist": supplierlist_val,
     }
+    if order.get("customerEmail"):
+        payload["email"] = order["customerEmail"]
+
     if _is_d14_supplier(supplier_code):
         logger.info(
             "SalesDrive root stockId override applied: externalId=%s supplier=%s stockId=%s",
@@ -1413,6 +1769,34 @@ async def build_salesdrive_payload(
             supplier_code,
             D14_SALESDRIVE_STOCK_ID,
         )
+    if salesdrive_context.get("business_runtime_mode") == BASELINE_BUSINESS_RUNTIME_MODE:
+        logger.info(
+            "Baseline enterprise order passthrough path: enterprise_code=%s branch=%s organizationId=%s",
+            salesdrive_context.get("enterprise_code"),
+            salesdrive_context.get("branch"),
+            salesdrive_context.get("organizationId_value"),
+        )
+    else:
+        logger.info(
+            "Custom enterprise order path: enterprise_code=%s branch=%s organizationId_source=%s store_code=%s",
+            salesdrive_context.get("enterprise_code"),
+            salesdrive_context.get("branch"),
+            salesdrive_context.get("organizationId_source"),
+            salesdrive_context.get("store_code"),
+        )
+    logger.info(
+        "SalesDrive payload built: externalId=%s branch=%s runtime_mode=%s order_runtime_path=%s organizationId_source=%s organizationId_value=%s payment_method=%s store_code=%s enterprise_code=%s warnings=%s",
+        order.get("id", ""),
+        salesdrive_context.get("branch"),
+        salesdrive_context.get("business_runtime_mode"),
+        salesdrive_context.get("order_runtime_path"),
+        salesdrive_context["organizationId_source"],
+        salesdrive_context["organizationId_value"],
+        payment_method_value,
+        salesdrive_context.get("store_code"),
+        salesdrive_context.get("enterprise_code"),
+        salesdrive_context.get("warnings") or [],
+    )
     return payload
 
 
@@ -1469,6 +1853,13 @@ async def process_and_send_order(
                 logger.exception("Не удалось отправить уведомление об отсутствии API-ключа")
             return
 
+        order_offer_context = await _resolve_order_offer_context(
+            session,
+            order=order,
+            enterprise_code=enterprise_code,
+            branch=branch,
+        )
+
         # === SINGLE-ITEM ===
         if len(rows) == 1:
             r = rows[0]
@@ -1476,7 +1867,12 @@ async def process_and_send_order(
             comment_override: Optional[str] = None
 
             # 1–3. Поиск поставщика по логике допуска / ближайшей цены / полного отсутствия
-            matches = await _find_suppliers_within_tolerance(session, r.goodsCode, r.price)
+            matches = await _find_suppliers_within_tolerance(
+                session,
+                r.goodsCode,
+                r.price,
+                order_offer_context,
+            )
             if matches:
                 # 1) Есть поставщик по цене с допуском 10 копеек — берём первого (самый близкий)
                 supplier_code = matches[0][0]
@@ -1485,7 +1881,12 @@ async def process_and_send_order(
                 comment_override = supplier_name
             else:
                 # 2) Нет поставщика в допуске 10 копеек — ищем ближайшего по цене
-                nearest = await _find_nearest_supplier_by_price(session, r.goodsCode, r.price)
+                nearest = await _find_nearest_supplier_by_price(
+                    session,
+                    r.goodsCode,
+                    r.price,
+                    order_offer_context,
+                )
                 if nearest:
                     supplier_code, _supplier_price = nearest
                     supplier_name = (await _fetch_supplier_name(session, supplier_code)) or supplier_code
@@ -1509,6 +1910,7 @@ async def process_and_send_order(
                 supplier_name,
                 branch=branch,
                 comment_override=comment_override,
+                offer_context=order_offer_context,
             )
             await _send_to_salesdrive(payload, api_key)
             # После отправки заказа — обработать отказы из Reserve API и обновить заявки в SalesDrive
@@ -1521,7 +1923,12 @@ async def process_and_send_order(
         rows_without_supplier: List[OrderRow] = []
 
         for r in rows:
-            matches = await _find_suppliers_within_tolerance(session, r.goodsCode, r.price)
+            matches = await _find_suppliers_within_tolerance(
+                session,
+                r.goodsCode,
+                r.price,
+                order_offer_context,
+            )
             if matches:
                 sc, sp = matches[0]
                 rows_with_supplier.append((r, sc, sp))
@@ -1544,7 +1951,11 @@ async def process_and_send_order(
 
         try:
             product_codes = [str(r.goodsCode) for r in rows]
-            offers_map = await _prefetch_offers_for_products(session, product_codes)
+            offers_map = await _prefetch_offers_for_products(
+                session,
+                product_codes,
+                order_offer_context,
+            )
         except Exception:
             offers_map = {}
 
@@ -1580,6 +1991,7 @@ async def process_and_send_order(
                     supplier_name,
                     branch=branch,
                     comment_override=comment_override,
+                    offer_context=order_offer_context,
                 )
                 await _send_to_salesdrive(payload, api_key)
                 return
@@ -1621,6 +2033,7 @@ async def process_and_send_order(
                     supplier_name,
                     branch=branch,
                     comment_override=comment_override,
+                    offer_context=order_offer_context,
                 )
                 await _send_to_salesdrive(payload, api_key)
                 return
@@ -1693,6 +2106,7 @@ async def process_and_send_order(
             supplier_name,
             branch=branch,
             comment_override=comment_override,
+            offer_context=order_offer_context,
         )
         await _send_to_salesdrive(payload, api_key)
         # После отправки заказа — обработать отказы из Reserve API и обновить заявки в SalesDrive

@@ -1,0 +1,1 @@
+"""Checkbox fiscalization integration."""

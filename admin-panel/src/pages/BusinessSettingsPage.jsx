@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import {
     getBusinessSettingsView,
     updateBusinessSettingsControlPlaneScope,
-    updateBusinessSettingsEnterpriseOperationalScope,
     updateBusinessSettingsPricingScope,
 } from "../api/businessSettingsApi";
 
@@ -75,18 +74,10 @@ const sourceBadgeStyle = {
 
 const emptyValue = "—";
 const editableSectionKeysExtended = new Set([
-    "target_enterprise",
     "master_catalog",
-    "integration_access",
     "orders_biotus",
     "pricing",
     "stock_mapping_mode",
-]);
-const targetEditableItemKeys = new Set(["branch_id"]);
-const integrationEditableItemKeys = new Set([
-    "tabletki_login",
-    "tabletki_password",
-    "token_masked",
 ]);
 const masterEditableItemKeys = new Set([
     "master_weekly_enabled",
@@ -101,8 +92,6 @@ const masterEditableItemKeys = new Set([
     "master_archive_every_minutes",
 ]);
 const biotusEditableItemKeys = new Set([
-    "order_fetcher",
-    "auto_confirm",
     "biotus_enable_unhandled_fallback",
     "biotus_unhandled_order_timeout_minutes",
     "biotus_fallback_additional_status_ids",
@@ -111,7 +100,6 @@ const biotusEditableItemKeys = new Set([
 const stockEditableItemKeys = new Set([
     "business_stock_enabled",
     "business_stock_interval_seconds",
-    "stock_correction",
 ]);
 const pricingEditableItemKeys = new Set([
     "pricing_base_thr",
@@ -177,8 +165,15 @@ const sectionOrder = [
     "stock_mapping_mode",
     "orders_biotus",
     "pricing",
-    "integration_access",
 ];
+
+const visibleSectionKeys = new Set([
+    "target_enterprise",
+    "master_catalog",
+    "stock_mapping_mode",
+    "orders_biotus",
+    "pricing",
+]);
 
 const hiddenItemKeys = new Set([
     "master_target_fallback_note",
@@ -205,28 +200,24 @@ const decimalDisplayKeys = new Set([
 
 const sectionMetaByKey = {
     target_enterprise: {
-        title: "Предприятие (Business)",
-        description: "Основные параметры рабочего предприятия.",
+        title: "Рабочее предприятие Business",
+        description: "Summary control-plane предприятия, на которое направлены business-пайплайны.",
     },
     master_catalog: {
         title: "Мастер-каталог (Master Catalog)",
         description: "Расписание и параметры публикации мастер-каталога.",
     },
     stock_mapping_mode: {
-        title: "Сток (Stock)",
-        description: "Настройки обработки и публикации остатков.",
+        title: "Business Stock Scheduler",
+        description: "Глобальные параметры запуска business stock pipeline.",
     },
     orders_biotus: {
-        title: "Заказы",
-        description: "Основной контур заказов и дополнительная обработка.",
+        title: "Дополнительная обработка заказов",
+        description: "Fallback-логика и вспомогательные сценарии заказов, не относящиеся к runtime конкретного enterprise.",
     },
     pricing: {
         title: "Ценообразование (Pricing)",
         description: "Глобальные параметры расчета цен.",
-    },
-    integration_access: {
-        title: "Интеграция и доступ (Integration / Access)",
-        description: "Логины, токены и параметры доступа к внешним системам.",
     },
 };
 
@@ -247,6 +238,26 @@ const getSourceBadge = (source) => {
             style: {
                 backgroundColor: "#fff7ed",
                 color: "#9a3412",
+            },
+        };
+    }
+
+    if (source === "env_allowlist") {
+        return {
+            label: "ENV allowlist",
+            style: {
+                backgroundColor: "#ecfdf5",
+                color: "#166534",
+            },
+        };
+    }
+
+    if (source === "default" || source === "computed") {
+        return {
+            label: "Computed",
+            style: {
+                backgroundColor: "#f1f5f9",
+                color: "#334155",
             },
         };
     }
@@ -458,23 +469,6 @@ const buildUpdatePayload = (draft) => ({
     master_archive_every_minutes: Number(draft.master_archive_every_minutes),
 });
 
-const buildEnterpriseOperationalUpdatePayload = (draft) => {
-    const branchId = String(draft.branch_id || "").trim();
-    if (!branchId) {
-        throw new Error("BRANCH_ID обязателен.");
-    }
-
-    return {
-        branch_id: branchId,
-        tabletki_login: normalizeOptionalValue(draft.tabletki_login),
-        tabletki_password: normalizeOptionalValue(draft.tabletki_password),
-        order_fetcher: Boolean(draft.order_fetcher),
-        auto_confirm: Boolean(draft.auto_confirm),
-        stock_correction: Boolean(draft.stock_correction),
-        ...(normalizeOptionalValue(draft.token) ? { token: normalizeOptionalValue(draft.token) } : {}),
-    };
-};
-
 const buildPricingUpdatePayload = (draft) => {
     const payload = {
         pricing_base_thr: parseDecimalString(draft.pricing_base_thr, "Базовый порог", { min: 0 }),
@@ -596,14 +590,9 @@ const EditToolbar = ({ editable, saving, onCancel, onSave }) => {
 
 const TargetEnterpriseEditor = ({ draft, onChange }) => (
     <div style={formSectionStyle}>
-        <FormField label="Branch ID">
-            <input
-                type="text"
-                style={inputStyle}
-                value={draft.branch_id}
-                onChange={(event) => onChange("branch_id", event.target.value)}
-            />
-        </FormField>
+        <div style={mutedTextStyle}>
+            Управление enterprise runtime перенесено на страницу Business-магазинов. Здесь остаётся только control-plane summary.
+        </div>
     </div>
 );
 
@@ -778,38 +767,6 @@ const AdditionalOrdersProcessingEditor = ({ draft, onChange }) => (
     </div>
 );
 
-const IntegrationAccessEditor = ({ draft, onChange }) => (
-    <div style={formSectionStyle}>
-        <div style={formGridTwoStyle}>
-            <FormField label="Логин Tabletki">
-                <input
-                    type="text"
-                    style={inputStyle}
-                    value={draft.tabletki_login}
-                    onChange={(event) => onChange("tabletki_login", event.target.value)}
-                />
-            </FormField>
-            <FormField label="Пароль Tabletki">
-                <input
-                    type="password"
-                    style={inputStyle}
-                    value={draft.tabletki_password}
-                    onChange={(event) => onChange("tabletki_password", event.target.value)}
-                />
-            </FormField>
-            <FormField label="SalesDrive API key" helpText="Оставьте поле пустым, чтобы не менять текущий токен">
-                <input
-                    type="password"
-                    style={wideInputStyle}
-                    value={draft.token}
-                    onChange={(event) => onChange("token", event.target.value)}
-                    placeholder="Введите новый токен"
-                />
-            </FormField>
-        </div>
-    </div>
-);
-
 const StockOperationalEditor = ({ draft, onChange }) => (
     <div style={formSectionStyle}>
         <div style={formGridTwoStyle}>
@@ -827,64 +784,25 @@ const StockOperationalEditor = ({ draft, onChange }) => (
                     Включено
                 </label>
             </FormField>
-        <FormField label="Интервал запуска, минут" helpText="Через сколько минут запускается следующий цикл обработки остатков.">
-            <input
-                type="number"
-                min="1"
+            <FormField label="Интервал запуска, минут" helpText="Через сколько минут запускается следующий цикл обработки остатков.">
+                <input
+                    type="number"
+                    min="1"
                     style={inputStyle}
                     value={draft.business_stock_interval_seconds}
                     onChange={(event) => onChange("business_stock_interval_seconds", event.target.value)}
                 />
             </FormField>
-            <FormField label="Коррекция остатков">
-                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
-                    <input
-                        type="checkbox"
-                        style={checkboxStyle}
-                        checked={draft.stock_correction}
-                        onChange={(event) => onChange("stock_correction", event.target.checked)}
-                    />
-                    Включено
-                </label>
-            </FormField>
+            <div />
+            <div style={mutedTextStyle}>
+                Enterprise-level stock routing и runtime mode настраиваются на странице Business-магазинов.
+            </div>
         </div>
     </div>
 );
 
 const OrdersSectionEditor = ({ draft, onChange }) => (
     <div style={formSectionStyle}>
-        <div style={{ display: "grid", gap: "6px" }}>
-            <div style={{ fontSize: "13px", fontWeight: 700, color: "#475569", letterSpacing: "0.02em" }}>
-                Основной контур заказов
-            </div>
-            <div style={mutedTextStyle}>
-                Настройки обработки входящих заказов для основного предприятия
-            </div>
-        </div>
-        <div style={formGridTwoStyle}>
-            <FormField label="Получение заказов" helpText="Включает получение заказов">
-                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
-                    <input
-                        type="checkbox"
-                        style={checkboxStyle}
-                        checked={draft.order_fetcher}
-                        onChange={(event) => onChange("order_fetcher", event.target.checked)}
-                    />
-                    Включено
-                </label>
-            </FormField>
-            <FormField label="Автоматическое бронирование" helpText="Автоматически подтверждать заказы при наличии товара">
-                <label style={{ display: "flex", gap: "10px", alignItems: "center", color: "#0f172a" }}>
-                    <input
-                        type="checkbox"
-                        style={checkboxStyle}
-                        checked={draft.auto_confirm}
-                        onChange={(event) => onChange("auto_confirm", event.target.checked)}
-                    />
-                    Включено
-                </label>
-            </FormField>
-        </div>
         <AdditionalOrdersProcessingEditor draft={draft} onChange={onChange} />
     </div>
 );
@@ -981,11 +899,7 @@ const SectionCard = ({
     const sectionMeta = sectionMetaByKey[section.key] || {};
     const groups = buildItemGroups(section.items.filter((item) => !hiddenItemKeys.has(item.key)));
     const editable = editableSectionKeysExtended.has(section.key);
-    const editableKeys = section.key === "target_enterprise"
-        ? targetEditableItemKeys
-        : section.key === "integration_access"
-            ? integrationEditableItemKeys
-        : section.key === "master_catalog"
+    const editableKeys = section.key === "master_catalog"
             ? masterEditableItemKeys
             : section.key === "orders_biotus"
                 ? biotusEditableItemKeys
@@ -1034,12 +948,6 @@ const SectionCard = ({
                     />
                     {section.key === "target_enterprise" && (
                         <TargetEnterpriseEditor
-                            draft={draft}
-                            onChange={onDraftChange}
-                        />
-                    )}
-                    {section.key === "integration_access" && (
-                        <IntegrationAccessEditor
                             draft={draft}
                             onChange={onDraftChange}
                         />
@@ -1172,23 +1080,7 @@ const BusinessSettingsPage = () => {
         setSaveSuccess("");
         try {
             let updated;
-            if (sectionKey === "target_enterprise" || sectionKey === "integration_access" || sectionKey === "stock_mapping_mode") {
-                if (sectionKey === "stock_mapping_mode") {
-                    const operationalPayload = buildEnterpriseOperationalUpdatePayload(draft);
-                    console.log("Business enterprise operational payload:", operationalPayload);
-                    await updateBusinessSettingsEnterpriseOperationalScope(operationalPayload);
-                    updated = await updateBusinessSettingsControlPlaneScope(buildUpdatePayload(draft));
-                } else {
-                    const payload = buildEnterpriseOperationalUpdatePayload(draft);
-                    console.log("Business enterprise operational payload:", payload);
-                    updated = await updateBusinessSettingsEnterpriseOperationalScope(payload);
-                }
-            } else if (sectionKey === "master_catalog") {
-                updated = await updateBusinessSettingsControlPlaneScope(buildUpdatePayload(draft));
-            } else if (sectionKey === "orders_biotus") {
-                const operationalPayload = buildEnterpriseOperationalUpdatePayload(draft);
-                console.log("Business enterprise operational payload:", operationalPayload);
-                await updateBusinessSettingsEnterpriseOperationalScope(operationalPayload);
+            if (sectionKey === "master_catalog" || sectionKey === "stock_mapping_mode" || sectionKey === "orders_biotus") {
                 updated = await updateBusinessSettingsControlPlaneScope(buildUpdatePayload(draft));
             } else if (sectionKey === "pricing") {
                 updated = await updateBusinessSettingsPricingScope(buildPricingUpdatePayload(draft));
@@ -1221,7 +1113,7 @@ const BusinessSettingsPage = () => {
             <div style={{ ...cardStyle, padding: "20px 24px", display: "grid", gap: "10px" }}>
                 <h1 style={{ margin: 0, fontSize: "28px", color: "#111827" }}>Business Settings</h1>
                 <p style={mutedTextStyle}>
-                    Единая страница настройки рабочего предприятия, заказов, остатков, публикаций и доступов.
+                    Control-plane страница для scheduler, pricing и общих business pipeline настроек.
                 </p>
             </div>
 
@@ -1251,7 +1143,9 @@ const BusinessSettingsPage = () => {
                         </div>
                     )}
 
-                    {sortSections(viewModel.sections).map((section) => (
+                    {sortSections(viewModel.sections)
+                        .filter((section) => visibleSectionKeys.has(section.key))
+                        .map((section) => (
                         <SectionCard
                             key={section.key}
                             section={section}
